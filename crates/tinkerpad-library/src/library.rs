@@ -196,6 +196,12 @@ impl Library {
             ))
         })?;
 
+        // Hold the index for the whole operation. The watcher takes the same
+        // lock before comparing a folder with the index, so it only ever
+        // compares against the finished result and never reports the app's
+        // own changes. Lock order everywhere: index, then known_source.
+        let mut index = self.index.write().expect("index lock");
+
         // Claim a folder. `create_dir` fails if something appeared since the
         // name was chosen, in which case try the next name.
         let slug = slug::slugify(name);
@@ -243,7 +249,6 @@ impl Library {
         match result {
             Ok(playground) => {
                 self.remember_source(&playground.main_file);
-                let mut index = self.index.write().expect("index lock");
                 index.remove_dir(&dir);
                 index
                     .by_id
@@ -267,7 +272,13 @@ impl Library {
                 "a playground needs a name".into(),
             ));
         }
-        let mut p = self.require(id)?;
+        // Held throughout; see `create`.
+        let mut index = self.index.write().expect("index lock");
+        let mut p = index
+            .by_id
+            .get(id)
+            .cloned()
+            .ok_or_else(|| LibraryError::NotFound(id.clone()))?;
         let old_dir = p.dir.clone();
         let current_folder = old_dir
             .file_name()
@@ -292,7 +303,6 @@ impl Library {
         p.name = name.to_owned();
         meta::write(&p).map_err(|e| LibraryError::io(&p.dir, e))?;
 
-        let mut index = self.index.write().expect("index lock");
         index.remove_dir(&old_dir);
         index.remove_dir(&p.dir);
         index.by_id.insert(p.id.clone(), p.clone());
@@ -302,12 +312,18 @@ impl Library {
 
     /// Move a playground's folder to the OS recycle bin.
     pub fn delete(&self, id: &PlaygroundId) -> Result<(), LibraryError> {
-        let p = self.require(id)?;
+        // Held throughout; see `create`.
+        let mut index = self.index.write().expect("index lock");
+        let p = index
+            .by_id
+            .get(id)
+            .cloned()
+            .ok_or_else(|| LibraryError::NotFound(id.clone()))?;
         platform::move_to_trash(&p.dir).map_err(|message| LibraryError::Trash {
             path: p.dir.clone(),
             message,
         })?;
-        self.index.write().expect("index lock").remove_dir(&p.dir);
+        index.remove_dir(&p.dir);
         self.known_source
             .lock()
             .expect("known lock")

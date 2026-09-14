@@ -98,7 +98,12 @@ folder):
 - Delete moves to the real trash (only when `TINKERPAD_TEST_TRASH=1`, which CI
   sets).
 
-The watcher test passed 8 runs in a row locally. It uses 10 s timeouts for slow
+The watcher test passed 8 runs in a row locally. Its first CI run on Windows still
+caught a race: on a slow disk the watcher could compare a folder with the index
+after our files were written but before the index was updated, and report a
+spurious `Changed`. Create, rename, and delete now hold the index lock for the
+whole operation, and the watcher takes the same lock before comparing, so it only
+ever sees the finished state. It uses 10 s timeouts for slow
 CI machines and FSEvents latency; locally it finishes in about 3 s.
 
 **In the app** (`library` self-test, Windows release build, throwaway library
