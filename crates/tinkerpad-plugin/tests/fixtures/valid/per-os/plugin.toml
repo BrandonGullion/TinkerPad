@@ -1,0 +1,30 @@
+api = 1
+
+[language]
+id = "py"
+name = "Python"
+extension = "py"
+highlighter = "python"
+
+[toolchain]
+probe = [
+  { command = "python3", args = ["--version"], min_version = "3.11", os = ["macos", "linux"] },
+  { command = "py", args = ["-3", "--version"], min_version = "3.11", os = ["windows"] },
+  { command = "python", args = ["--version"], min_version = "3.11", os = ["windows"] },
+]
+
+[[kind]]
+id = "statements"
+name = "Python"
+template = "main.py"
+default = true
+
+# Generic entry, used on every OS without a specific one.
+[[run]]
+command = "{toolchain}"
+args = ["{main}"]
+
+[[run]]
+os = ["windows"]
+command = "{toolchain}"
+args = ["-X", "utf8", "{main}"]

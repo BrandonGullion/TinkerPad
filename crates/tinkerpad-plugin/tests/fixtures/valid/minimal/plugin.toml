@@ -1,0 +1,19 @@
+api = 1
+
+[language]
+id = "mini"
+name = "Mini"
+extension = "mini"
+
+[toolchain]
+probe = [{ command = "mini", args = ["--version"] }]
+
+[[kind]]
+id = "statements"
+name = "Statements"
+template = "statements.mini"
+default = true
+
+[run]
+command = "mini"
+args = ["{main}"]

@@ -1,0 +1,65 @@
+api = 1
+
+[language]
+id = "rust"
+name = "Rust"
+extension = "rs"
+highlighter = "rust"
+main_path = "src/main.rs"
+
+[toolchain]
+probe = [{ command = "cargo", args = ["--version"], min_version = "1.88" }]
+install_hint = "Install Rust from https://rustup.rs"
+
+[[kind]]
+id = "program"
+name = "Rust Program"
+template = "main.rs"
+default = true
+
+[[kind]]
+id = "expression"
+name = "Rust Expression"
+template = "expression.rs"
+prelude = "fn main() { tinkerpad::dump(&(\n"
+postlude = "\n)); }"
+
+[scaffold]
+files = [
+  { path = "Cargo.toml", template = "Cargo.toml" },
+  { path = ".cargo/config.toml", template = "cargo-config.toml" },
+]
+
+[run]
+command = "cargo"
+args = ["run", "--quiet"]
+cwd = "{dir}"
+env = { CARGO_TERM_COLOR = "always" }
+
+[helper]
+command = "{plugin_dir}/helper/bin/helper"
+args = ["--stdio"]
+build = { command = "cargo", args = ["build", "--release"], cwd = "{plugin_dir}/helper" }
+hooks = ["playground_opened", "playground_closed"]
+idle_shutdown = "30m"
+
+[lsp]
+command = "rust-analyzer"
+workspace = "scratch_workspace"
+idle_shutdown = "30m"
+
+[lsp.init_options]
+checkOnSave = true
+cargo = { targetDir = true }
+
+[lsp.register]
+setting = "rust-analyzer.linkedProjects"
+value = "{dir}/Cargo.toml"
+
+[deps]
+kind = "command"
+add = ["cargo", "add", "{name}@{version}"]
+
+[output]
+error_regex = '--> (?<file>[^:]+):(?<line>\d+):(?<col>\d+)\n?(?<message>.*)'
+error_regex_multiline = true

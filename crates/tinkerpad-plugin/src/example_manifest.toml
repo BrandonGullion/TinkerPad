@@ -1,0 +1,69 @@
+api = 1                              # manifest schema version
+
+[language]
+id = "csharp"                        # stable, lowercase, [a-z0-9-]
+name = "C#"
+extension = "cs"
+highlighter = "csharp"               # CodeMirror language the UI loads; see §9 for the list
+
+[toolchain]
+# Ordered probes; first success wins. Captured {version} shows in the status strip.
+# Entries may be limited to some platforms with `os = [...]`; the winning entry's
+# program is available as {toolchain} in commands below.
+probe = [
+  { command = "dotnet", args = ["--version"], min_version = "10.0" },
+]
+install_hint = "Install the .NET 10 SDK: https://dot.net"
+
+[[kind]]
+id = "statements"
+name = "C# Statements"
+template = "statements.cs"           # in templates/; {{name}} is substituted
+default = true
+
+[[kind]]
+id = "program"
+name = "C# Program"
+template = "program.cs"
+
+[[kind]]
+id = "expression"
+name = "C# Expression"
+template = "expression.cs"
+# Locked lines: stored in the file, shown dimmed and read-only in the editor.
+# The LSP and the runner see the real file, so no position rewriting exists anywhere.
+prelude  = "TinkerPad.Dump(\n"
+postlude = "\n);"
+
+[scaffold]
+# Extra files written when a playground of this language is created.
+# Rust uses this for Cargo.toml and .cargo/config.toml; C# needs nothing.
+files = []
+
+[run]
+# Per-run command. Placeholders: {main} {dir} {id} {name} {scratch} {plugin_dir}
+command = "dotnet"
+args = ["run", "{main}"]
+cwd = "{dir}"
+env = { DOTNET_CLI_UI_LANGUAGE = "en", DOTNET_NOLOGO = "1" }
+
+[helper]                             # Phase 3; optional
+command = "{plugin_dir}/helper/bin/tinkerpad-csharp-helper"
+build = { command = "dotnet", args = ["build", "-c", "Release", "-o", "bin"], cwd = "{plugin_dir}/helper" }
+hooks = ["run"]                      # which protocol messages this helper implements
+idle_shutdown = "never"
+
+[lsp]
+command = "Microsoft.CodeAnalysis.LanguageServer"
+args = ["--stdio", "--logLevel", "Warning"]
+workspace = "none"                   # none | playground_dir | library_root | scratch_workspace
+idle_shutdown = "never"
+[lsp.init_options]                   # initializationOptions, passed verbatim
+
+[deps]
+kind = "inline-directive"            # C# uses `#:package Name@Version` at the top of main.cs
+directive = "#:package {name}@{version}"
+
+[output]
+# Named groups: file, line, col, message. Turns stderr lines into clickable annotations.
+error_regex = '^(?<file>.+?)\((?<line>\d+),(?<col>\d+)\): error \w+: (?<message>.*)$'

@@ -140,6 +140,67 @@ Rules:
 - `[lsp.register]` (see §4) covers the common "tell the shared server about this
   playground" case declaratively. Anything beyond that is a helper hook.
 
+### 2.1 Reference
+
+What the loader (`tinkerpad-plugin`, work item 01-01) accepts, beyond the
+example above.
+
+**Per-OS sections.** TOML can't repeat `[run]`, so write per-OS variants as an
+array of tables. A single `[run]` table is still fine when one command works
+everywhere.
+
+```toml
+[[run]]                      # applies wherever no specific entry does
+command = "{toolchain}"
+args = ["{main}"]
+
+[[run]]
+os = ["windows"]             # wins over the generic entry on Windows
+command = "{toolchain}"
+args = ["-X", "utf8", "{main}"]
+```
+
+The same works for `[[helper]]` and `[[lsp]]`, and probe entries take `os`
+inline. For each OS, at most one entry may list it and at most one entry may
+omit `os`. These rules are checked for all three operating systems, whichever
+one you're on, so a mistake that only affects macOS still fails on Windows.
+
+**Placeholders by context.** `{{` and `}}` are literal braces.
+
+| Where | Allowed |
+|---|---|
+| `[run]`, `[helper]` (and its `build`), `[lsp]`, `[lsp.register].value` | `{main}` `{dir}` `{id}` `{name}` `{scratch}` `{plugin_dir}` `{version}` `{toolchain}` |
+| `[toolchain].probe` | `{plugin_dir}` `{scratch}` |
+| `[deps]` | `{name}` `{version}`, meaning the package being added |
+
+**Keys not shown in the example**
+
+| Key | Meaning |
+|---|---|
+| `[language].main_path` | The main file inside a playground. Default `main.<extension>`. Rust uses `src/main.rs`. |
+| `[scaffold].files` | `[{ path = "Cargo.toml", template = "Cargo.toml" }]`. `path` is relative to the playground, `template` to `templates/`. |
+| `[helper].args`, `[helper].env` | As for `[run]`. |
+| `[lsp].args`, `[lsp].env` | As for `[run]`. |
+| `[lsp].workspace` | Defaults to `playground_dir`. |
+| `[deps]` with `kind = "command"` | Needs `add = ["cargo", "add", "{name}@{version}"]`. |
+| `[deps]` with `kind = "inline-directive"` | Needs `directive = "#:package {name}@{version}"`. |
+| `[output].error_regex_multiline` | `true` to match across up to three lines (work item 01-13). |
+
+**Other rules**
+- Exactly one `[[kind]]` has `default = true`.
+- Ids (`language.id`, kind ids) use lowercase letters, digits, and hyphens.
+- Paths are relative and stay inside their folder: no leading `/`, no drive
+  letter, no `..`.
+- `idle_shutdown` is `"never"` or a duration such as `"90s"`, `"30m"`, `"2h"`.
+- `min_version` is a dotted version such as `"10.0"`.
+- `[output].error_regex` must name the groups `line` and `message`. `file`, `col`,
+  and `severity` are optional.
+- An unknown `highlighter`, an unknown helper hook, or an unused regex group is a
+  warning, not an error.
+- Every problem the loader finds is reported at once, each with its key path
+  (such as `kind[1].template`). Unknown keys and values come with a line,
+  column, section, and a "did you mean" suggestion.
+
 ## 3. Locked lines instead of hidden preludes
 
 LINQPad hides its wrapper code. TinkerPad doesn't. A kind with a `prelude`/`postlude`
