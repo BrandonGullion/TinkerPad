@@ -12,18 +12,20 @@ says *how it fits*.
 constraint. Don't start a phase until the previous phase's "done when" in
 `PLAN.md` §5 holds.
 
-Tick the box here when an item is finished.
+Tick the box here when an item is finished. An item can be ticked with open
+criteria when the remainder can only be verified later (on real hardware, after
+time passes, or by a later item); the item file says why each one is open.
 
 ## Phase 0 — Skeleton
 
 - [x] [00-01 Cargo workspace and crate skeletons](phase-0-skeleton/00-01-workspace.md) · S
-- [x] [00-02 Tauri 2 shell and UI scaffold](phase-0-skeleton/00-02-tauri-shell.md) · S
-- [x] [00-03 Editor and output pane layout](phase-0-skeleton/00-03-editor-and-output-pane.md) · M
-- [x] [00-04 Process supervision crate](phase-0-skeleton/00-04-process-supervision.md) · M
-- [x] [00-05 Core to UI event channel and command surface](phase-0-skeleton/00-05-event-channel.md) · S
-- [x] [00-06 Hard-coded run, end to end, with cancel](phase-0-skeleton/00-06-hardcoded-run.md) · S
-- [x] [00-07 Logging and error conventions](phase-0-skeleton/00-07-logging.md) · S
-- [x] [00-08 Cross-platform CI and platform modules](phase-0-skeleton/00-08-cross-platform-ci.md) · S
+- [x] [00-02 Tauri 2 shell and UI scaffold](phase-0-skeleton/00-02-tauri-shell.md) · S · 3 open criteria
+- [x] [00-03 Editor and output pane layout](phase-0-skeleton/00-03-editor-and-output-pane.md) · M · 3 open criteria
+- [x] [00-04 Process supervision crate](phase-0-skeleton/00-04-process-supervision.md) · M · 1 open criterion
+- [x] [00-05 Core to UI event channel and command surface](phase-0-skeleton/00-05-event-channel.md) · S · 1 open criterion
+- [x] [00-06 Hard-coded run, end to end, with cancel](phase-0-skeleton/00-06-hardcoded-run.md) · S · 1 open criterion
+- [x] [00-07 Logging and error conventions](phase-0-skeleton/00-07-logging.md) · S · 4 open criteria
+- [x] [00-08 Cross-platform CI and platform modules](phase-0-skeleton/00-08-cross-platform-ci.md) · S · 1 open criterion
 
 ## Phase 1 — Plugins, first languages, Dump()
 

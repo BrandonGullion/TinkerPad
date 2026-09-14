@@ -19,15 +19,15 @@ tiny so that the "is the shell tolerable?" question gets answered in an hour.
 
 - [ ] `cargo tauri dev` opens a window with the title "TinkerPad" and a placeholder
       page. `cargo tauri build` produces an installer or exe on Windows.
-- [ ] Cold start to window visible is measured and written into this file. Target:
+- [x] Cold start to window visible is measured and written into this file. Target:
       under 500 ms on this machine. If it's over, note why before moving on.
-- [ ] One Tauri command (`ping`) and one event (`pong`) round-trip between UI and
+- [x] One Tauri command (`ping`) and one event (`pong`) round-trip between UI and
       core, as the seed for 00-05.
-- [ ] The window remembers size and position between launches (Tauri's window-state
+- [x] The window remembers size and position between launches (Tauri's window-state
       plugin is fine).
-- [ ] `ui/` has `npm run dev`, `npm run build`, and `npm run typecheck` scripts,
+- [x] `ui/` has `npm run dev`, `npm run build`, and `npm run typecheck` scripts,
       and typecheck passes.
-- [ ] CSP in `tauri.conf.json` is set, not disabled.
+- [x] CSP in `tauri.conf.json` is set, not disabled.
 - [ ] Builds and opens on macOS and Linux (CI build from 00-08; a manual launch
       on at least one of them, VM is fine). Record cold-start time per platform
       here as they become available; Linux/WebKitGTK is the one to watch.
@@ -81,3 +81,18 @@ normally, relaunching, and reading back the same position and size.
 - The Tauri CLI finds `crates/tinkerpad-app/tauri.conf.json` when run from the
   repo root, so commands run as `ui/node_modules/.bin/tauri …` from there.
 - Tauri 3.0 is in alpha; staying on Tauri 2 per `PLAN.md`.
+
+## Checklist status
+
+Checked 2026-09-14.
+
+**Open**
+- *`cargo tauri dev` opens a window.* The Tauri CLI is installed through npm, not
+  `cargo install`, so the command is `ui/node_modules/.bin/tauri dev`. The
+  `tauri build` half is verified: it produced `target/release/tinkerpad.exe`,
+  which opens the window. `tauri dev` itself has not been run.
+- *Builds and opens on macOS and Linux, with a manual launch on at least one.*
+  CI builds and launches the real app on both and runs the in-app self-test
+  there. No manual launch has been done.
+- *macOS keeps the default app menu.* Tauri 2 enables its default macOS menu
+  unless the app sets one, and TinkerPad sets none. Not checked on a Mac.
