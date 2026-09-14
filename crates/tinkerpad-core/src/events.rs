@@ -52,6 +52,36 @@ pub enum CoreEvent {
     Toast { level: Level, message: String },
     /// Execution output and lifecycle; see [`RunEvent`].
     Run(RunEvent),
+    /// A language's toolchain was (re)checked.
+    Toolchain {
+        language: crate::LanguageId,
+        state: ToolchainState,
+    },
+}
+
+/// Whether a language's toolchain is usable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ToolchainState {
+    /// Probes haven't finished yet.
+    Checking,
+    /// A probe succeeded.
+    Ready {
+        /// The program as written in the probe, e.g. `python3`. Commands use
+        /// it as `{toolchain}`.
+        program: String,
+        /// Where it was found.
+        path: String,
+        /// The version it reported, if one could be read.
+        version: Option<String>,
+    },
+    /// No probe succeeded.
+    Missing {
+        /// What each probe found, e.g. "found 9.0.3, need 10.0".
+        reason: String,
+        /// The plugin's `install_hint`.
+        hint: Option<String>,
+    },
 }
 
 /// What happened during one run. The scope carries the run id.

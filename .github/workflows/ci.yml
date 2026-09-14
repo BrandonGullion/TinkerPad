@@ -116,24 +116,27 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/user-plugins"
           cp -r crates/tinkerpad-plugin/tests/fixtures/valid/minimal "$RUNNER_TEMP/user-plugins/mini"
+          cp -r crates/tinkerpad-plugin/tests/fixtures/valid/node-check "$RUNNER_TEMP/user-plugins/node-check"
           cp -r crates/tinkerpad-plugin/tests/fixtures/invalid/unknown-key "$RUNNER_TEMP/user-plugins/broken-typo"
 
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
         run: |
           set -o pipefail
           xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee launch.log
-          grep -q "selftest: INFO plugins loaded=1 failures=1" launch.log
+          grep -q "selftest: INFO plugins loaded=2 failures=1" launch.log
+          grep -q "selftest: PASS real toolchain probes as ready" launch.log
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
         run: |
           set -o pipefail
           bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee launch.log
-          grep -q "selftest: INFO plugins loaded=1 failures=1" launch.log
+          grep -q "selftest: INFO plugins loaded=2 failures=1" launch.log
+          grep -q "selftest: PASS real toolchain probes as ready" launch.log

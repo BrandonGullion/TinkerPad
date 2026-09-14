@@ -7,9 +7,9 @@
 import { runScopeHandlers } from "@codemirror/view";
 
 import type { Editor } from "./editor";
-import { invoke } from "./ipc";
+import { invoke, subscribe } from "./ipc";
 import type { OutputPane } from "./output";
-import type { PluginsStatus } from "./protocol";
+import type { LanguageToolchain, PluginsStatus } from "./protocol";
 import type { RunController } from "./run";
 
 export interface SelftestContext {
@@ -252,6 +252,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   layout: layoutScenario,
   run: runScenario,
   plugins: pluginsScenario,
+  toolchains: toolchainsScenario,
 };
 
 async function pluginsScenario(_ctx: SelftestContext, check: Check) {
@@ -282,4 +283,70 @@ async function pluginsScenario(_ctx: SelftestContext, check: Check) {
     }
     await check(`toast shown for failed plugin "${folder}"`, shown);
   }
+}
+
+async function toolchainsScenario(_ctx: SelftestContext, check: Check) {
+  let events = 0;
+  const unsubscribe = subscribe(({ event }) => {
+    if (event.type === "toolchain" && event.state.kind !== "checking") events++;
+  });
+
+  // Probes run in the background after startup; wait for all to finish.
+  const settled = async (): Promise<LanguageToolchain[]> => {
+    for (let i = 0; i < 100; i++) {
+      const states = await invoke<LanguageToolchain[]>("toolchain_status");
+      if (states.every((s) => s.state.kind !== "checking")) return states;
+      await sleep(100);
+    }
+    return invoke<LanguageToolchain[]>("toolchain_status");
+  };
+
+  const states = await settled();
+  await check(
+    "every toolchain check finishes",
+    states.every((s) => s.state.kind !== "checking"),
+    JSON.stringify(states.map((s) => [s.language, s.state.kind])),
+  );
+  for (const { language, state } of states) {
+    const detail =
+      state.kind === "ready"
+        ? `${state.program} ${state.version ?? "?"} at ${state.path}`
+        : state.kind === "missing"
+          ? state.reason
+          : "";
+    await report(`INFO toolchain ${language} ${state.kind} ${detail}`);
+  }
+
+  // The test user plugin "mini" probes a program that doesn't exist.
+  const mini = states.find((s) => s.language === "mini");
+  if (mini) {
+    await check(
+      "missing toolchain has a reason",
+      mini.state.kind === "missing" && mini.state.reason.includes("not found"),
+      JSON.stringify(mini.state),
+    );
+  }
+
+  // The test user plugin "node-check" probes the real `node`, found through
+  // the discovered PATH.
+  const node = states.find((s) => s.language === "node-check");
+  if (node) {
+    await check(
+      "real toolchain probes as ready with a version",
+      node.state.kind === "ready" && node.state.version !== null,
+      JSON.stringify(node.state),
+    );
+  }
+
+  // Recheck runs every probe again and reports each result as an event.
+  events = 0;
+  await invoke("recheck_toolchains");
+  const after = await settled();
+  for (let i = 0; i < 50 && events < after.length; i++) await sleep(100);
+  await check(
+    "recheck reports every toolchain again",
+    events >= after.length && after.length === states.length,
+    `${events} result events for ${after.length} plugins`,
+  );
+  unsubscribe();
 }

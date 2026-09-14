@@ -20,7 +20,20 @@ export type RunEvent =
 export type CoreEvent =
   | { type: "pong"; readyMs: number }
   | { type: "toast"; level: Level; message: string }
-  | ({ type: "run" } & RunEvent);
+  | ({ type: "run" } & RunEvent)
+  | { type: "toolchain"; language: string; state: ToolchainState };
+
+/** Whether a language's toolchain is usable. */
+export type ToolchainState =
+  | { kind: "checking" }
+  | { kind: "ready"; program: string; path: string; version: string | null }
+  | { kind: "missing"; reason: string; hint: string | null };
+
+/** One entry of the `toolchain_status` reply. */
+export interface LanguageToolchain {
+  language: string;
+  state: ToolchainState;
+}
 
 export interface Envelope {
   /** Strictly increasing per app session. */

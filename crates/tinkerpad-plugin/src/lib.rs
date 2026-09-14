@@ -18,6 +18,7 @@ pub mod placeholders;
 mod plugin;
 mod registry;
 mod suggest;
+pub mod toolchain;
 
 pub use error::{Location, ManifestError, Problem, ProblemKind, Syntax, Unknown};
 pub use os::Os;
@@ -26,6 +27,7 @@ pub use plugin::{
     Plugin, Probe, Register, SUPPORTED_API, ScaffoldFile, TEMPLATES_DIR, Version, Workspace,
 };
 pub use registry::{Entry, LoadFailure, Override, PluginRegistry, Source};
+pub use toolchain::{PROBE_TIMEOUT, Resolver, ToolchainOverrides, probe};
 
 /// The annotated C# manifest from `docs/PLUGINS.md` §2, kept identical to the
 /// docs by a test. The plugin template repository (work item 05-03) starts

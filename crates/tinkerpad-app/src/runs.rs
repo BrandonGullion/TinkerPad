@@ -10,12 +10,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::async_runtime::JoinHandle;
 use tinkerpad_core::{CommandError, CoreEvent, ErrorCode, RunEvent as UiRunEvent, Scope};
+use tinkerpad_plugin::env::find_program;
 use tinkerpad_process::KillHandle;
 use tinkerpad_runner::{RunError, RunEvent, RunSpec, Utf8Stream, run};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::events::EventBus;
+use crate::toolchains::Toolchains;
 
 struct Active {
     id: u64,
@@ -27,16 +29,20 @@ struct Active {
 pub struct Runs {
     events: Arc<EventBus>,
     scratch: PathBuf,
+    /// For finding programs on the discovered PATH (the login shell's on macOS
+    /// and Linux), not just the PATH the app was launched with.
+    toolchains: Arc<Toolchains>,
     next_id: AtomicU64,
     /// Held for the whole start sequence so two quick Runs can't interleave.
     active: Mutex<Option<Active>>,
 }
 
 impl Runs {
-    pub fn new(events: Arc<EventBus>, scratch: PathBuf) -> Self {
+    pub fn new(events: Arc<EventBus>, scratch: PathBuf, toolchains: Arc<Toolchains>) -> Self {
         Self {
             events,
             scratch,
+            toolchains,
             next_id: AtomicU64::new(1),
             active: Mutex::new(None),
         }
@@ -71,11 +77,17 @@ impl Runs {
             )
         })?;
 
+        // Still hard-coded to node until plugins drive runs (01-06), but found
+        // on the discovered PATH, which children also inherit.
+        let resolver = self.toolchains.resolver();
+        let program = find_program("node", resolver.path())
+            .map(PathBuf::into_os_string)
+            .unwrap_or_else(|| "node".into());
         let spec = RunSpec {
-            program: "node".into(),
+            program,
             args: vec![file.into_os_string()],
             cwd: Some(self.scratch.clone()),
-            env: Vec::new(),
+            env: vec![("PATH".into(), resolver.path().to_os_string())],
         };
 
         let mut handle = match run(spec) {
