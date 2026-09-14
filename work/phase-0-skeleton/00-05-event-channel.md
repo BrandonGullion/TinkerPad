@@ -1,0 +1,44 @@
+# 00-05 · Core to UI event channel and command surface
+
+**Phase:** 0 · **Size:** S · **Crate/area:** `tinkerpad-app`, `tinkerpad-core`, `ui/` · **Depends on:** 00-02
+**Design:** ARCHITECTURE.md §3, §8
+
+## What
+
+The two pipes between the Rust core and the webview. Commands go UI → core as Tauri
+commands with typed request/response. Events go core → UI through one broadcast
+channel forwarded by a single task, so ordering is preserved. Types live in
+`tinkerpad-core` and are mirrored in `ui/src/protocol.ts`.
+
+## Why
+
+Every feature after this is "add a command, add an event". Having one pattern,
+typed on both ends, keeps the UI boundary narrow enough that the shell could be
+swapped later (PLAN.md §3.1).
+
+## Expectations
+
+- [ ] `tinkerpad-core` defines `Command`-side request/response structs and a
+      `CoreEvent` enum, all `serde` serialisable, with `#[serde(tag = "type")]`.
+- [ ] `AppState` in `tinkerpad-app` holds an `Arc` of everything and a
+      `broadcast::Sender<CoreEvent>`. Exactly one task drains it and calls Tauri
+      `emit`. Nothing else calls `emit`.
+- [ ] UI has a single `subscribe(handler)` and a typed `invoke<T>()` wrapper.
+      `protocol.ts` is hand-written now; note in the file that generating it (e.g.
+      with `ts-rs` or `specta`) is an option if it drifts.
+- [ ] Events carry a scope id (playground id, server id, or run id) so the UI can
+      route without inspecting payloads.
+- [ ] A burst of 10,000 events does not reorder and does not drop under normal
+      load; lagging receivers are logged, not silently ignored.
+- [ ] Errors from commands reach the UI as a structured `{ code, message }`, never
+      as a stringified `anyhow` chain. The UI shows them in a non-blocking toast.
+
+## Out of scope
+
+Any specific command beyond `ping` and the run/cancel pair added in 00-06.
+
+## Gotchas
+
+Tauri `Channel` (per-call streaming) is the better fit for high-volume streams like
+LSP traffic in Phase 2. Use the broadcast + emit path for app-wide events, and note
+in the code where a Channel should be used instead.
