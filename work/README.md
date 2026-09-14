@@ -17,7 +17,7 @@ Tick the box here when an item is finished.
 ## Phase 0 — Skeleton
 
 - [x] [00-01 Cargo workspace and crate skeletons](phase-0-skeleton/00-01-workspace.md) · S
-- [ ] [00-02 Tauri 2 shell and UI scaffold](phase-0-skeleton/00-02-tauri-shell.md) · S
+- [x] [00-02 Tauri 2 shell and UI scaffold](phase-0-skeleton/00-02-tauri-shell.md) · S
 - [ ] [00-03 Editor and output pane layout](phase-0-skeleton/00-03-editor-and-output-pane.md) · M
 - [x] [00-04 Process supervision crate](phase-0-skeleton/00-04-process-supervision.md) · M
 - [ ] [00-05 Core to UI event channel and command surface](phase-0-skeleton/00-05-event-channel.md) · S

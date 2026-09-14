@@ -26,6 +26,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # The Tauri app embeds ui/dist, so build the UI before any cargo step.
+      - name: Build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -53,19 +66,54 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-      - name: Check for UI project
-        id: has-ui
-        run: |
-          if [ -f ui/package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
       - name: Install
-        if: steps.has-ui.outputs.present == 'true'
         working-directory: ui
         run: npm ci
       - name: Typecheck
-        if: steps.has-ui.outputs.present == 'true'
         working-directory: ui
         run: npm run typecheck
       - name: Build
-        if: steps.has-ui.outputs.present == 'true'
         working-directory: ui
         run: npm run build
+
+  launch:
+    name: Launch smoke test (${{ matrix.os }})
+    needs: rust
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build app (debug, assets embedded)
+        run: |
+          npm --prefix ui ci
+          ui/node_modules/.bin/tauri build --debug --no-bundle
+
+      - name: Launch (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 90
+
+      - name: Launch (macOS)
+        if: runner.os == 'macOS'
+        run: bash scripts/smoke-launch.sh target/debug/tinkerpad 90

@@ -41,3 +41,34 @@ Editor, output pane, tabs, theming. Anything that looks like the product.
 
 WebView2 is present on Windows 11 by default; the installer should still declare
 the dependency so it works on a clean Windows 10.
+
+## Results
+
+Implemented 2026-09-14.
+
+**Launch time**, measured from `run()` starting to the UI's first `ping`
+reaching the core (a slight overestimate of "window visible"). Release build,
+Windows 11 x64, three consecutive launches:
+
+| Launch | Time |
+|---|---|
+| First (cold) | 386 ms |
+| Second | 287 ms |
+| Third | 286 ms |
+
+Under the 500 ms target.
+
+**macOS and Linux:** not launched by hand. The CI `launch` job builds the app
+on both and runs `scripts/smoke-launch.sh`, which starts the real window (under
+Xvfb on Linux) and waits for the UI to report ready, printing the same timing.
+Check those job logs for per-platform numbers. A hands-on look at WebKitGTK
+rendering is still worth doing before a release.
+
+**Window state:** verified by moving and resizing the window, closing it
+normally, relaunching, and reading back the same position and size.
+
+**Notes**
+- Rust minimum version raised to 1.88; current Tauri 2 dependencies require it.
+- The Tauri CLI finds `crates/tinkerpad-app/tauri.conf.json` when run from the
+  repo root, so commands run as `ui/node_modules/.bin/tauri …` from there.
+- Tauri 3.0 is in alpha; staying on Tauri 2 per `PLAN.md`.

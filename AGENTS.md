@@ -74,5 +74,6 @@ npm run typecheck
 npm run build
 
 # App (from repo root)
-npm --prefix ui run tauri dev
+ui/node_modules/.bin/tauri dev            # dev window with hot reload
+ui/node_modules/.bin/tauri build --no-bundle   # release binary in target/release
 ```
