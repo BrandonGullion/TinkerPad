@@ -21,7 +21,9 @@ export type CoreEvent =
   | { type: "pong"; readyMs: number }
   | { type: "toast"; level: Level; message: string }
   | ({ type: "run" } & RunEvent)
-  | { type: "toolchain"; language: string; state: ToolchainState };
+  | { type: "toolchain"; language: string; state: ToolchainState }
+  | { type: "libraryChanged" }
+  | { type: "sourceChangedOnDisk"; playground: string };
 
 /** Whether a language's toolchain is usable. */
 export type ToolchainState =
@@ -68,4 +70,31 @@ export interface PluginsStatus {
     dir: string;
   }[];
   failures: { dir: string; source: PluginSource; message: string }[];
+}
+
+export interface Playground {
+  /** ULID, stable across renames. */
+  id: string;
+  name: string;
+  language: string;
+  kind: string;
+  dir: string;
+  mainFile: string;
+  createdMs: number;
+  tags: string[];
+}
+
+export interface PlaygroundSummary extends Playground {
+  modifiedMs: number;
+  /** First non-empty line of the main file. */
+  preview: string;
+}
+
+/** Reply to `list_playgrounds`. */
+export interface Listing {
+  root: string;
+  /** Most recently modified first. */
+  playgrounds: PlaygroundSummary[];
+  /** Folders with a playground.toml that couldn't be read. */
+  broken: { dir: string; message: string }[];
 }

@@ -9,6 +9,7 @@
 //! publishing on the [`EventBus`].
 
 pub mod events;
+mod library;
 mod logging;
 mod plugins;
 mod runs;
@@ -21,6 +22,7 @@ use std::time::Instant;
 
 use tauri::{Emitter, Manager};
 use tinkerpad_core::{CoreEvent, Level, Scope};
+use tinkerpad_library::Library;
 use tinkerpad_plugin::PluginRegistry;
 
 use events::EventBus;
@@ -42,6 +44,9 @@ pub struct AppState {
     toolchains: Arc<Toolchains>,
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
+    library: Arc<Library>,
+    /// Keeps the library watcher running; `None` if it couldn't start.
+    _library_watcher: Mutex<Option<tinkerpad_library::Watcher>>,
     /// Notices raised before the UI was listening, delivered on its first `ping`.
     startup_notices: Mutex<Vec<(Level, String)>>,
 }
@@ -96,6 +101,105 @@ mod commands {
     #[tauri::command]
     pub fn recheck_toolchains(app: tauri::AppHandle) {
         crate::toolchains::check_all(&app);
+    }
+
+    /// Every playground (newest first) and folders with broken metadata.
+    #[tauri::command(async)]
+    pub fn list_playgrounds(state: State<'_, AppState>) -> tinkerpad_library::Listing {
+        state.library.list()
+    }
+
+    /// Create a playground for a loaded plugin. `kind` defaults to the
+    /// plugin's default kind. The main file starts empty; templates and
+    /// scaffold files arrive with work item 01-05.
+    #[tauri::command(async)]
+    pub fn create_playground(
+        state: State<'_, AppState>,
+        name: String,
+        language: String,
+        kind: Option<String>,
+    ) -> Result<tinkerpad_core::Playground, CommandError> {
+        use tinkerpad_core::{ErrorCode, KindId};
+        let plugin = state
+            .plugins
+            .read()
+            .expect("plugins lock")
+            .get(&language)
+            .cloned()
+            .ok_or_else(|| {
+                CommandError::new(
+                    ErrorCode::InvalidInput,
+                    format!("no plugin is loaded for language `{language}`"),
+                )
+            })?;
+        let kind = match kind {
+            Some(id) => plugin.kind(&id).ok_or_else(|| {
+                CommandError::new(
+                    ErrorCode::InvalidInput,
+                    format!("{} has no kind `{id}`", plugin.name),
+                )
+            })?,
+            None => plugin.default_kind(),
+        };
+        state
+            .library
+            .create(tinkerpad_library::NewPlayground {
+                name,
+                language: plugin.id.clone(),
+                kind: KindId::new(kind.id.clone()),
+                main_path: plugin.main_path.clone(),
+                files: Vec::new(),
+            })
+            .map_err(crate::library::to_command_error)
+    }
+
+    /// Rename a playground; its folder follows the new name.
+    #[tauri::command(async)]
+    pub fn rename_playground(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+        name: String,
+    ) -> Result<tinkerpad_core::Playground, CommandError> {
+        state
+            .library
+            .rename(&id, &name)
+            .map_err(crate::library::to_command_error)
+    }
+
+    /// Move a playground's folder to the OS recycle bin.
+    #[tauri::command(async)]
+    pub fn delete_playground(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+    ) -> Result<(), CommandError> {
+        state
+            .library
+            .delete(&id)
+            .map_err(crate::library::to_command_error)
+    }
+
+    #[tauri::command(async)]
+    pub fn read_source(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+    ) -> Result<String, CommandError> {
+        state
+            .library
+            .read_source(&id)
+            .map_err(crate::library::to_command_error)
+    }
+
+    /// Replace a playground's main file atomically.
+    #[tauri::command(async)]
+    pub fn write_source(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+        text: String,
+    ) -> Result<(), CommandError> {
+        state
+            .library
+            .write_source(&id, &text)
+            .map_err(crate::library::to_command_error)
     }
 
     /// Run the editor's code. Returns the run id; output and the outcome
@@ -179,10 +283,14 @@ pub fn run() {
                 }
             });
 
-            let (registry, startup_notices) = plugins::load(app.handle())?;
+            let (registry, mut startup_notices) = plugins::load(app.handle())?;
 
             settings::ensure_exists(&data_dir);
             let toolchains = Arc::new(Toolchains::default());
+
+            let library_root = library::root(app.handle(), &data_dir, &mut startup_notices);
+            let playgrounds = library::open(library_root, &data_dir, &mut startup_notices);
+            let library_watcher = library::watch(&playgrounds, bus.clone());
 
             let runs = Runs::new(bus.clone(), data_dir.join("scratch"), toolchains.clone());
             app.manage(AppState {
@@ -191,6 +299,8 @@ pub fn run() {
                 data_dir,
                 toolchains,
                 plugins: RwLock::new(registry),
+                library: playgrounds,
+                _library_watcher: Mutex::new(library_watcher),
                 startup_notices: Mutex::new(startup_notices),
             });
 
@@ -206,6 +316,12 @@ pub fn run() {
             commands::list_plugins,
             commands::toolchain_status,
             commands::recheck_toolchains,
+            commands::list_playgrounds,
+            commands::create_playground,
+            commands::rename_playground,
+            commands::delete_playground,
+            commands::read_source,
+            commands::write_source,
             commands::selftest_scenario,
             commands::selftest_report,
         ])

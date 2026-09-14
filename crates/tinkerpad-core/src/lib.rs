@@ -9,7 +9,9 @@
 pub mod error;
 pub mod events;
 pub mod language;
+pub mod playground;
 
 pub use error::{CommandError, ErrorCode};
 pub use events::{CoreEvent, Envelope, Level, RunEvent, Scope, ToolchainState};
 pub use language::LanguageId;
+pub use playground::{BrokenPlayground, KindId, Playground, PlaygroundId, PlaygroundSummary};

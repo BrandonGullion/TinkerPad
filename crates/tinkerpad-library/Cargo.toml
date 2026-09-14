@@ -13,6 +13,11 @@ serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+ulid = "1"
+trash = "5"
+notify = "8"
+notify-debouncer-mini = "0.7.0"
+humantime = "2"
 
 [lints]
 workspace = true
