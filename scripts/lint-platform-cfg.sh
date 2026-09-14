@@ -10,7 +10,7 @@ allowed='crates/tinkerpad-process/src/platform/|crates/tinkerpad-plugin/src/env'
 # Skip comment lines (//, //!, ///) so docs may mention the pattern.
 hits=$(grep -rnE 'cfg\((target_os|windows|unix)' crates --include='*.rs' \
   | grep -vE "^($allowed)" \
-  | grep -vE '^[^:]+:[0-9]+:\s*//' || true)
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
 
 if [ -n "$hits" ]; then
   echo "Platform cfg found outside the platform modules:"

@@ -43,7 +43,7 @@ jobs:
 
       - name: Platform-code lint
         shell: bash
-        run: scripts/lint-platform-cfg.sh
+        run: bash scripts/lint-platform-cfg.sh
 
   ui:
     name: UI
