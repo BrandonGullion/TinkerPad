@@ -340,6 +340,6 @@ async fn supervise(
         duration: started.elapsed(),
     };
     debug!(pid, program, ?exit, "exited");
+    // `guard` (job object on Windows) is released when this function returns.
     let _ = tx.send(ProcessEvent::Exited(exit)).await;
-    drop(guard);
 }
