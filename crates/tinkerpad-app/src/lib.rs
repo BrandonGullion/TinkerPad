@@ -12,7 +12,10 @@ pub mod events;
 mod logging;
 mod plugins;
 mod runs;
+mod settings;
+mod toolchains;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Instant;
 
@@ -22,6 +25,7 @@ use tinkerpad_plugin::PluginRegistry;
 
 use events::EventBus;
 use runs::Runs;
+use toolchains::Toolchains;
 
 /// Name of the single Tauri event the UI listens to.
 pub const EVENT_NAME: &str = "core-event";
@@ -33,6 +37,9 @@ static STARTED: OnceLock<Instant> = OnceLock::new();
 pub struct AppState {
     pub events: Arc<EventBus>,
     runs: Runs,
+    /// `<app-data>`: settings, scratch folders, the user plugin folder.
+    data_dir: PathBuf,
+    toolchains: Arc<Toolchains>,
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
     /// Notices raised before the UI was listening, delivered on its first `ping`.
@@ -73,6 +80,22 @@ mod commands {
     pub fn list_plugins(state: State<'_, AppState>) -> crate::plugins::PluginsStatus {
         let registry = state.plugins.read().expect("plugins lock");
         crate::plugins::PluginsStatus::from_registry(&registry)
+    }
+
+    /// The latest toolchain state of every loaded plugin. States still being
+    /// checked are `checking`; `toolchain` events report each result.
+    #[tauri::command]
+    pub fn toolchain_status(
+        state: State<'_, AppState>,
+    ) -> Vec<crate::toolchains::LanguageToolchain> {
+        state.toolchains.snapshot()
+    }
+
+    /// Rediscover PATH, reread settings overrides, and probe every toolchain
+    /// again. Returns immediately; results arrive as `toolchain` events.
+    #[tauri::command]
+    pub fn recheck_toolchains(app: tauri::AppHandle) {
+        crate::toolchains::check_all(&app);
     }
 
     /// Run the editor's code. Returns the run id; output and the outcome
@@ -158,13 +181,21 @@ pub fn run() {
 
             let (registry, startup_notices) = plugins::load(app.handle())?;
 
-            let runs = Runs::new(bus.clone(), data_dir.join("scratch"));
+            settings::ensure_exists(&data_dir);
+            let toolchains = Arc::new(Toolchains::default());
+
+            let runs = Runs::new(bus.clone(), data_dir.join("scratch"), toolchains.clone());
             app.manage(AppState {
                 events: bus,
                 runs,
+                data_dir,
+                toolchains,
                 plugins: RwLock::new(registry),
                 startup_notices: Mutex::new(startup_notices),
             });
+
+            // Probes run in the background; the window never waits for them.
+            toolchains::check_all(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -173,6 +204,8 @@ pub fn run() {
             commands::cancel,
             commands::open_log_folder,
             commands::list_plugins,
+            commands::toolchain_status,
+            commands::recheck_toolchains,
             commands::selftest_scenario,
             commands::selftest_report,
         ])

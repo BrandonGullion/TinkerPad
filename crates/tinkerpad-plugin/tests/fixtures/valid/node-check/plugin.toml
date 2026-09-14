@@ -1,0 +1,23 @@
+api = 1
+
+# A plugin whose toolchain is Node, used by the in-app "toolchains" self-test
+# to check a real probe succeeds through the discovered PATH.
+
+[language]
+id = "node-check"
+name = "Node check"
+extension = "njs"
+
+[toolchain]
+probe = [{ command = "node", args = ["--version"], min_version = "18" }]
+install_hint = "Install Node.js from https://nodejs.org"
+
+[[kind]]
+id = "script"
+name = "Script"
+template = "main.js"
+default = true
+
+[run]
+command = "{toolchain}"
+args = ["{main}"]
