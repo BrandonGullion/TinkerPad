@@ -11,3 +11,6 @@
 //! See `docs/ARCHITECTURE.md` §1, §5.1, §10 and work item 00-04.
 
 pub mod platform;
+mod spawn;
+
+pub use spawn::{Exit, KillHandle, ProcessEvent, SpawnError, SpawnSpec, Supervised, spawn};

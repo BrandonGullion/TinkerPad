@@ -4,11 +4,22 @@
 //! the only module in the workspace allowed to use `cfg(target_os)`; CI greps
 //! for it elsewhere and fails the build (work item 00-08).
 //!
-//! | Concern                  | Windows          | macOS                     | Linux                              |
-//! |--------------------------|------------------|---------------------------|------------------------------------|
-//! | Children die with app    | Job object       | Process group + pid sweep | Process group + `PR_SET_PDEATHSIG` |
-//! | Console window flash     | `CREATE_NO_WINDOW` | n/a                     | n/a                                |
-//! | Kill tree                | Terminate job    | `SIGTERM` group, `SIGKILL` | `SIGTERM` group, `SIGKILL`        |
+//! | Concern               | Windows            | macOS                      | Linux                              |
+//! |-----------------------|--------------------|----------------------------|------------------------------------|
+//! | Children die with app | Job object per child | Process group + pid registry swept at launch | Process group + `PR_SET_PDEATHSIG` |
+//! | Console window flash  | `CREATE_NO_WINDOW` | n/a                        | n/a                                |
+//! | Kill tree             | Terminate job      | `SIGTERM` group, `SIGKILL` | `SIGTERM` group, `SIGKILL`         |
+//!
+//! Every backend exposes:
+//!
+//! - `prepare(&mut Command)`: set flags before spawn.
+//! - `register_child(pid, program) -> Guard`: after spawn; the guard is held
+//!   for the child's lifetime and dropping it releases platform resources.
+//! - `terminate(&Guard, pid)`: polite termination of the whole tree.
+//! - `terminate_hard(&Guard, pid)`: forceful termination of the whole tree.
+//! - `is_alive(pid) -> bool`: liveness check used by tests and the sweep.
+//! - `set_registry(path)` / `sweep_orphans()`: the macOS pid registry; no-ops
+//!   elsewhere so the app can call them unconditionally.
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -24,6 +35,9 @@ pub use macos::*;
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::*;
+
+#[cfg(unix)]
+mod unix;
 
 /// Human-readable name of the current platform, for logs and the status strip.
 pub const fn name() -> &'static str {
