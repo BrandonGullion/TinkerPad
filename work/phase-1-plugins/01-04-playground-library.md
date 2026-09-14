@@ -24,7 +24,7 @@ start means no migration later and means users can `git init` their library.
       `-3`. Folder name is the slugified name; the display name keeps its case and
       spaces.
 - [x] `rename` renames the folder and updates the index; `id` never changes.
-- [ ] `delete` moves the folder to the OS recycle bin (`trash` crate), never a hard
+- [x] `delete` moves the folder to the OS recycle bin (`trash` crate), never a hard
       delete.
 - [x] `list()` returns playgrounds sorted by last modified; each carries name,
       language, kind, tags, modified time, and the first non-empty code line as a
@@ -116,6 +116,10 @@ runs this plus `library-trash` on macOS and Linux.
 ## Checklist status
 
 **Ticked with a note**
+- *`delete` moves the folder to the recycle bin.* Verified in CI, where
+  `TINKERPAD_TEST_TRASH=1` lets the test use the real trash: the Rust test passed
+  on Windows, macOS, and Linux, and the in-app `library-trash` self-test on macOS
+  and Linux. Locally the test skips itself so it doesn't fill the recycle bin.
 - *`Playground` per ARCHITECTURE.md §3.* `created` is `created_ms` (milliseconds
   since the epoch) rather than a `DateTime`, because `tinkerpad-core` has no date
   library. `playground.toml` still stores an RFC 3339 datetime.
@@ -133,6 +137,3 @@ runs this plus `library-trash` on macOS and Linux.
 - *Malformed `playground.toml` shown with a warning badge.* It is logged and
   returned in `list_playgrounds` under `broken`, but no library UI exists to show
   a badge until 01-12 and 04-01.
-- *`delete` moves the folder to the OS recycle bin.* Implemented and compiled for
-  every platform. It is verified only where `TINKERPAD_TEST_TRASH=1` is set (CI),
-  so this stays open until CI confirms it on all three.
