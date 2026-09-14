@@ -339,8 +339,10 @@ The summary table is in `PLAN.md` §3.6. Design rules that follow from it:
 
 - **One module per platform concern.** `tinkerpad-process::platform` exposes
   `kill_tree`, `register_child`, `hide_console`; `tinkerpad-plugin::env` exposes
-  `discover_path`. Each has a Windows, macOS, and Linux implementation selected by
-  `cfg`, and nothing outside those modules uses `cfg(target_os)`.
+  `discover_path` and `find_program`; `tinkerpad-library::platform` exposes
+  `move_to_trash` (macOS needs `NSFileManager` instead of scripting Finder). Each
+  selects its implementation with `cfg`, and nothing outside those modules uses
+  `cfg(target_os)`.
 - **Children die with the app.** Windows: one job object. Linux: each child in
   its own process group plus `PR_SET_PDEATHSIG(SIGTERM)` set in `pre_exec`. macOS:
   process group only; additionally, every spawned pid is recorded in

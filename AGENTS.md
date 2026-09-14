@@ -47,8 +47,10 @@ These apply to all work after Phase 0.
   `npm run build` passing.
 - Respect the crate dependency direction in the root `Cargo.toml`.
   `tinkerpad-core` never depends on tokio or tauri.
-- Platform-specific code lives only in `tinkerpad-process/src/platform/` and
-  `tinkerpad-plugin/src/env.rs`. `scripts/lint-platform-cfg.sh` enforces this.
+- Platform-specific code lives only in `tinkerpad-process/src/platform/`,
+  `tinkerpad-plugin/src/env.rs`, and `tinkerpad-library/src/platform.rs`.
+  `scripts/lint-platform-cfg.sh` enforces this. Adding a module to that list
+  needs an entry in `PLAN.md`'s decision log.
 - Nothing language-specific goes into Rust. It belongs in a plugin folder.
 - Spawn child processes only through `tinkerpad-process`.
 - Tests that spawn processes use the test binaries in `tinkerpad-process`, not

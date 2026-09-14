@@ -359,3 +359,4 @@ panels in the UI, then one adapter integration per language, Node first.
 | 2026-09-13 | Preludes are locked lines in the file, never hidden | Removes all LSP position rewriting; the server sees what the editor shows | Users hate the dimmed lines |
 | 2026-09-14 | Windows, macOS, Linux all first-class; CI on all three from Phase 0 | Supporting as many platforms as possible is a stated goal; platform bugs are cheap early and expensive late | — |
 | 2026-09-14 | Debugging deferred to Phase 6, with 15 named constraints on earlier phases (`docs/DEBUGGING.md`) | Wanted eventually; the constraints are cheap now and a rewrite later | — |
+| 2026-09-14 | `tinkerpad-library/src/platform.rs` joins the modules allowed to use platform `cfg` | Moving playgrounds to the macOS Trash without a Finder automation prompt needs a macOS-only API; the concern belongs to the library, not to process handling | — |

@@ -57,6 +57,12 @@ pub enum CoreEvent {
         language: crate::LanguageId,
         state: ToolchainState,
     },
+    /// Playgrounds were added, removed, renamed, or their metadata changed on
+    /// disk. The UI should list them again.
+    LibraryChanged,
+    /// A playground's main file was changed outside the app. A clean tab
+    /// reloads it; a dirty one asks (work item 01-12).
+    SourceChangedOnDisk { playground: crate::PlaygroundId },
 }
 
 /// Whether a language's toolchain is usable.

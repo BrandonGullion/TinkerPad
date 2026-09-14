@@ -1,6 +1,6 @@
 //! `settings.toml`: created on first launch, read when needed.
 //!
-//! Only `[toolchains]` is read so far (work item 01-03). The full typed
+//! Only `[toolchains]` (01-03) and `[library]` (01-04) are read so far. The full typed
 //! settings schema, hot reload, and a settings UI arrive in 04-02.
 
 use std::path::{Path, PathBuf};
@@ -21,6 +21,12 @@ const TEMPLATE: &str = r#"# TinkerPad settings.
 #
 # [toolchains.python]
 # python3 = "/opt/homebrew/bin/python3"
+#
+# Where playgrounds are stored. Default: a TinkerPad folder in your home folder.
+# Restart after changing it.
+#
+# [library]
+# root = "D:/Code/TinkerPad"
 "#;
 
 pub fn path(data_dir: &Path) -> PathBuf {
@@ -62,5 +68,54 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+}
+
+/// `[library].root` from `settings.toml`, if set.
+pub fn library_root(data_dir: &Path) -> Result<Option<PathBuf>, String> {
+    let file = path(data_dir);
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("could not read {}: {e}", file.display())),
+    };
+    let table: toml::Table =
+        toml::from_str(&text).map_err(|e| format!("{}: {}", file.display(), e.message()))?;
+    match table.get("library").and_then(|l| l.get("root")) {
+        None => Ok(None),
+        Some(toml::Value::String(root)) if !root.trim().is_empty() => Ok(Some(PathBuf::from(root))),
+        Some(_) => Err(format!(
+            "{}: [library] root should be a folder path in quotes",
+            file.display()
+        )),
+    }
+}
+
+#[cfg(test)]
+mod library_root_tests {
+    use super::*;
+
+    #[test]
+    fn reads_library_root() {
+        let dir = std::env::temp_dir().join(format!("tinkerpad-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(library_root(&dir).unwrap(), None, "no file");
+
+        std::fs::write(path(&dir), TEMPLATE).unwrap();
+        assert_eq!(
+            library_root(&dir).unwrap(),
+            None,
+            "template has it commented out"
+        );
+
+        std::fs::write(path(&dir), "[library]\nroot = \"/data/pads\"\n").unwrap();
+        assert_eq!(
+            library_root(&dir).unwrap(),
+            Some(PathBuf::from("/data/pads"))
+        );
+
+        std::fs::write(path(&dir), "[library]\nroot = 3\n").unwrap();
+        assert!(library_root(&dir).is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

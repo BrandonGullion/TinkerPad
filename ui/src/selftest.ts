@@ -9,7 +9,7 @@ import { runScopeHandlers } from "@codemirror/view";
 import type { Editor } from "./editor";
 import { invoke, subscribe } from "./ipc";
 import type { OutputPane } from "./output";
-import type { LanguageToolchain, PluginsStatus } from "./protocol";
+import type { LanguageToolchain, Listing, Playground, PluginsStatus } from "./protocol";
 import type { RunController } from "./run";
 
 export interface SelftestContext {
@@ -253,6 +253,8 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   run: runScenario,
   plugins: pluginsScenario,
   toolchains: toolchainsScenario,
+  library: libraryScenario,
+  "library-trash": libraryTrashScenario,
 };
 
 async function pluginsScenario(_ctx: SelftestContext, check: Check) {
@@ -349,4 +351,97 @@ async function toolchainsScenario(_ctx: SelftestContext, check: Check) {
     `${events} result events for ${after.length} plugins`,
   );
   unsubscribe();
+}
+
+/** The folder name at the end of a path, on any OS. */
+function folderName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+/**
+ * Create, list, write, read, and rename playgrounds through the app. Needs a
+ * loaded plugin with id "node-check" (the CI test plugin) and should run with
+ * TINKERPAD_LIBRARY pointing at a throwaway folder.
+ */
+async function libraryScenario(_ctx: SelftestContext, check: Check) {
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  if (!plugins.plugins.some((p) => p.id === "node-check")) {
+    await check("library scenario needs the node-check test plugin", false);
+    return;
+  }
+
+  let libraryEvents = 0;
+  let sourceEvents = 0;
+  const unsubscribe = subscribe(({ event }) => {
+    if (event.type === "libraryChanged") libraryEvents++;
+    if (event.type === "sourceChangedOnDisk") sourceEvents++;
+  });
+
+  const before = await invoke<Listing>("list_playgrounds");
+  await report(`INFO library root ${before.root} (${before.playgrounds.length} playgrounds)`);
+
+  const a = await invoke<Playground>("create_playground", {
+    name: "Self Test",
+    language: "node-check",
+  });
+  const b = await invoke<Playground>("create_playground", {
+    name: "self test",
+    language: "node-check",
+    kind: "script",
+  });
+  await check(
+    "create makes slugged, numbered folders",
+    folderName(a.dir).startsWith("self-test") &&
+      folderName(b.dir) !== folderName(a.dir) &&
+      a.name === "Self Test" &&
+      a.kind === "script",
+    `${folderName(a.dir)}, ${folderName(b.dir)}`,
+  );
+
+  let failed = "";
+  await invoke("create_playground", { name: "Nope", language: "no-such-language" }).catch(
+    (e: { code?: string }) => (failed = e.code ?? "?"),
+  );
+  await check("unknown language is rejected", failed === "invalidInput", failed);
+
+  await invoke("write_source", { id: a.id, text: "console.log('from the self-test');\n" });
+  const text = await invoke<string>("read_source", { id: a.id });
+  await check("write then read round-trips", text === "console.log('from the self-test');\n");
+
+  const listing = await invoke<Listing>("list_playgrounds");
+  const listed = listing.playgrounds.find((p) => p.id === a.id);
+  await check(
+    "list shows the playground with a preview, newest first",
+    listed?.preview === "console.log('from the self-test');" &&
+      listing.playgrounds[0]?.id === a.id,
+    JSON.stringify(listed?.preview),
+  );
+
+  const renamed = await invoke<Playground>("rename_playground", { id: a.id, name: "Renamed Test" });
+  await check(
+    "rename moves the folder and keeps the id",
+    renamed.id === a.id && folderName(renamed.dir).startsWith("renamed-test"),
+    folderName(renamed.dir),
+  );
+  await check(
+    "source survives rename",
+    (await invoke<string>("read_source", { id: a.id })) === text,
+  );
+
+  // Our own writes and renames must not look like outside changes.
+  await sleep(1500);
+  await check("no source-changed event for our own writes", sourceEvents === 0, `${sourceEvents}`);
+  await report(`INFO libraryChanged events during scenario: ${libraryEvents}`);
+  unsubscribe();
+}
+
+/** Moves a playground to the real recycle bin; CI only. */
+async function libraryTrashScenario(_ctx: SelftestContext, check: Check) {
+  const p = await invoke<Playground>("create_playground", {
+    name: "Trash Me",
+    language: "node-check",
+  });
+  await invoke("delete_playground", { id: p.id });
+  const listing = await invoke<Listing>("list_playgrounds");
+  await check("delete removes the playground", !listing.playgrounds.some((x) => x.id === p.id));
 }

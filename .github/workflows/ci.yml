@@ -52,6 +52,9 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
+        # Lets the library test move a playground to the real recycle bin.
+        env:
+          TINKERPAD_TEST_TRASH: "1"
         run: cargo test --workspace
 
       - name: Platform-code lint
@@ -122,21 +125,27 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,library,library-trash
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
+          TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
           set -o pipefail
           xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee launch.log
           grep -q "selftest: INFO plugins loaded=2 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
+          grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
+          grep -q "selftest: PASS delete removes the playground" launch.log
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,library,library-trash
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
+          TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
           set -o pipefail
           bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee launch.log
           grep -q "selftest: INFO plugins loaded=2 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
+          grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
+          grep -q "selftest: PASS delete removes the playground" launch.log
