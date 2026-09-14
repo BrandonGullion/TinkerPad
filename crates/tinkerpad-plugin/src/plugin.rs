@@ -7,6 +7,8 @@ use std::time::Duration;
 use regex::Regex;
 use tracing::warn;
 
+use tinkerpad_core::LanguageId;
+
 use crate::error::{Location, ManifestError, Problem, ProblemKind, Syntax, Unknown};
 use crate::manifest::{self, KNOWN_SECTIONS, Manifest};
 use crate::os::Os;
@@ -64,7 +66,7 @@ pub struct Plugin {
     pub dir: PathBuf,
     /// The OS this plugin was resolved for.
     pub os: Os,
-    pub id: String,
+    pub id: LanguageId,
     pub name: String,
     /// File extension without the dot.
     pub extension: String,
@@ -359,7 +361,7 @@ impl Validator<'_> {
         Plugin {
             dir: self.dir.to_path_buf(),
             os: self.os,
-            id: lang.id,
+            id: LanguageId::new(lang.id),
             name: lang.name,
             extension: lang.extension,
             highlighter: lang.highlighter,

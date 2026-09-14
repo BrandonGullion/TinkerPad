@@ -8,6 +8,8 @@
 
 pub mod error;
 pub mod events;
+pub mod language;
 
 pub use error::{CommandError, ErrorCode};
 pub use events::{CoreEvent, Envelope, Level, RunEvent, Scope};
+pub use language::LanguageId;
