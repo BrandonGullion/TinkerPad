@@ -61,8 +61,17 @@ Under the 500 ms target.
 **macOS and Linux:** not launched by hand. The CI `launch` job builds the app
 on both and runs `scripts/smoke-launch.sh`, which starts the real window (under
 Xvfb on Linux) and waits for the UI to report ready, printing the same timing.
-Check those job logs for per-platform numbers. A hands-on look at WebKitGTK
-rendering is still worth doing before a release.
+First CI results, debug builds on shared runners (not comparable to the
+Windows release numbers above):
+
+| Platform | Time to UI ready |
+|---|---|
+| macOS arm64 runner | 4346 ms |
+| Ubuntu runner under Xvfb | 34275 ms |
+
+The Linux figure is software rendering in a headless VM with a debug build, so
+it proves the app starts, not how fast it starts. A hands-on look at WebKitGTK
+rendering and startup on real hardware is still needed before a release.
 
 **Window state:** verified by moving and resizing the window, closing it
 normally, relaunching, and reading back the same position and size.

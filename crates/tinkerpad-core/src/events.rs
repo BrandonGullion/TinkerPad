@@ -1,0 +1,132 @@
+//! Events the core sends to the UI.
+//!
+//! Every event travels inside an [`Envelope`] carrying a [`Scope`] (so the UI
+//! can route it without looking at the payload) and a sequence number (so
+//! ordering can be checked). The TypeScript mirror lives in
+//! `ui/src/protocol.ts`; keep the two in step.
+
+use serde::Serialize;
+
+/// What an event is about. Serialised as a short string such as `"app"` or
+/// `"run:7"` so the UI can use it directly as a map key.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Scope {
+    /// Application-wide: toasts, settings, startup.
+    App,
+    /// One execution of a playground.
+    Run(u64),
+}
+
+impl std::fmt::Display for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Scope::App => f.write_str("app"),
+            Scope::Run(id) => write!(f, "run:{id}"),
+        }
+    }
+}
+
+impl Serialize for Scope {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// Severity of a user-facing notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Level {
+    Info,
+    Warning,
+    Error,
+}
+
+/// Something the UI should know about.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum CoreEvent {
+    /// Reply to the `ping` command, carrying launch-to-ready time.
+    #[serde(rename_all = "camelCase")]
+    Pong { ready_ms: u64 },
+    /// A non-blocking notice for the user.
+    Toast { level: Level, message: String },
+    /// Execution output and lifecycle; see [`RunEvent`].
+    Run(RunEvent),
+}
+
+/// What happened during one run. The scope carries the run id.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RunEvent {
+    Started,
+    /// Output text. Decoded lossily from bytes at this boundary; the raw
+    /// bytes stay in the runner for future Dump parsing.
+    Stdout {
+        text: String,
+    },
+    Stderr {
+        text: String,
+    },
+    /// The process ended on its own.
+    #[serde(rename_all = "camelCase")]
+    Exited {
+        code: Option<i32>,
+        duration_ms: u64,
+    },
+    /// The user cancelled the run.
+    #[serde(rename_all = "camelCase")]
+    Cancelled {
+        duration_ms: u64,
+    },
+    /// The run could not start at all.
+    Failed {
+        message: String,
+    },
+}
+
+/// The wire format for one event.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Envelope {
+    /// Strictly increasing per app session.
+    pub seq: u64,
+    pub scope: Scope,
+    pub event: CoreEvent,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn envelope_wire_format() {
+        let env = Envelope {
+            seq: 3,
+            scope: Scope::Run(7),
+            event: CoreEvent::Run(RunEvent::Exited {
+                code: Some(0),
+                duration_ms: 12,
+            }),
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        assert_eq!(
+            json,
+            r#"{"seq":3,"scope":"run:7","event":{"type":"run","kind":"exited","code":0,"durationMs":12}}"#
+        );
+    }
+
+    #[test]
+    fn toast_wire_format() {
+        let env = Envelope {
+            seq: 1,
+            scope: Scope::App,
+            event: CoreEvent::Toast {
+                level: Level::Warning,
+                message: "hi".into(),
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&env).unwrap(),
+            r#"{"seq":1,"scope":"app","event":{"type":"toast","level":"warning","message":"hi"}}"#
+        );
+    }
+}

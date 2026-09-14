@@ -3,24 +3,53 @@
 //! Wires the core crates into a Tauri 2 shell: commands the UI can invoke, the
 //! single event channel the UI subscribes to, and the `AppState` that owns the
 //! pools and the library.
+//!
+//! Adding a feature is "add a command, add an event": commands live in
+//! [`commands`], return `Result<T, CommandError>`, and report progress by
+//! publishing on the [`EventBus`].
 
-use std::sync::OnceLock;
+pub mod events;
+
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{Emitter, Manager};
+use tinkerpad_core::{CoreEvent, Scope};
+
+use events::EventBus;
+
+/// Name of the single Tauri event the UI listens to.
+pub const EVENT_NAME: &str = "core-event";
 
 /// When `run` started, for the launch-time measurement.
 static STARTED: OnceLock<Instant> = OnceLock::new();
 
-/// Seed round-trip for work item 00-05. The UI calls this once its script has
-/// loaded; the reply carries the time since process start, which is the
-/// launch-to-interactive number work item 00-02 asks for.
-#[tauri::command]
-fn ping(app: AppHandle) -> Result<(), String> {
-    let ms = STARTED.get().map(|s| s.elapsed().as_millis()).unwrap_or(0);
-    println!("ui ready {ms} ms after start");
-    app.emit("pong", format!("ready in {ms} ms"))
-        .map_err(|e| e.to_string())
+/// Everything commands need, held in Tauri's managed state.
+pub struct AppState {
+    pub events: Arc<EventBus>,
+}
+
+mod commands {
+    use tauri::State;
+    use tinkerpad_core::CommandError;
+
+    use super::*;
+
+    /// The UI calls this once its script has loaded. The reply carries the
+    /// time since process start, which is the launch-to-interactive number.
+    #[tauri::command]
+    pub fn ping(state: State<'_, AppState>) -> Result<(), CommandError> {
+        let ready_ms = STARTED
+            .get()
+            .map(|s| s.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        // Printed as well as logged so scripts/smoke-launch.sh can see it.
+        println!("ui ready {ready_ms} ms after start");
+        state
+            .events
+            .publish(Scope::App, CoreEvent::Pong { ready_ms });
+        Ok(())
+    }
 }
 
 pub fn run() {
@@ -28,7 +57,18 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![ping])
+        .setup(|app| {
+            let bus = Arc::new(EventBus::new());
+            let handle = app.handle().clone();
+            events::spawn_forwarder(bus.subscribe(), move |env| {
+                if let Err(error) = handle.emit(EVENT_NAME, env) {
+                    tracing::warn!(%error, seq = env.seq, "failed to emit event to UI");
+                }
+            });
+            app.manage(AppState { events: bus });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![commands::ping])
         .run(tauri::generate_context!())
         .expect("error while running TinkerPad");
 }

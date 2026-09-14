@@ -1,11 +1,20 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, ready, subscribe } from "./ipc";
+import { toast } from "./toast";
+import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.textContent = "TinkerPad";
 
-// Seed round-trip for work item 00-05: invoke `ping`, expect a `pong` event.
-await listen<string>("pong", (event) => {
-  app.textContent = `TinkerPad (${event.payload})`;
+subscribe(({ event }) => {
+  switch (event.type) {
+    case "pong":
+      app.textContent = `TinkerPad (ready in ${event.readyMs} ms)`;
+      break;
+    case "toast":
+      toast(event.level, event.message);
+      break;
+  }
 });
+
+await ready();
 await invoke("ping");

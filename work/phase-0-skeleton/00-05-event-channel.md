@@ -42,3 +42,23 @@ Any specific command beyond `ping` and the run/cancel pair added in 00-06.
 Tauri `Channel` (per-call streaming) is the better fit for high-volume streams like
 LSP traffic in Phase 2. Use the broadcast + emit path for app-wide events, and note
 in the code where a Channel should be used instead.
+
+## Results
+
+Implemented 2026-09-14.
+
+- Types: `tinkerpad-core` `events.rs` (`Envelope`, `Scope`, `CoreEvent`,
+  `RunEvent`) and `error.rs` (`CommandError`, `ErrorCode`), with wire-format
+  tests. Mirror in `ui/src/protocol.ts`.
+- Bus: `tinkerpad-app` `events.rs`. Sequence numbers are assigned under the same
+  lock as the send, so order is total. One forwarder task calls Tauri `emit`.
+  Lag is logged.
+- Test: four tasks publish 10,000 events concurrently; all arrive, strictly in
+  sequence order.
+- UI: `ipc.ts` has `subscribe`, `ready`, and a typed `invoke` that normalises
+  failures to `CommandError`, shows a toast, and rethrows. `toast.ts` renders
+  them.
+- Verified in the release app: the `pong` event now travels through the bus and
+  renders.
+- Not yet exercised visually: a command error producing a toast. No command can
+  fail yet; 00-06's `run` command is the first that can.

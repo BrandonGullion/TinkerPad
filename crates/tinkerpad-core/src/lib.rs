@@ -5,3 +5,9 @@
 //! every other crate, the UI protocol, and the CLI agree on the vocabulary.
 //!
 //! See `docs/ARCHITECTURE.md` §3.
+
+pub mod error;
+pub mod events;
+
+pub use error::{CommandError, ErrorCode};
+pub use events::{CoreEvent, Envelope, Level, RunEvent, Scope};

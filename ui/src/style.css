@@ -1,0 +1,56 @@
+:root {
+  --bg: #1e1f22;
+  --fg: #d4d4d8;
+  --muted: #8b8d94;
+  --panel: #25262b;
+  --border: #34363c;
+  --accent: #3b82f6;
+  --error: #f87171;
+  --warning: #fbbf24;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 var(--font-ui);
+}
+
+#app {
+  height: 100%;
+}
+
+.toasts {
+  position: fixed;
+  right: 12px;
+  bottom: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 24px));
+  z-index: 1000;
+}
+
+.toast {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.toast-warning {
+  border-left-color: var(--warning);
+}
+
+.toast-error {
+  border-left-color: var(--error);
+}
