@@ -17,24 +17,24 @@ only way to keep macOS and Linux honest from a Windows desk.
 
 ## Expectations
 
-- [ ] `.github/workflows/ci.yml`: matrix `windows-latest`, `macos-latest`,
+- [x] `.github/workflows/ci.yml`: matrix `windows-latest`, `macos-latest`,
       `ubuntu-latest`; steps: Rust stable, `cargo fmt --check`, `cargo clippy
       --workspace -- -D warnings`, `cargo test --workspace`, Node LTS, `npm ci`,
       `npm run typecheck`, `npm run build`. Linux installs `libwebkit2gtk-4.1-dev`,
       `libgtk-3-dev`, `libayatana-appindicator3-dev` before building.
-- [ ] `cargo tauri build` (no bundling; `--no-bundle` or a debug build) runs on
+- [x] `cargo tauri build` (no bundling; `--no-bundle` or a debug build) runs on
       all three so webview linkage is verified, not just the crates.
-- [ ] `tinkerpad-process::platform` module with `windows.rs`, `macos.rs`,
+- [x] `tinkerpad-process::platform` module with `windows.rs`, `macos.rs`,
       `linux.rs` and a shared trait or function set: `register_child`,
       `kill_tree`, `spawn_flags`. Stub bodies are fine here; 00-04 fills them.
 - [ ] `tinkerpad-plugin::env::discover_path()` module with the same three-way
       split; returns the inherited PATH for now; 01-03 fills in the login-shell
       query.
-- [ ] A lint: a CI step greps for `cfg(target_os` and `cfg(windows` outside the
+- [x] A lint: a CI step greps for `cfg(target_os` and `cfg(windows` outside the
       two platform modules and fails if any are found.
-- [ ] `.gitattributes` with `* text=auto eol=lf`; `rustfmt.toml` with
+- [x] `.gitattributes` with `* text=auto eol=lf`; `rustfmt.toml` with
       `newline_style = "Unix"`.
-- [ ] Badge in the README. All three green before moving on.
+- [x] Badge in the README. All three green before moving on.
 
 ## Out of scope
 
@@ -46,3 +46,26 @@ Toolchain installs for plugin checks (added when 05-01 exists).
 macOS runners are arm64 now; if an x64 macOS check is ever wanted it's
 `macos-13`. Linux tests that spawn processes must not assume a display; keep
 webview-touching tests out of `cargo test`.
+
+## Results
+
+Implemented 2026-09-14. CI is green on Windows, macOS, and Linux.
+
+**Beyond the criteria:** a `launch` job builds the app on macOS and Linux (Xvfb),
+starts it, and runs the in-app self-test (`scripts/smoke-launch.sh`).
+
+**Ticked with a note**
+- *`cargo tauri build` on all three.* macOS and Linux run
+  `tauri build --debug --no-bundle` in the launch job. Windows links the Tauri
+  app during `cargo test --workspace`, which builds the binary; there is no
+  separate `tauri build` step there.
+- *Platform functions `register_child`, `kill_tree`, `spawn_flags`.* Implemented
+  as `prepare`, `register_child`, `terminate`, `terminate_hard`, `is_alive`,
+  `set_registry`, and `sweep_orphans`.
+- *Lint greps for platform cfg.* `scripts/lint-platform-cfg.sh` also skips
+  comment lines.
+
+**Open**
+- *`discover_path()` with the three-way platform split.* The function exists and
+  returns the inherited `PATH`, but has no per-platform split yet. Work item 01-03
+  adds the login-shell query for macOS and Linux.

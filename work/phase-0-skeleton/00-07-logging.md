@@ -16,11 +16,11 @@ a one-evening job now and a painful retrofit later.
 
 ## Expectations
 
-- [ ] `tracing-subscriber` with an `EnvFilter` (`TINKERPAD_LOG=debug` overrides),
+- [x] `tracing-subscriber` with an `EnvFilter` (`TINKERPAD_LOG=debug` overrides),
       a daily rolling file via `tracing-appender` in `<app-data>/logs/`, and a
       pretty stderr layer in debug builds only.
 - [ ] Log dir is created on first launch; old logs pruned to the last 7 days.
-- [ ] Every spawned process gets a `tracing` span with its name and pid; its stderr
+- [x] Every spawned process gets a `tracing` span with its name and pid; its stderr
       lines are logged at `debug` inside that span (done in `tinkerpad-process`).
 - [ ] Each library crate has one `Error` enum via `thiserror` with variants that
       carry context (which file, which program). No `Box<dyn Error>` in public APIs.
@@ -77,3 +77,25 @@ INFO  tinkerpad_app::runs: run finished run=3
   documented Rust API.
 - Pruning to 7 days, which needs a week of files. It relies on
   `tracing-appender`'s `max_log_files`.
+
+## Checklist status
+
+Checked 2026-09-14.
+
+**Open**
+- *Old logs pruned to 7 days.* Configured through `tracing-appender`'s
+  `max_log_files(7)`; not observed. The log folder being created on first launch
+  is verified.
+- *Each library crate has one `Error` enum.* `tinkerpad-process` and
+  `tinkerpad-runner` do. `tinkerpad-plugin`, `tinkerpad-lsp`, and
+  `tinkerpad-library` have no fallible code yet; each gets its enum with its first
+  real work item.
+- *Open log folder command.* The command and the status bar button exist. Never
+  clicked, because it opens a window on the desktop.
+- *Panics logged with a backtrace.* The hook is installed; nothing has panicked
+  to exercise it.
+
+**Ticked with a note**
+- *Daily rolling file in `<app-data>/logs/`.* Uses Tauri's app *log* directory,
+  which on Windows is under `%LOCALAPPDATA%` rather than the roaming app data
+  folder.

@@ -18,17 +18,17 @@ swapped later (PLAN.md §3.1).
 
 ## Expectations
 
-- [ ] `tinkerpad-core` defines `Command`-side request/response structs and a
+- [x] `tinkerpad-core` defines `Command`-side request/response structs and a
       `CoreEvent` enum, all `serde` serialisable, with `#[serde(tag = "type")]`.
-- [ ] `AppState` in `tinkerpad-app` holds an `Arc` of everything and a
+- [x] `AppState` in `tinkerpad-app` holds an `Arc` of everything and a
       `broadcast::Sender<CoreEvent>`. Exactly one task drains it and calls Tauri
       `emit`. Nothing else calls `emit`.
-- [ ] UI has a single `subscribe(handler)` and a typed `invoke<T>()` wrapper.
+- [x] UI has a single `subscribe(handler)` and a typed `invoke<T>()` wrapper.
       `protocol.ts` is hand-written now; note in the file that generating it (e.g.
       with `ts-rs` or `specta`) is an option if it drifts.
-- [ ] Events carry a scope id (playground id, server id, or run id) so the UI can
+- [x] Events carry a scope id (playground id, server id, or run id) so the UI can
       route without inspecting payloads.
-- [ ] A burst of 10,000 events does not reorder and does not drop under normal
+- [x] A burst of 10,000 events does not reorder and does not drop under normal
       load; lagging receivers are logged, not silently ignored.
 - [ ] Errors from commands reach the UI as a structured `{ code, message }`, never
       as a stringified `anyhow` chain. The UI shows them in a non-blocking toast.
@@ -62,3 +62,19 @@ Implemented 2026-09-14.
   renders.
 - Not yet exercised visually: a command error producing a toast. No command can
   fail yet; 00-06's `run` command is the first that can.
+
+## Checklist status
+
+Checked 2026-09-14.
+
+**Open**
+- *Command errors shown as a toast.* The structured `{ code, message }` wire
+  format is tested in Rust, and `ipc.ts` normalises failures and calls `toast`.
+  No command has failed in a test, so the toast has never been seen.
+
+**Ticked with a note**
+- *`Command`-side request/response structs.* Commands take plain arguments;
+  the shared types are `CommandError` and `ErrorCode`. Request structs will be
+  added when a command needs more than a couple of arguments.
+- *`broadcast::Sender<CoreEvent>`.* The channel carries `Envelope` (sequence
+  number, scope, event) rather than bare `CoreEvent`.

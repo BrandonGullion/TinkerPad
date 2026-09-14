@@ -17,19 +17,19 @@ first byte".
 
 ## Expectations
 
-- [ ] `tinkerpad-runner` exposes `run(RunSpec) -> RunHandle` producing `RunEvent`s
+- [x] `tinkerpad-runner` exposes `run(RunSpec) -> RunHandle` producing `RunEvent`s
       (`Started`, `Stdout`, `Stderr`, `Exited { code, duration }`, `Failed`), built on
       `tinkerpad-process`. `RunSpec` is program/args/cwd/env for now.
-- [ ] `run` and `cancel` Tauri commands; `RunEvent`s flow to the UI via 00-05.
-- [ ] Typing `console.log(1)` and pressing Mod+Enter shows `1` in the output pane
+- [x] `run` and `cancel` Tauri commands; `RunEvent`s flow to the UI via 00-05.
+- [x] Typing `console.log(1)` and pressing Mod+Enter shows `1` in the output pane
       with exit code 0 and elapsed time in the status bar.
-- [ ] `while(true){}` can be cancelled; the process is gone (check Task Manager);
+- [x] `while(true){}` can be cancelled; the process is gone (check Task Manager);
       the UI shows "cancelled" rather than an exit code.
-- [ ] Pressing Run while a run is active cancels the previous run first, then starts
+- [x] Pressing Run while a run is active cancels the previous run first, then starts
       the new one. No interleaved output.
-- [ ] Output pane is cleared at the start of each run (with a setting stub to keep
+- [x] Output pane is cleared at the start of each run (with a setting stub to keep
       it, defaulting to clear).
-- [ ] Measured and recorded here: Mod+Enter to first output byte for
+- [x] Measured and recorded here: Mod+Enter to first output byte for
       `console.log(1)`. Expect ~40–80 ms of which Node startup is most.
 - [ ] Node not installed → a clear error in the output pane, not a panic.
 
@@ -91,3 +91,16 @@ on both:
 |---|---|---|
 | macOS arm64 | 48 ms | 35 ms |
 | Ubuntu under Xvfb | 49 ms | 50 ms |
+
+## Checklist status
+
+Checked 2026-09-14.
+
+**Open**
+- *Node not installed shows a clear error.* See "Not verified in the app" above.
+
+**Ticked with a note**
+- *`RunEvent`s include `Failed`.* In the runner, failing to start is
+  `Err(RunError)` from `run()`, not an event. The app turns it into a `failed`
+  UI event. The runner also has a `Cancelled` event, which the criterion didn't
+  list.
