@@ -92,6 +92,8 @@ export class StatusBar {
 
   /** Called when the user clicks Cancel while a run is in progress. */
   onCancel: () => void = () => {};
+  /** Called when the user clicks Logs. */
+  onOpenLogs: () => void = () => {};
 
   constructor() {
     this.element = document.createElement("footer");
@@ -109,7 +111,12 @@ export class StatusBar {
     this.cancelButton.title = "Cancel run (Mod+.)";
     this.cancelButton.hidden = true;
     this.cancelButton.addEventListener("click", () => this.onCancel());
-    this.element.append(this.language, spacer, this.run, this.cancelButton);
+    const logs = document.createElement("button");
+    logs.className = "status-link";
+    logs.textContent = "Logs";
+    logs.title = "Open the log folder";
+    logs.addEventListener("click", () => this.onOpenLogs());
+    this.element.append(this.language, spacer, this.run, this.cancelButton, logs);
     this.setRun({ kind: "idle" });
   }
 

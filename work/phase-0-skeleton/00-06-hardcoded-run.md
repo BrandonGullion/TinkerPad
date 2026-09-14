@@ -83,3 +83,11 @@ process is gone at the OS level.
 **Not verified in the app:** the "Node not installed" message. The runner test
 covers the not-found error, and the app maps it to an install hint in the output
 pane, but no test runs the app without Node on `PATH`.
+
+**CI results** (debug builds on shared runners), in-app `run` self-test passes
+on both:
+
+| Platform | Mod+Enter to first output, first run | Second run |
+|---|---|---|
+| macOS arm64 | 48 ms | 35 ms |
+| Ubuntu under Xvfb | 49 ms | 50 ms |

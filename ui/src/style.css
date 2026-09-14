@@ -253,3 +253,18 @@ body {
   border-color: var(--error);
   color: var(--error);
 }
+
+.status-link {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.status-link:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}

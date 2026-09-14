@@ -19,6 +19,7 @@ panelHost.append(panel.element);
 const runs = new RunController(output, statusBar);
 statusBar.setLanguage("JavaScript (node)");
 statusBar.onCancel = () => void runs.cancel();
+statusBar.onOpenLogs = () => void invoke("open_log_folder").catch(() => {});
 
 const editor = new Editor(
   editorHost,

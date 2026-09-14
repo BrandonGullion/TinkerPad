@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
-use tracing::{debug, warn};
+use tracing::{Instrument, debug, info_span, warn};
 
 use crate::platform;
 
@@ -229,7 +229,10 @@ pub fn spawn(spec: SpawnSpec) -> Result<Supervised, SpawnError> {
 
     let pid = child.id().unwrap_or(0);
     let guard = platform::register_child(pid, &program);
-    debug!(pid, program, "spawned");
+    // Every task for this child runs inside a span naming it, so its log lines
+    // (including its stderr at debug level) are attributable.
+    let span = info_span!("process", program = %basename(&program), pid);
+    span.in_scope(|| debug!(args = ?spec.args, "spawned"));
 
     let stdout = child.stdout.take().expect("stdout is piped");
     let stderr = child.stderr.take().expect("stderr is piped");
@@ -237,22 +240,28 @@ pub fn spawn(spec: SpawnSpec) -> Result<Supervised, SpawnError> {
 
     let (tx, rx) = mpsc::channel(256);
     let started = Instant::now();
-    let out = tokio::spawn(pump(stdout, tx.clone(), ProcessEvent::Stdout));
-    let err = tokio::spawn(pump(stderr, tx.clone(), ProcessEvent::Stderr));
+    let out = tokio::spawn(
+        pump(stdout, tx.clone(), ProcessEvent::Stdout, false).instrument(span.clone()),
+    );
+    let err =
+        tokio::spawn(pump(stderr, tx.clone(), ProcessEvent::Stderr, true).instrument(span.clone()));
 
     let notify = Arc::new(Notify::new());
     let kill = KillHandle { notify };
-    tokio::spawn(supervise(
-        child,
-        pid,
-        program,
-        guard,
-        kill.clone(),
-        out,
-        err,
-        tx,
-        started,
-    ));
+    tokio::spawn(
+        supervise(
+            child,
+            pid,
+            program,
+            guard,
+            kill.clone(),
+            out,
+            err,
+            tx,
+            started,
+        )
+        .instrument(span),
+    );
 
     Ok(Supervised {
         pid,
@@ -262,17 +271,25 @@ pub fn spawn(spec: SpawnSpec) -> Result<Supervised, SpawnError> {
     })
 }
 
-async fn pump<R>(mut reader: R, tx: mpsc::Sender<ProcessEvent>, wrap: fn(Bytes) -> ProcessEvent)
-where
+async fn pump<R>(
+    mut reader: R,
+    tx: mpsc::Sender<ProcessEvent>,
+    wrap: fn(Bytes) -> ProcessEvent,
+    log_lines: bool,
+) where
     R: AsyncRead + Unpin,
 {
     let mut buf = BytesMut::with_capacity(CHUNK);
+    let mut lines = LineLogger::default();
     loop {
         buf.reserve(CHUNK);
         match reader.read_buf(&mut buf).await {
             Ok(0) | Err(_) => break,
             Ok(_) => {
                 let chunk = buf.split().freeze();
+                if log_lines {
+                    lines.push(&chunk);
+                }
                 if tx.send(wrap(chunk)).await.is_err() {
                     break;
                 }
@@ -342,4 +359,68 @@ async fn supervise(
     debug!(pid, program, ?exit, "exited");
     // `guard` (job object on Windows) is released when this function returns.
     let _ = tx.send(ProcessEvent::Exited(exit)).await;
+}
+
+fn basename(program: &str) -> &str {
+    program
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(program)
+}
+
+/// Logs a byte stream line by line at debug level. Lines longer than
+/// [`MAX_LOG_LINE`] are logged in pieces rather than buffered without bound.
+#[derive(Default)]
+struct LineLogger {
+    partial: Vec<u8>,
+}
+
+const MAX_LOG_LINE: usize = 4096;
+
+impl LineLogger {
+    fn push(&mut self, chunk: &[u8]) {
+        if !tracing::enabled!(tracing::Level::DEBUG) {
+            return;
+        }
+        for &byte in chunk {
+            if byte == b'\n' {
+                self.flush();
+            } else {
+                self.partial.push(byte);
+                if self.partial.len() >= MAX_LOG_LINE {
+                    self.flush();
+                }
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.partial.is_empty() {
+            return;
+        }
+        let line = String::from_utf8_lossy(&self.partial);
+        debug!(stderr = %line.trim_end_matches('\r'));
+        self.partial.clear();
+    }
+}
+
+impl Drop for LineLogger {
+    fn drop(&mut self) {
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            self.flush();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::basename;
+
+    #[test]
+    fn basename_handles_both_separators() {
+        assert_eq!(basename("node"), "node");
+        assert_eq!(basename("/usr/bin/node"), "node");
+        assert_eq!(basename(r"C:\Program Files\nodejs\node.exe"), "node.exe");
+    }
 }

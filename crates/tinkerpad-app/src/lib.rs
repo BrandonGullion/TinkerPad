@@ -9,6 +9,7 @@
 //! publishing on the [`EventBus`].
 
 pub mod events;
+mod logging;
 mod runs;
 
 use std::sync::{Arc, OnceLock};
@@ -48,6 +49,7 @@ mod commands {
             .unwrap_or(0);
         // Printed as well as logged so scripts/smoke-launch.sh can see it.
         println!("ui ready {ready_ms} ms after start");
+        tracing::info!(ready_ms, "ui ready");
         state
             .events
             .publish(Scope::App, CoreEvent::Pong { ready_ms });
@@ -66,6 +68,19 @@ mod commands {
     pub async fn cancel(state: State<'_, AppState>) -> Result<(), CommandError> {
         state.runs.cancel().await;
         Ok(())
+    }
+
+    /// Open the folder containing TinkerPad's log files.
+    #[tauri::command]
+    pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> {
+        use tauri_plugin_opener::OpenerExt;
+        let dir = app
+            .path()
+            .app_log_dir()
+            .map_err(|e| CommandError::internal(format!("no log folder: {e}")))?;
+        app.opener()
+            .open_path(dir.to_string_lossy(), None::<&str>)
+            .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e.to_string()))
     }
 
     /// Which in-app self-test scenarios to run, from `TINKERPAD_SELFTEST`
@@ -89,7 +104,17 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            match app.path().app_log_dir() {
+                Ok(dir) => {
+                    if let Err(error) = logging::init(&dir) {
+                        eprintln!("logging disabled: {error}");
+                    }
+                }
+                Err(error) => eprintln!("logging disabled: no log folder: {error}"),
+            }
+
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 
@@ -120,6 +145,7 @@ pub fn run() {
             commands::ping,
             commands::run,
             commands::cancel,
+            commands::open_log_folder,
             commands::selftest_scenario,
             commands::selftest_report,
         ])

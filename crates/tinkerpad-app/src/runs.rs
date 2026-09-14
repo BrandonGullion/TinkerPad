@@ -47,7 +47,7 @@ impl Runs {
     pub async fn start(&self, code: String) -> Result<u64, CommandError> {
         let mut active = self.active.lock().await;
         if let Some(prev) = active.take() {
-            info!(run = prev.id, "cancelling previous run");
+            info!(run = prev.id, "replacing previous run");
             prev.kill.kill();
             let _ = prev.forwarder.await;
         }
