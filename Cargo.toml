@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+# Dependency direction (strictly downward; see docs/ARCHITECTURE.md §2):
+#
+#   tinkerpad-app
+#     └─► tinkerpad-plugin  ───► tinkerpad-process ───► tinkerpad-core
+#     └─► tinkerpad-lsp     ───► tinkerpad-process
+#     └─► tinkerpad-runner  ───► tinkerpad-process, tinkerpad-plugin
+#     └─► tinkerpad-library ───► tinkerpad-core
+#
+# tinkerpad-core must never depend on tokio or tauri.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/BrandonGullion/TinkerPad"
+rust-version = "1.85"
+
+[workspace.dependencies]
+tinkerpad-core = { path = "crates/tinkerpad-core" }
+tinkerpad-process = { path = "crates/tinkerpad-process" }
+tinkerpad-plugin = { path = "crates/tinkerpad-plugin" }
+tinkerpad-lsp = { path = "crates/tinkerpad-lsp" }
+tinkerpad-runner = { path = "crates/tinkerpad-runner" }
+tinkerpad-library = { path = "crates/tinkerpad-library" }
+
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "sync", "time", "macros", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bytes = "1"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

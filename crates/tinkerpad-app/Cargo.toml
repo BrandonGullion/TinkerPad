@@ -1,0 +1,27 @@
+[package]
+name = "tinkerpad-app"
+description = "The TinkerPad desktop application (Tauri shell, commands, event bridge)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "tinkerpad"
+path = "src/main.rs"
+
+[dependencies]
+tinkerpad-core.workspace = true
+tinkerpad-process.workspace = true
+tinkerpad-plugin.workspace = true
+tinkerpad-lsp.workspace = true
+tinkerpad-runner.workspace = true
+tinkerpad-library.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

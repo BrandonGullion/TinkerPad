@@ -1,0 +1,20 @@
+[package]
+name = "tinkerpad-runner"
+description = "Per-run execution, plugin helper pool, and Dump() sentinel parsing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tinkerpad-core.workspace = true
+tinkerpad-process.workspace = true
+tinkerpad-plugin.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

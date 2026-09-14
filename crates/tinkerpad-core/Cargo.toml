@@ -1,0 +1,19 @@
+[package]
+name = "tinkerpad-core"
+description = "Domain types, events, and errors shared by every TinkerPad crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# This crate must compile without tokio or tauri. It holds the types the app,
+# the CLI, the UI protocol, and the docs generator all share, and it is what
+# keeps the plugin and UI boundaries movable. If you need async here, you are
+# in the wrong crate.
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

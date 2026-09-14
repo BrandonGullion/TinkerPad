@@ -1,0 +1,18 @@
+[package]
+name = "tinkerpad-library"
+description = "Playground folders on disk: playground.toml, create/open/rename/delete, index, watcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tinkerpad-core.workspace = true
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
