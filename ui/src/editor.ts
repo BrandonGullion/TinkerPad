@@ -18,6 +18,7 @@ import {
 
 export interface EditorActions {
   run(): void;
+  cancel(): void;
   clearOutput(): void;
 }
 
@@ -60,6 +61,7 @@ export class Editor {
     const appKeys = Prec.highest(
       keymap.of([
         { key: "Mod-Enter", run: () => (actions.run(), true) },
+        { key: "Mod-.", run: () => (actions.cancel(), true) },
         { key: "Mod-l", run: () => (actions.clearOutput(), true) },
       ]),
     );

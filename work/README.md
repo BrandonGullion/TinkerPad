@@ -21,7 +21,7 @@ Tick the box here when an item is finished.
 - [x] [00-03 Editor and output pane layout](phase-0-skeleton/00-03-editor-and-output-pane.md) · M
 - [x] [00-04 Process supervision crate](phase-0-skeleton/00-04-process-supervision.md) · M
 - [x] [00-05 Core to UI event channel and command surface](phase-0-skeleton/00-05-event-channel.md) · S
-- [ ] [00-06 Hard-coded run, end to end, with cancel](phase-0-skeleton/00-06-hardcoded-run.md) · S
+- [x] [00-06 Hard-coded run, end to end, with cancel](phase-0-skeleton/00-06-hardcoded-run.md) · S
 - [ ] [00-07 Logging and error conventions](phase-0-skeleton/00-07-logging.md) · S
 - [x] [00-08 Cross-platform CI and platform modules](phase-0-skeleton/00-08-cross-platform-ci.md) · S
 

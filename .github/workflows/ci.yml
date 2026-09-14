@@ -113,11 +113,11 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout
+          TINKERPAD_SELFTEST: layout,run
         run: xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 120
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout
+          TINKERPAD_SELFTEST: layout,run
         run: bash scripts/smoke-launch.sh target/debug/tinkerpad 120

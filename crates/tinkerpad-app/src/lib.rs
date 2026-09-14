@@ -9,6 +9,7 @@
 //! publishing on the [`EventBus`].
 
 pub mod events;
+mod runs;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -17,6 +18,7 @@ use tauri::{Emitter, Manager};
 use tinkerpad_core::{CoreEvent, Scope};
 
 use events::EventBus;
+use runs::Runs;
 
 /// Name of the single Tauri event the UI listens to.
 pub const EVENT_NAME: &str = "core-event";
@@ -27,6 +29,7 @@ static STARTED: OnceLock<Instant> = OnceLock::new();
 /// Everything commands need, held in Tauri's managed state.
 pub struct AppState {
     pub events: Arc<EventBus>,
+    runs: Runs,
 }
 
 mod commands {
@@ -51,8 +54,22 @@ mod commands {
         Ok(())
     }
 
-    /// Which in-app self-test scenario to run, from `TINKERPAD_SELFTEST`.
-    /// `None` in normal use. See `ui/src/selftest.ts`.
+    /// Run the editor's code. Returns the run id; output and the outcome
+    /// arrive as `run` events scoped to that id.
+    #[tauri::command]
+    pub async fn run(state: State<'_, AppState>, code: String) -> Result<u64, CommandError> {
+        state.runs.start(code).await
+    }
+
+    /// Cancel the active run, if any.
+    #[tauri::command]
+    pub async fn cancel(state: State<'_, AppState>) -> Result<(), CommandError> {
+        state.runs.cancel().await;
+        Ok(())
+    }
+
+    /// Which in-app self-test scenarios to run, from `TINKERPAD_SELFTEST`
+    /// (comma-separated). `None` in normal use. See `ui/src/selftest.ts`.
     #[tauri::command]
     pub fn selftest_scenario() -> Option<String> {
         std::env::var("TINKERPAD_SELFTEST")
@@ -73,6 +90,20 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
+
+            // macOS has no parent-death signal; sweep children left behind by a
+            // force-quit of the previous session. No-op elsewhere.
+            tinkerpad_process::platform::set_registry(data_dir.join("children.pids"));
+            let swept = tinkerpad_process::platform::sweep_orphans();
+            if swept > 0 {
+                tracing::warn!(
+                    swept,
+                    "terminated orphaned processes from a previous session"
+                );
+            }
+
             let bus = Arc::new(EventBus::new());
             let handle = app.handle().clone();
             events::spawn_forwarder(bus.subscribe(), move |env| {
@@ -80,11 +111,15 @@ pub fn run() {
                     tracing::warn!(%error, seq = env.seq, "failed to emit event to UI");
                 }
             });
-            app.manage(AppState { events: bus });
+
+            let runs = Runs::new(bus.clone(), data_dir.join("scratch"));
+            app.manage(AppState { events: bus, runs });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::ping,
+            commands::run,
+            commands::cancel,
             commands::selftest_scenario,
             commands::selftest_report,
         ])

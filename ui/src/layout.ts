@@ -87,7 +87,11 @@ export class StatusBar {
   readonly element: HTMLElement;
   private readonly language: HTMLElement;
   private readonly run: HTMLElement;
+  private readonly cancelButton: HTMLButtonElement;
   private timer = 0;
+
+  /** Called when the user clicks Cancel while a run is in progress. */
+  onCancel: () => void = () => {};
 
   constructor() {
     this.element = document.createElement("footer");
@@ -99,7 +103,13 @@ export class StatusBar {
     spacer.className = "status-spacer";
     this.run = document.createElement("span");
     this.run.className = "status-run";
-    this.element.append(this.language, spacer, this.run);
+    this.cancelButton = document.createElement("button");
+    this.cancelButton.className = "status-cancel";
+    this.cancelButton.textContent = "Cancel";
+    this.cancelButton.title = "Cancel run (Mod+.)";
+    this.cancelButton.hidden = true;
+    this.cancelButton.addEventListener("click", () => this.onCancel());
+    this.element.append(this.language, spacer, this.run, this.cancelButton);
     this.setRun({ kind: "idle" });
   }
 
@@ -112,6 +122,7 @@ export class StatusBar {
     clearInterval(this.timer);
     this.timer = 0;
     this.run.className = `status-run run-${state.kind}`;
+    this.cancelButton.hidden = state.kind !== "running";
     switch (state.kind) {
       case "idle":
         this.run.textContent = "Ready";

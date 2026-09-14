@@ -235,3 +235,21 @@ body {
 .toast-error {
   border-left-color: var(--error);
 }
+
+.status-cancel {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.status-cancel:hover {
+  border-color: var(--error);
+  color: var(--error);
+}

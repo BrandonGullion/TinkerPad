@@ -9,10 +9,12 @@ import { runScopeHandlers } from "@codemirror/view";
 import type { Editor } from "./editor";
 import { invoke } from "./ipc";
 import type { OutputPane } from "./output";
+import type { RunController } from "./run";
 
 export interface SelftestContext {
   editor: Editor;
   output: OutputPane;
+  runs: RunController;
 }
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -40,24 +42,30 @@ export async function maybeRunSelftest(ctx: SelftestContext): Promise<void> {
   if (!scenario) return;
 
   let failures = 0;
-  const check = async (name: string, ok: boolean, detail = "") => {
+  const check: Check = async (name, ok, detail = "") => {
     if (!ok) failures++;
     await report(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` (${detail})` : ""}`);
   };
 
-  try {
-    if (scenario === "layout") await layoutScenario(ctx, check);
-    else await report(`FAIL unknown scenario ${scenario}`);
-  } catch (e) {
-    failures++;
-    await report(`FAIL exception ${String(e)}`);
+  for (const name of scenario.split(",").map((s) => s.trim())) {
+    try {
+      const run = SCENARIOS[name];
+      if (!run) {
+        await check(`unknown scenario ${name}`, false);
+        continue;
+      }
+      await report(`scenario ${name}`);
+      await run(ctx, check);
+    } catch (e) {
+      await check(`${name} threw`, false, String(e));
+    }
   }
   await report(`done failures=${failures}`);
 }
 
 type Check = (name: string, ok: boolean, detail?: string) => Promise<void>;
 
-async function layoutScenario({ editor, output }: SelftestContext, check: Check) {
+async function layoutScenario({ editor, output, runs }: SelftestContext, check: Check) {
   const view = editor.view;
   const outText = () => output.element.querySelector(".output-body")?.textContent ?? "";
 
@@ -65,11 +73,12 @@ async function layoutScenario({ editor, output }: SelftestContext, check: Check)
   view.dispatch({ changes: { from: view.state.doc.length, insert: "const x = [1, 2, 3];\n" } });
   await check("editor accepts input", editor.text.includes("const x = [1, 2, 3];"));
 
-  // Mod+Enter through CodeMirror's real keymap.
-  output.clear();
+  // Mod+Enter through CodeMirror's real keymap starts a run.
+  const end = runs.waitForEnd();
   const handled = runScopeHandlers(view, key("Enter", { mod: true }), "editor");
-  await frame();
-  await check("Mod+Enter runs", handled && outText().includes("Run requested"));
+  await check("Mod+Enter handled by keymap", handled);
+  await end;
+  await output.flushed();
 
   // Mod+L clears output (overriding CodeMirror's select-line).
   runScopeHandlers(view, key("l", { mod: true }), "editor");
@@ -141,3 +150,104 @@ async function layoutScenario({ editor, output }: SelftestContext, check: Check)
   const doc = document.documentElement;
   await check("no page-level horizontal overflow", doc.scrollWidth <= doc.clientWidth);
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Put code in the editor and press Mod+Enter through the real keymap. */
+function runCode({ editor }: SelftestContext, code: string): void {
+  const view = editor.view;
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
+  runScopeHandlers(view, key("Enter", { mod: true }), "editor");
+}
+
+async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runScenario(ctx: SelftestContext, check: Check) {
+  const { output, runs, editor } = ctx;
+  const outText = () => output.element.querySelector(".output-body")?.textContent ?? "";
+  const status = () => document.querySelector(".status-run")?.textContent ?? "";
+
+  // console.log(1) end to end.
+  let end = runs.waitForEnd();
+  runCode(ctx, "console.log(1)\n");
+  let outcome = await withTimeout(end, 15_000, "console.log(1)");
+  await output.flushed();
+  await check(
+    "console.log(1) prints 1 and exits 0",
+    outcome.kind === "exited" && outcome.code === 0 && outText() === "1\n",
+    JSON.stringify({ outcome, out: outText() }),
+  );
+  await check("status bar shows exit 0", status().startsWith("Exit 0"), status());
+  await report(`INFO Mod+Enter to first output: ${runs.firstOutputMs?.toFixed(1)} ms`);
+
+  // Warm repeat, for a second timing sample.
+  end = runs.waitForEnd();
+  runCode(ctx, "console.log(2)\n");
+  await withTimeout(end, 15_000, "console.log(2)");
+  await report(`INFO second run, Mod+Enter to first output: ${runs.firstOutputMs?.toFixed(1)} ms`);
+
+  // stderr and a non-zero exit code.
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.error("oops"); process.exit(2)\n');
+  outcome = await withTimeout(end, 15_000, "exit 2");
+  await output.flushed();
+  await check(
+    "stderr shown and non-zero exit reported",
+    outcome.kind === "exited" &&
+      outcome.code === 2 &&
+      (output.element.querySelector(".out-stderr")?.textContent ?? "").includes("oops") &&
+      status().startsWith("Exit 2"),
+    JSON.stringify({ outcome, status: status() }),
+  );
+
+  // UTF-8 survives the process boundary.
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("héllo wörld → 日本 🎉")\n');
+  await withTimeout(end, 15_000, "utf8");
+  await output.flushed();
+  await check("UTF-8 output intact", outText() === "héllo wörld → 日本 🎉\n", outText());
+
+  // An infinite loop can be cancelled with Mod+.
+  end = runs.waitForEnd();
+  runCode(ctx, "while (true) {}\n");
+  await sleep(500);
+  const cancelButton = document.querySelector<HTMLButtonElement>(".status-cancel")!;
+  await check("cancel button visible while running", cancelButton.hidden === false);
+  runScopeHandlers(editor.view, key(".", { mod: true }), "editor");
+  outcome = await withTimeout(end, 10_000, "cancel");
+  await check(
+    "Mod+. cancels an infinite loop",
+    outcome.kind === "cancelled" && status().startsWith("Cancelled"),
+    JSON.stringify({ outcome, status: status() }),
+  );
+
+  // Run while running: the first run is cancelled and its output never
+  // appears after the second starts.
+  runCode(ctx, 'setInterval(() => console.log("A"), 10)\n');
+  await sleep(400);
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("B")\n');
+  outcome = await withTimeout(end, 15_000, "run while running");
+  await sleep(200); // give any stray "A" a chance to show up
+  await output.flushed();
+  await check(
+    "run while running replaces the old run cleanly",
+    outcome.kind === "exited" && outText() === "B\n",
+    JSON.stringify({ outcome, out: outText().slice(0, 80) }),
+  );
+}
+
+const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<void>> = {
+  layout: layoutScenario,
+  run: runScenario,
+};
