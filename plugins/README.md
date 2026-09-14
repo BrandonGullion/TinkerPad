@@ -1,0 +1,12 @@
+# Bundled plugins
+
+Each folder here is a language plugin shipped with TinkerPad. The format is
+exactly the same as a plugin a user installs; see `docs/PLUGINS.md`.
+
+This folder is copied into the app bundle as a resource
+(`crates/tinkerpad-app/tauri.conf.json`, `bundle.resources`). At runtime the app
+loads these first, then the user's plugin folder, where a plugin with the same
+id replaces the bundled one.
+
+The first bundled plugins arrive with work items 01-09 (TypeScript),
+01-10 (C#), and 01-11 (Rust).

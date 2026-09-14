@@ -219,6 +219,7 @@ body {
 
 .toast {
   padding: 8px 12px;
+  white-space: pre-line;
   border-radius: 6px;
   background: var(--panel);
   border: 1px solid var(--border);

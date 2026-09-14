@@ -9,6 +9,7 @@ import { runScopeHandlers } from "@codemirror/view";
 import type { Editor } from "./editor";
 import { invoke } from "./ipc";
 import type { OutputPane } from "./output";
+import type { PluginsStatus } from "./protocol";
 import type { RunController } from "./run";
 
 export interface SelftestContext {
@@ -250,4 +251,35 @@ async function runScenario(ctx: SelftestContext, check: Check) {
 const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<void>> = {
   layout: layoutScenario,
   run: runScenario,
+  plugins: pluginsScenario,
 };
+
+async function pluginsScenario(_ctx: SelftestContext, check: Check) {
+  const status = await invoke<PluginsStatus>("list_plugins");
+
+  await check(
+    "bundled plugins folder found",
+    status.bundledDir !== null && /plugins[\\/]?$/.test(status.bundledDir),
+    status.bundledDir ?? "null",
+  );
+  await check("user plugins folder set", status.userDir.length > 0, status.userDir);
+  await report(`INFO plugins loaded=${status.plugins.length} failures=${status.failures.length}`);
+  await report(`INFO plugin load time ${status.loadMs.toFixed(2)} ms`);
+  for (const p of status.plugins) {
+    await report(`INFO plugin ${p.id} (${p.source}) ${p.dir}`);
+  }
+
+  // Every failure produces a startup toast naming its folder. Toasts are
+  // delivered after the first ping, so allow a moment for them to render.
+  for (const f of status.failures) {
+    const folder = f.dir.split(/[\\/]/).filter(Boolean).pop() ?? f.dir;
+    let shown = false;
+    for (let i = 0; i < 20 && !shown; i++) {
+      shown = [...document.querySelectorAll(".toast")].some((t) =>
+        (t.textContent ?? "").includes(`"${folder}"`),
+      );
+      if (!shown) await sleep(100);
+    }
+    await check(`toast shown for failed plugin "${folder}"`, shown);
+  }
+}

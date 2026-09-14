@@ -39,3 +39,20 @@ export interface CommandError {
 
 /** Name of the single Tauri event carrying every Envelope. */
 export const EVENT_NAME = "core-event";
+
+export type PluginSource = "bundled" | "user";
+
+/** Reply to the `list_plugins` command. */
+export interface PluginsStatus {
+  bundledDir: string | null;
+  userDir: string;
+  loadMs: number;
+  plugins: {
+    id: string;
+    name: string;
+    extension: string;
+    source: PluginSource;
+    dir: string;
+  }[];
+  failures: { dir: string; source: PluginSource; message: string }[];
+}
