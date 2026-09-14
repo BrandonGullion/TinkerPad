@@ -29,7 +29,7 @@ time passes, or by a later item); the item file says why each one is open.
 
 ## Phase 1 — Plugins, first languages, Dump()
 
-- [ ] [01-01 Manifest schema and loader](phase-1-plugins/01-01-manifest-loader.md) · M
+- [x] [01-01 Manifest schema and loader](phase-1-plugins/01-01-manifest-loader.md) · M
 - [ ] [01-02 Plugin discovery](phase-1-plugins/01-02-plugin-discovery.md) · S
 - [ ] [01-03 Toolchain probing](phase-1-plugins/01-03-toolchain-probing.md) · S
 - [ ] [01-04 Playground library on disk](phase-1-plugins/01-04-playground-library.md) · M

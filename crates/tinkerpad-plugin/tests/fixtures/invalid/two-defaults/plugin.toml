@@ -1,0 +1,24 @@
+api = 1
+
+[language]
+id = "x"
+name = "X"
+extension = "x"
+
+[toolchain]
+probe = [{ command = "x" }]
+
+[[kind]]
+id = "a"
+name = "A"
+template = "main.x"
+default = true
+
+[[kind]]
+id = "b"
+name = "B"
+template = "main.x"
+default = true
+
+[run]
+command = "x"

@@ -1,0 +1,23 @@
+api = 1
+
+[language]
+id = "future"
+name = "Future"
+extension = "fut"
+
+[toolchain]
+probe = [{ command = "fut" }]
+
+[[kind]]
+id = "program"
+name = "Program"
+template = "main.fut"
+default = true
+
+[run]
+command = "fut"
+args = ["{main}"]
+
+# A section a newer TinkerPad understands. Older ones warn and ignore it.
+[debug]
+adapter = "fut-dap"

@@ -1,0 +1,22 @@
+api = 1
+
+[language]
+id = "x"
+name = "X"
+extension = "x"
+main_path = "../escape.x"
+
+[toolchain]
+probe = [{ command = "x" }]
+
+[[kind]]
+id = "k"
+name = "K"
+template = "C:/Windows/win.ini"
+default = true
+
+[scaffold]
+files = [{ path = "Cargo.toml", template = "missing.toml" }]
+
+[run]
+command = "x"
