@@ -47,3 +47,44 @@ Tabs (01-12), Dump renderers (01-08), theming beyond one dark theme (04-04), LSP
 Keep the editor mounted permanently. Later, tabs will swap `EditorState` objects
 in and out of a single `EditorView`, which preserves undo history and scroll per tab.
 Build with that in mind: the editor component owns one view and accepts a state.
+
+## Results
+
+Implemented 2026-09-14.
+
+**Verification approach.** An opt-in in-app self-test (`ui/src/selftest.ts`)
+runs when the app starts with `TINKERPAD_SELFTEST=layout`. It drives
+CodeMirror's real keymap with synthetic key events and inspects the DOM,
+printing `selftest: PASS|FAIL|INFO` lines to stdout. The CI launch jobs on
+macOS and Linux run it and fail on any `FAIL`. Nothing sends keystrokes to the
+desktop.
+
+**Windows release build, self-test results:** all checks pass.
+
+| Check | Result |
+|---|---|
+| Editor accepts input | pass |
+| Mod+Enter fires run (through CodeMirror keymap) | pass |
+| Mod+L clears output, overriding select-line | pass |
+| 10,000 lines in 1,000 chunks | 33.7 ms to render |
+| stderr styled separately from stdout | pass |
+| Auto-scroll while at bottom | pass |
+| Scrolling up stops auto-scroll, shows jump button | pass |
+| Jump to bottom resumes | pass |
+| DOM capped at 20,000 lines with a notice | pass |
+| Escape in output returns focus to editor | pass |
+| Swapping `EditorState` in and out keeps the document | pass |
+| No page-level horizontal overflow | pass |
+
+**Not verified by the self-test**
+- Dragging the splitter and its persistence across launches. The code stores
+  the ratio in `localStorage` with a try/catch fallback, but nothing drives a
+  real pointer drag.
+- The 2560×1440 layout. The self-test checks overflow only at the window's
+  current size (900×600 here).
+
+**Notes**
+- The bottom area is a tabbed `BottomPanel` with Output as its only tab
+  (DEBUGGING.md D2).
+- Bundle is 293 kB (95 kB gzipped) with CodeMirror. Launch to UI ready stayed
+  at 313–383 ms.

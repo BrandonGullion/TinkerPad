@@ -112,8 +112,12 @@ jobs:
 
       - name: Launch (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 90
+        env:
+          TINKERPAD_SELFTEST: layout
+        run: xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 120
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
-        run: bash scripts/smoke-launch.sh target/debug/tinkerpad 90
+        env:
+          TINKERPAD_SELFTEST: layout
+        run: bash scripts/smoke-launch.sh target/debug/tinkerpad 120

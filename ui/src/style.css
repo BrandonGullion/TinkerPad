@@ -3,19 +3,27 @@
   --fg: #d4d4d8;
   --muted: #8b8d94;
   --panel: #25262b;
+  --panel-2: #2b2d31;
   --border: #34363c;
   --accent: #3b82f6;
   --error: #f87171;
   --warning: #fbbf24;
+  --success: #4ade80;
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --editor-font-size: 14px;
   color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html,
 body {
   margin: 0;
   height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--fg);
   font: 13px/1.4 var(--font-ui);
@@ -23,7 +31,180 @@ body {
 
 #app {
   height: 100%;
+  display: flex;
+  flex-direction: column;
 }
+
+/* Workspace: editor, splitter, bottom panel. Rows are set from layout.ts. */
+
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 62% 5px 1fr;
+}
+
+.editor-host {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.splitter {
+  height: 5px;
+  cursor: row-resize;
+  background: var(--border);
+  border-top: 2px solid var(--bg);
+  border-bottom: 2px solid var(--bg);
+}
+
+.splitter:hover,
+.splitter.dragging {
+  background: var(--accent);
+}
+
+.panel-host {
+  min-height: 0;
+  display: flex;
+}
+
+/* Bottom panel */
+
+.bottom-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-tab {
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 6px 10px 5px;
+  cursor: pointer;
+}
+
+.panel-tab:hover {
+  color: var(--fg);
+}
+
+.panel-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.panel-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.panel-content > [role="tabpanel"] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Output */
+
+.output {
+  position: relative;
+  overflow: auto;
+  outline: none;
+  padding: 6px 12px;
+}
+
+.output:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.output-body {
+  margin: 0;
+  font: var(--editor-font-size) / 1.45 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.out-stderr {
+  color: var(--error);
+}
+
+.out-info {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.output-trimmed {
+  color: var(--muted);
+  font-style: italic;
+  padding-bottom: 4px;
+}
+
+.output-jump {
+  position: sticky;
+  bottom: 8px;
+  float: right;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+/* Status bar */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 24px;
+  padding: 0 10px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status-spacer {
+  flex: 1;
+}
+
+.run-running {
+  color: var(--accent);
+}
+
+.run-done {
+  color: var(--success);
+}
+
+.run-done.run-error,
+.run-failed {
+  color: var(--error);
+}
+
+.run-cancelled {
+  color: var(--warning);
+}
+
+/* Toasts */
 
 .toasts {
   position: fixed;

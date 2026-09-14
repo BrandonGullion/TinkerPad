@@ -50,6 +50,21 @@ mod commands {
             .publish(Scope::App, CoreEvent::Pong { ready_ms });
         Ok(())
     }
+
+    /// Which in-app self-test scenario to run, from `TINKERPAD_SELFTEST`.
+    /// `None` in normal use. See `ui/src/selftest.ts`.
+    #[tauri::command]
+    pub fn selftest_scenario() -> Option<String> {
+        std::env::var("TINKERPAD_SELFTEST")
+            .ok()
+            .filter(|s| !s.is_empty())
+    }
+
+    /// One self-test result line, printed so scripts and CI can read it.
+    #[tauri::command]
+    pub fn selftest_report(line: String) {
+        println!("selftest: {line}");
+    }
 }
 
 pub fn run() {
@@ -68,7 +83,11 @@ pub fn run() {
             app.manage(AppState { events: bus });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::ping])
+        .invoke_handler(tauri::generate_handler![
+            commands::ping,
+            commands::selftest_scenario,
+            commands::selftest_report,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running TinkerPad");
 }
