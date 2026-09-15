@@ -1,0 +1,52 @@
+api = 1
+
+# C# on .NET 10 file-based apps (`dotnet run --file main.cs`). See README.md.
+
+[language]
+id = "csharp"
+name = "C#"
+extension = "cs"
+highlighter = "csharp"
+
+[toolchain]
+probe = [{ command = "dotnet", args = ["--version"], min_version = "10.0" }]
+install_hint = "Install the .NET 10 SDK: https://dot.net"
+
+[[kind]]
+id = "statements"
+name = "C# Statements"
+template = "statements.cs"
+default = true
+
+[[kind]]
+id = "program"
+name = "C# Program"
+template = "program.cs"
+
+# Locked lines: the file is a call to Dump.Show around one expression.
+[[kind]]
+id = "expression"
+name = "C# Expression"
+template = "expression.cs"
+prelude = "TinkerPad.Dump.Show(\n"
+postlude = "\n);\n"
+
+[scaffold]
+# Compiles dump/TinkerPad.Dump.cs into the playground (through the
+# TINKERPAD_CSHARP_DUMP variable set below, so no install path is written into
+# the playground) and turns off the file-based-app AOT defaults, which would
+# print trimming warnings and disable reflection.
+files = [{ path = "Directory.Build.props", template = "Directory.Build.props" }]
+
+[run]
+command = "{toolchain}"
+args = ["run", "--file", "{main}"]
+env = { DOTNET_NOLOGO = "1", DOTNET_CLI_UI_LANGUAGE = "en", DOTNET_CLI_TELEMETRY_OPTOUT = "1", DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1", TINKERPAD_CSHARP_DUMP = "{plugin_dir}/dump/TinkerPad.Dump.cs" }
+
+[deps]
+kind = "inline-directive"
+directive = "#:package {name}@{version}"
+
+[output]
+# C:\...\main.cs(3,9): error CS1002: ; expected
+error_regex = '^(?<file>.+?\.cs)\((?<line>\d+),(?<col>\d+)\): (?<severity>error|warning) (?<message>[A-Z]+\d+: .*?)(?: \[[^\]]*\])?$'

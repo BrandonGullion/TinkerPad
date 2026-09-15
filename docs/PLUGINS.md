@@ -419,8 +419,17 @@ The template for each kind already imports the helper, so a new playground can c
 
 ### C# (Phase 1, helper in Phase 3)
 
-- **Run:** `dotnet run main.cs` (.NET 10 file-based apps). `#:package Foo@1.2.3` at
-  the top of the file pulls NuGet packages.
+- **Run:** `dotnet run --file main.cs` (.NET 10 file-based apps). `#:package Foo@1.2.3`
+  at the top of the file pulls NuGet packages.
+- **Dump:** each playground gets a `Directory.Build.props` that compiles
+  `$(TINKERPAD_CSHARP_DUMP)` into the build and adds a global `using TinkerPad`.
+  `[run].env` points that variable at `{plugin_dir}/dump/TinkerPad.Dump.cs`, so no
+  install path is written into the playground.
+  - The same file sets `PublishAot=false`. File-based apps default to AOT
+    settings, which print trimming warnings on every build and disable
+    reflection-based serialisation.
+  - It also sets `Nullable=annotations`, so nullable warnings don't clutter every
+    run.
 - **Kinds:** `statements` (top-level statements, default), `program`, `expression`
   (locked lines).
 - **LSP:** Roslyn's `Microsoft.CodeAnalysis.LanguageServer` understands loose `.cs`

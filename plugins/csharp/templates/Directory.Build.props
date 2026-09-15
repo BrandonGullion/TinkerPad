@@ -1,0 +1,16 @@
+<Project>
+  <!-- Written by TinkerPad's C# plugin. Safe to edit. -->
+  <PropertyGroup>
+    <!-- File-based apps default to native AOT settings, which warn about and
+         block the reflection that Dump() and many scripts rely on. -->
+    <PublishAot>false</PublishAot>
+    <!-- `string?` is allowed, but nullable warnings don't clutter every run. -->
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+  <!-- Dump(): TinkerPad sets TINKERPAD_CSHARP_DUMP to its dump library when it
+       runs this playground. Elsewhere the playground builds without it. -->
+  <ItemGroup Condition="'$(TINKERPAD_CSHARP_DUMP)' != ''">
+    <Compile Include="$(TINKERPAD_CSHARP_DUMP)" Link="TinkerPad.Dump.cs" />
+    <Using Include="TinkerPad" />
+  </ItemGroup>
+</Project>

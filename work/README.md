@@ -38,7 +38,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [01-07 Dump sentinel parser](phase-1-plugins/01-07-dump-parser.md) · M · 1 open criterion
 - [x] [01-08 Dump renderers in the UI](phase-1-plugins/01-08-dump-renderers.md) · L
 - [x] [01-09 TypeScript plugin](phase-1-plugins/01-09-typescript-plugin.md) · M
-- [ ] [01-10 C# plugin](phase-1-plugins/01-10-csharp-plugin.md) · M
+- [x] [01-10 C# plugin](phase-1-plugins/01-10-csharp-plugin.md) · M · 1 open criterion
 - [ ] [01-11 Rust plugin](phase-1-plugins/01-11-rust-plugin.md) · M
 - [ ] [01-12 Tabs, new-tab flow, autosave](phase-1-plugins/01-12-tabs-and-autosave.md) · M
 - [ ] [01-13 Clickable error annotations](phase-1-plugins/01-13-error-annotations.md) · S

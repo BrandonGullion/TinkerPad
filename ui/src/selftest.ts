@@ -909,6 +909,175 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
   await output.flushed();
 }
 
+/** A language's toolchain state once its check has finished (or 10 s passed). */
+async function settledToolchain(language: string): Promise<LanguageToolchain["state"] | undefined> {
+  let state: LanguageToolchain["state"] | undefined;
+  for (let i = 0; i < 100; i++) {
+    state = (await invoke<LanguageToolchain[]>("toolchain_status")).find((s) => s.language === language)?.state;
+    if (state && state.kind !== "checking") break;
+    await sleep(100);
+  }
+  return state;
+}
+
+/**
+ * Press Mod+Enter in the editor and time how long until `selector` is visible
+ * in the output pane. Resolves once the run has ended too.
+ */
+async function runUntilVisible(
+  { editor, output, runs }: SelftestContext,
+  selector: string,
+  label: string,
+  timeoutMs: number,
+): Promise<{ ms: number | null; outcome: Awaited<ReturnType<RunController["waitForEnd"]>> }> {
+  const end = runs.waitForEnd();
+  const start = performance.now();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  let ms: number | null = null;
+  let done = false;
+  void end.then(() => (done = true));
+  while (performance.now() - start < timeoutMs) {
+    const found = output.element.querySelector<HTMLElement>(selector);
+    if (found && found.getClientRects().length > 0) {
+      ms = performance.now() - start;
+      break;
+    }
+    // Stop polling once the run is over and its output has been drawn.
+    if (done) {
+      await output.flushed();
+      if (!output.element.querySelector(selector)) break;
+    }
+    await new Promise((r) => requestAnimationFrame(r));
+  }
+  const outcome = await withTimeout(end, timeoutMs, label);
+  await output.flushed();
+  await report(`INFO ${label}: Mod+Enter to ${selector} visible ${ms === null ? "never" : `${ms.toFixed(0)} ms`}`);
+  return { ms, outcome };
+}
+
+/** The bundled C# plugin, end to end in the app (01-10). */
+async function csharpScenario(ctx: SelftestContext, check: Check) {
+  const { output, editor, status } = ctx;
+  const pane = output.element;
+  const outText = () => (pane.querySelector(".output-body")?.textContent ?? "").replaceAll("\r\n", "\n");
+  // A cold first build (restore, compiler start) can take a while on CI.
+  const LONG = 180_000;
+
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const cs = plugins.plugins.find((p) => p.id === "csharp");
+  await check("the C# plugin is bundled", cs?.source === "bundled", JSON.stringify(cs ?? null));
+  const state = await settledToolchain("csharp");
+  await check("the .NET 10 SDK is ready for C#", state?.kind === "ready", JSON.stringify(state ?? null));
+  if (state?.kind !== "ready") return;
+
+  const created = await invoke<Playground>("create_playground", { name: "CS Self Test", language: "csharp" });
+  await openPlayground(editor, status, created.id);
+  await check(
+    "a new playground starts from the statements template",
+    created.kind === "statements" && editor.text.includes("using TinkerPad;\n") && editor.text.includes(".Dump(\"people\")"),
+    JSON.stringify(editor.text.slice(0, 120)),
+  );
+
+  const table = () => pane.querySelector(".dump-kind-table");
+  const first = await runUntilVisible(ctx, ".dump-kind-table", "C# first run of a new playground", LONG);
+  await check(
+    "the template's .Dump() renders a table",
+    first.ms !== null &&
+      first.outcome.kind === "exited" &&
+      first.outcome.code === 0 &&
+      table()?.querySelector(".dump-title")?.textContent === "people" &&
+      table()?.querySelectorAll("tbody tr").length === 2 &&
+      !pane.querySelector(".out-stderr"),
+    JSON.stringify({ outcome: first.outcome, text: outText().slice(0, 300) }),
+  );
+  const second = await runUntilVisible(ctx, ".dump-kind-table", "C# second run, unchanged", LONG);
+  await check("an unchanged rerun shows the table again", second.ms !== null && second.outcome.kind === "exited");
+
+  editor.view.dispatch({
+    changes: {
+      from: 0,
+      to: editor.view.state.doc.length,
+      insert: 'using TinkerPad;\n\nConsole.WriteLine("héllo 日本");\n(6 * 7).Dump("answer");\n',
+    },
+  });
+  const edited = await runUntilVisible(ctx, ".dump-kind-value", "C# run after an edit", LONG);
+  await check(
+    "UTF-8 text and a value dump after an edit",
+    edited.outcome.kind === "exited" &&
+      outText().startsWith("héllo 日本\n") &&
+      pane.querySelector(".dump-kind-value .j-num")?.textContent === "42",
+    JSON.stringify(outText().slice(0, 120)),
+  );
+
+  editor.view.dispatch({
+    changes: { from: 0, to: editor.view.state.doc.length, insert: 'using TinkerPad;\n\nConsole.WriteLine("x")\n' },
+  });
+  const broken = await runUntilVisible(ctx, ".dump", "C# compile error", LONG);
+  await check(
+    "a compile error is shown and the run fails",
+    broken.outcome.kind === "exited" &&
+      broken.outcome.code !== 0 &&
+      /main\.cs\(3,23\): error CS1002/.test(outText()),
+    JSON.stringify({ outcome: broken.outcome, text: outText().slice(0, 300) }),
+  );
+
+  const expression = await invoke<Playground>("create_playground", {
+    name: "CS Expression Test",
+    language: "csharp",
+    kind: "expression",
+  });
+  const opened = await openPlayground(editor, status, expression.id);
+  await check(
+    "the expression kind opens with locked lines",
+    opened.lock === "locked" && editor.text.startsWith("TinkerPad.Dump.Show(\n") && editor.text.endsWith("\n);\n"),
+    JSON.stringify({ lock: opened.lock, text: editor.text }),
+  );
+  const expr = await runUntilVisible(ctx, ".dump-kind-table", "C# expression kind", LONG);
+  await check(
+    "the expression kind dumps its value",
+    expr.outcome.kind === "exited" && table()?.querySelectorAll("tbody tr").length === 5,
+    JSON.stringify({ outcome: expr.outcome, text: outText().slice(0, 200) }),
+  );
+
+  const program = await invoke<Playground>("create_playground", {
+    name: "CS Program Test",
+    language: "csharp",
+    kind: "program",
+  });
+  await openPlayground(editor, status, program.id);
+  const prog = await runUntilVisible(ctx, ".dump-kind-tree", "C# program kind", LONG);
+  await check(
+    "the program kind prints and dumps",
+    prog.outcome.kind === "exited" && outText().startsWith("Hello from C#\n") && prog.ms !== null,
+    JSON.stringify({ outcome: prog.outcome, text: outText().slice(0, 200) }),
+  );
+
+  // Leave a table on screen for a screenshot.
+  await openPlayground(editor, status, created.id);
+  editor.view.dispatch({
+    changes: {
+      from: 0,
+      to: editor.view.state.doc.length,
+      insert: [
+        "using TinkerPad;",
+        "",
+        'Console.WriteLine("Hello from C#");',
+        "var people = new[]",
+        "{",
+        '    new Person("Ada Lovelace", 1815, ["Analytical Engine"]),',
+        '    new Person("Grace Hopper", 1906, ["COBOL", "FLOW-MATIC"]),',
+        '    new Person("Alan Turing", 1912, []),',
+        '}.Dump("people");',
+        'Console.WriteLine($"{people.Length} people, born {people.Min(p => p.Born)}–{people.Max(p => p.Born)}");',
+        "",
+        "record Person(string Name, int Born, string[] Languages);",
+        "",
+      ].join("\n"),
+    },
+  });
+  await runUntilVisible(ctx, ".dump-kind-table", "C# screenshot run", LONG);
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -926,6 +1095,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   dump: dumpScenario,
   "dump-render": dumpRenderScenario,
   typescript: typescriptScenario,
+  csharp: csharpScenario,
   plugins: pluginsScenario,
   toolchains: toolchainsScenario,
   library: libraryScenario,
