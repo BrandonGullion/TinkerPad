@@ -1,23 +1,33 @@
-//! Starting, streaming, and cancelling runs on behalf of the UI.
+//! Starting, streaming, and cancelling playground runs for the UI.
 //!
-//! Work item 00-06: a single hard-coded runtime (`node`) and a single active
-//! run. Plugins (01-06) replace the hard-coded spec; tabs (01-12) allow one
-//! run per playground.
+//! A run saves the playground, builds the command from its plugin's `[run]`
+//! section (`tinkerpad_runner::run_spec`), and runs the file on disk. Each
+//! playground has at most one run at a time; different playgrounds can run at
+//! once.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use tauri::async_runtime::JoinHandle;
-use tinkerpad_core::{CommandError, CoreEvent, ErrorCode, RunEvent as UiRunEvent, Scope};
-use tinkerpad_plugin::env::find_program;
+use tinkerpad_core::{
+    CommandError, CoreEvent, ErrorCode, PlaygroundId, RunEvent as UiRunEvent, Scope, ToolchainState,
+};
+use tinkerpad_library::Library;
+use tinkerpad_plugin::Plugin;
 use tinkerpad_process::KillHandle;
-use tinkerpad_runner::{RunError, RunEvent, RunSpec, Utf8Stream, run};
+use tinkerpad_runner::spec::scratch_dir;
+use tinkerpad_runner::{RunContext, RunEvent, SpecError, Utf8Stream, run, run_spec};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::events::EventBus;
 use crate::toolchains::Toolchains;
+
+/// How long a run waits for a toolchain check that's still in progress.
+const TOOLCHAIN_WAIT: Duration = Duration::from_secs(10);
 
 struct Active {
     id: u64,
@@ -26,87 +36,125 @@ struct Active {
     forwarder: JoinHandle<()>,
 }
 
+/// One playground's run slot. Held for the whole start sequence so two quick
+/// runs of the same playground can't overlap.
+type Slot = Arc<Mutex<Option<Active>>>;
+
 pub struct Runs {
     events: Arc<EventBus>,
-    scratch: PathBuf,
-    /// For finding programs on the discovered PATH (the login shell's on macOS
-    /// and Linux), not just the PATH the app was launched with.
+    scratch_root: PathBuf,
     toolchains: Arc<Toolchains>,
     next_id: AtomicU64,
-    /// Held for the whole start sequence so two quick Runs can't interleave.
-    active: Mutex<Option<Active>>,
+    slots: std::sync::Mutex<HashMap<PlaygroundId, Slot>>,
 }
 
 impl Runs {
-    pub fn new(events: Arc<EventBus>, scratch: PathBuf, toolchains: Arc<Toolchains>) -> Self {
+    pub fn new(events: Arc<EventBus>, scratch_root: PathBuf, toolchains: Arc<Toolchains>) -> Self {
         Self {
             events,
-            scratch,
+            scratch_root,
             toolchains,
             next_id: AtomicU64::new(1),
-            active: Mutex::new(None),
+            slots: Default::default(),
         }
     }
 
-    /// Run `code` with the hard-coded runtime. Cancels any active run first and
-    /// waits for its final event, so output from two runs never interleaves.
-    pub async fn start(&self, code: String) -> Result<u64, CommandError> {
-        let mut active = self.active.lock().await;
+    fn slot(&self, playground: &PlaygroundId) -> Slot {
+        self.slots
+            .lock()
+            .expect("slots lock")
+            .entry(playground.clone())
+            .or_default()
+            .clone()
+    }
+
+    /// Save `text` as the playground's main file, then run it. Returns the run
+    /// id; output and the outcome arrive as `run` events scoped to it. A run
+    /// already going for this playground is cancelled first, and its final
+    /// event is published before this run starts.
+    pub async fn start(
+        &self,
+        library: &Library,
+        plugin: Arc<Plugin>,
+        playground_id: &PlaygroundId,
+        text: String,
+    ) -> Result<u64, CommandError> {
+        let slot = self.slot(playground_id);
+        let mut active = slot.lock().await;
         if let Some(prev) = active.take() {
-            info!(run = prev.id, "replacing previous run");
+            info!(run = prev.id, playground = %playground_id, "replacing previous run");
             prev.kill.kill();
             let _ = prev.forwarder.await;
         }
 
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let scope = Scope::Run(id);
-
-        tokio::fs::create_dir_all(&self.scratch)
-            .await
-            .map_err(|e| {
-                CommandError::new(
-                    ErrorCode::Io,
-                    format!("could not create scratch folder: {e}"),
-                )
-            })?;
-        let file = self.scratch.join("scratch.js");
-        tokio::fs::write(&file, code).await.map_err(|e| {
+        // Always save first (01-12 adds dirty tracking). The runner reads the
+        // file, never the text.
+        library
+            .write_source(playground_id, &text)
+            .map_err(crate::library::to_command_error)?;
+        let playground = library.get(playground_id).ok_or_else(|| {
             CommandError::new(
-                ErrorCode::Io,
-                format!("could not write {}: {e}", file.display()),
+                ErrorCode::NotFound,
+                format!("no playground {playground_id}"),
             )
         })?;
 
-        // Still hard-coded to node until plugins drive runs (01-06), but found
-        // on the discovered PATH, which children also inherit.
-        let resolver = self.toolchains.resolver();
-        let program = find_program("node", resolver.path())
-            .map(PathBuf::into_os_string)
-            .unwrap_or_else(|| "node".into());
-        let spec = RunSpec {
-            program,
-            args: vec![file.into_os_string()],
-            cwd: Some(self.scratch.clone()),
-            env: vec![("PATH".into(), resolver.path().to_os_string())],
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let scope = Scope::Run(id);
+        let fail = |message: String| {
+            warn!(run = id, playground = %playground_id, %message, "run failed to start");
+            self.events.publish(
+                scope.clone(),
+                CoreEvent::Run(UiRunEvent::Failed { message }),
+            );
+            Ok(id)
         };
 
-        let mut handle = match run(spec) {
-            Ok(handle) => handle,
-            Err(error) => {
-                let message = match &error {
-                    RunError::NotFound { .. } => {
-                        "Node.js was not found on PATH. Install it from https://nodejs.org and restart TinkerPad.".to_owned()
-                    }
-                    other => other.to_string(),
-                };
-                warn!(run = id, %error, "run failed to start");
-                self.events
-                    .publish(scope, CoreEvent::Run(UiRunEvent::Failed { message }));
-                return Ok(id);
+        let (program, version) = match self.wait_for_toolchain(&plugin).await {
+            ToolchainState::Ready {
+                program, version, ..
+            } => (program, version.unwrap_or_default()),
+            ToolchainState::Missing { reason, hint } => {
+                return fail(with_hint(
+                    format!("{} isn't ready: {reason}.", plugin.name),
+                    hint.as_deref(),
+                ));
+            }
+            ToolchainState::Checking => {
+                return fail(format!(
+                    "{}'s toolchain check hasn't finished. Try again in a moment.",
+                    plugin.name
+                ));
             }
         };
 
-        info!(run = id, pid = handle.pid, "run started");
+        let resolver = self.toolchains.resolver();
+        let ctx = RunContext {
+            resolver: &resolver,
+            scratch_root: &self.scratch_root,
+            toolchain_program: &program,
+            toolchain_version: &version,
+        };
+        let spec = match run_spec(&plugin, &playground, &ctx) {
+            Ok(spec) => spec,
+            Err(SpecError::NotFound {
+                message,
+                install_hint,
+            }) => return fail(with_hint(message, install_hint.as_deref())),
+            Err(other) => return fail(other.to_string()),
+        };
+
+        let scratch = scratch_dir(&self.scratch_root, &plugin);
+        if let Err(e) = tokio::fs::create_dir_all(&scratch).await {
+            return fail(format!("Couldn't create {}: {e}", scratch.display()));
+        }
+
+        let mut handle = match run(spec) {
+            Ok(handle) => handle,
+            Err(error) => return fail(error.to_string()),
+        };
+
+        info!(run = id, pid = handle.pid, playground = %playground_id, plugin = %plugin.id, "run started");
         let kill = handle.canceller();
         let events = self.events.clone();
         let forwarder = tauri::async_runtime::spawn(async move {
@@ -160,12 +208,42 @@ impl Runs {
         Ok(id)
     }
 
-    /// Cancel the active run, if any. Returns immediately; a `cancelled` event
-    /// follows.
-    pub async fn cancel(&self) {
-        if let Some(active) = self.active.lock().await.as_ref() {
-            info!(run = active.id, "cancel requested");
+    /// Cancel a playground's run, if it has one. Returns immediately; a
+    /// `cancelled` event follows.
+    pub async fn cancel(&self, playground: &PlaygroundId) {
+        let slot = self
+            .slots
+            .lock()
+            .expect("slots lock")
+            .get(playground)
+            .cloned();
+        if let Some(slot) = slot
+            && let Some(active) = slot.lock().await.as_ref()
+        {
+            info!(run = active.id, %playground, "cancel requested");
             active.kill.kill();
         }
+    }
+
+    /// The plugin's toolchain state, waiting briefly if the startup check is
+    /// still running.
+    async fn wait_for_toolchain(&self, plugin: &Plugin) -> ToolchainState {
+        let deadline = tokio::time::Instant::now() + TOOLCHAIN_WAIT;
+        loop {
+            match self.toolchains.state(plugin.id.as_str()) {
+                Some(ToolchainState::Checking) | None if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Some(state) => return state,
+                None => return ToolchainState::Checking,
+            }
+        }
+    }
+}
+
+fn with_hint(message: String, hint: Option<&str>) -> String {
+    match hint {
+        Some(hint) => format!("{message}\n{hint}"),
+        None => message,
     }
 }

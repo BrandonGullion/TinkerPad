@@ -18,3 +18,8 @@ tracing.workspace = true
 
 [lints]
 workspace = true
+
+# Stand-in runtime for the run_spec tests. Not part of the app.
+[[bin]]
+name = "tinkerpad-echoargs"
+path = "src/bin/echoargs.rs"

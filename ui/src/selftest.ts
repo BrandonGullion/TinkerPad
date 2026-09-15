@@ -71,7 +71,9 @@ export async function maybeRunSelftest(ctx: SelftestContext): Promise<void> {
 
 type Check = (name: string, ok: boolean, detail?: string) => Promise<void>;
 
-async function layoutScenario({ editor, output, runs }: SelftestContext, check: Check) {
+async function layoutScenario(ctx: SelftestContext, check: Check) {
+  const { editor, output, runs } = ctx;
+  await openTestPlayground(ctx, "Layout Test");
   const view = editor.view;
   const outText = () => output.element.querySelector(".output-body")?.textContent ?? "";
 
@@ -180,6 +182,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
 
 async function runScenario(ctx: SelftestContext, check: Check) {
   const { output, runs, editor } = ctx;
+  const main = await openTestPlayground(ctx, "Run Test");
   const outText = () => output.element.querySelector(".output-body")?.textContent ?? "";
   const status = () => document.querySelector(".status-run")?.textContent ?? "";
 
@@ -251,6 +254,70 @@ async function runScenario(ctx: SelftestContext, check: Check) {
     outcome.kind === "exited" && outText() === "B\n",
     JSON.stringify({ outcome, out: outText().slice(0, 80) }),
   );
+
+  // The run executed the saved file: what's on disk is what ran.
+  await check(
+    "run saves the playground first",
+    (await invoke<string>("read_source", { id: main.id })) === 'console.log("B")\n',
+  );
+
+  // Different playgrounds can run at the same time.
+  const ended = new Map<number, string>();
+  const unsubscribe = subscribe(({ scope, event }) => {
+    if (event.type === "run" && ["exited", "cancelled", "failed"].includes(event.kind)) {
+      ended.set(Number(scope.slice(4)), event.kind === "failed" ? `failed: ${event.message}` : event.kind);
+    }
+  });
+  const other = await invoke<Playground>("create_playground", {
+    name: "Run Test Other",
+    language: "node-check",
+  });
+  const longRun = await invoke<number>("run", {
+    playground: main.id,
+    text: "setInterval(() => {}, 1000)\n",
+  });
+  const shortRun = await invoke<number>("run", {
+    playground: other.id,
+    text: 'console.log("other")\n',
+  });
+  for (let i = 0; i < 100 && !ended.has(shortRun); i++) await sleep(50);
+  await check(
+    "runs in different playgrounds overlap",
+    ended.get(shortRun) === "exited" && !ended.has(longRun),
+    JSON.stringify([...ended]),
+  );
+  await invoke("cancel", { playground: main.id });
+  for (let i = 0; i < 100 && !ended.has(longRun); i++) await sleep(50);
+  await check("cancel stops only that playground's run", ended.get(longRun) === "cancelled");
+
+  // A plugin whose toolchain is missing fails with the reason instead of running.
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  if (plugins.plugins.some((p) => p.id === "mini")) {
+    const broken = await invoke<Playground>("create_playground", {
+      name: "Run Test Missing",
+      language: "mini",
+    });
+    const failedRun = await invoke<number>("run", { playground: broken.id, text: "x\n" });
+    for (let i = 0; i < 100 && !ended.has(failedRun); i++) await sleep(50);
+    const result = ended.get(failedRun) ?? "";
+    await check(
+      "missing toolchain fails with the reason",
+      result.startsWith("failed:") && result.includes("isn't ready") && result.includes("not found"),
+      result,
+    );
+  }
+  unsubscribe();
+}
+
+/** Create a playground of the node-check test plugin and open it. */
+async function openTestPlayground(
+  { editor, status }: SelftestContext,
+  name: string,
+  kind = "script",
+): Promise<Playground> {
+  const p = await invoke<Playground>("create_playground", { name, language: "node-check", kind });
+  await openPlayground(editor, status, p.id);
+  return p;
 }
 
 const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<void>> = {

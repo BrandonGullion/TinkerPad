@@ -216,17 +216,48 @@ mod commands {
             .map_err(crate::library::to_command_error)
     }
 
-    /// Run the editor's code. Returns the run id; output and the outcome
-    /// arrive as `run` events scoped to that id.
+    /// Save `text` to a playground and run it with its plugin's `[run]`
+    /// command. Returns the run id; output and the outcome arrive as `run`
+    /// events scoped to that id.
     #[tauri::command]
-    pub async fn run(state: State<'_, AppState>, code: String) -> Result<u64, CommandError> {
-        state.runs.start(code).await
+    pub async fn run(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+        text: String,
+    ) -> Result<u64, CommandError> {
+        use tinkerpad_core::ErrorCode;
+        let language = state
+            .library
+            .get(&playground)
+            .ok_or_else(|| {
+                CommandError::new(ErrorCode::NotFound, format!("no playground {playground}"))
+            })?
+            .language;
+        let plugin = state
+            .plugins
+            .read()
+            .expect("plugins lock")
+            .get(language.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                CommandError::new(
+                    ErrorCode::NotFound,
+                    format!("no plugin is loaded for `{language}`, so this playground can't run"),
+                )
+            })?;
+        state
+            .runs
+            .start(&state.library, plugin, &playground, text)
+            .await
     }
 
-    /// Cancel the active run, if any.
+    /// Cancel a playground's run, if it has one.
     #[tauri::command]
-    pub async fn cancel(state: State<'_, AppState>) -> Result<(), CommandError> {
-        state.runs.cancel().await;
+    pub async fn cancel(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+    ) -> Result<(), CommandError> {
+        state.runs.cancel(&playground).await;
         Ok(())
     }
 

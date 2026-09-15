@@ -15,6 +15,8 @@ export type RunOutcome =
  * setting in work item 04-02. */
 const CLEAR_OUTPUT_ON_RUN = true;
 
+export const NO_PLAYGROUND_NOTE = "Open a playground to run it.";
+
 export class RunController {
   /** Id of the run whose events we display. `null` while a start is pending. */
   private current: number | null = null;
@@ -25,6 +27,8 @@ export class RunController {
   private clickedAt = 0;
   private firstOutputAt: number | null = null;
   private waiters: ((o: RunOutcome) => void)[] = [];
+  /** The playground of the latest run. */
+  private playground: string | null = null;
 
   constructor(
     private readonly output: OutputPane,
@@ -40,17 +44,26 @@ export class RunController {
     return this.firstOutputAt === null ? null : this.firstOutputAt - this.clickedAt;
   }
 
-  async run(code: string): Promise<void> {
+  /**
+   * Save `code` to `playground` and run it. With no playground open there is
+   * nothing to run, so the status bar says so instead.
+   */
+  async run(playground: string | null, code: string): Promise<void> {
+    if (!playground) {
+      this.status.flashNote(NO_PLAYGROUND_NOTE);
+      return;
+    }
     this.clickedAt = performance.now();
     this.firstOutputAt = null;
     this.current = null;
     this.pending = true;
+    this.playground = playground;
     if (CLEAR_OUTPUT_ON_RUN) this.output.clear();
     this.status.setRun({ kind: "running", since: this.clickedAt });
 
     let id: number;
     try {
-      id = await invoke<number>("run", { code });
+      id = await invoke<number>("run", { playground, text: code });
     } catch (e) {
       this.pending = false;
       const message = (e as { message?: string }).message ?? String(e);
@@ -68,7 +81,7 @@ export class RunController {
   }
 
   async cancel(): Promise<void> {
-    if (this.running) await invoke("cancel");
+    if (this.running && this.playground) await invoke("cancel", { playground: this.playground });
   }
 
   /** Resolves when the current (or next) run ends. */
