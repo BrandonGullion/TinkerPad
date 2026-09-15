@@ -8,6 +8,11 @@ import { undo } from "@codemirror/commands";
 import { EditorSelection } from "@codemirror/state";
 import { runScopeHandlers } from "@codemirror/view";
 
+import { clipboard } from "./dump/copy";
+import { renderExamples } from "./dump/examples";
+import { renderRich } from "./dump/render";
+import { CHUNK_ROWS } from "./dump/table";
+import { TREE_PAGE } from "./dump/tree";
 import type { Editor } from "./editor";
 import { invoke, subscribe } from "./ipc";
 import type { StatusBar } from "./layout";
@@ -400,12 +405,395 @@ async function dumpScenario(ctx: SelftestContext, check: Check) {
   const text = rich.find((v) => v.kind === "text");
   await check("ST-terminated dump parses", text?.kind === "text" && text.text === "st", JSON.stringify(text));
 
-  const pane = output.element.querySelector(".output-body")?.textContent ?? "";
-  await check(
-    "output pane marks where each dump was",
-    pane.includes('before [dump: value "answer"]') && pane.includes('[dump: table "rows"]'),
-    pane.slice(0, 200),
+  // The pane shows them as blocks, in order with the text.
+  const body = output.element.querySelector(".output-body")!;
+  const blocks = [...body.children].map((c) =>
+    c.classList.contains("dump") ? `dump:${(c as HTMLElement).dataset.kind}` : (c as HTMLElement).dataset.stream,
   );
+  const tableFoot = body.querySelector(".dump-kind-table .dump-table-foot")?.textContent ?? "";
+  await check(
+    "output pane renders dumps as blocks between the text",
+    JSON.stringify(blocks) ===
+      JSON.stringify(["stdout", "dump:value", "stdout", "stderr", "info", "dump:table", "dump:text", "stdout"]) &&
+      tableFoot.startsWith(`${(20_000).toLocaleString()} rows`),
+    JSON.stringify({ blocks, tableFoot }),
+  );
+}
+
+const frames = async (n: number) => {
+  for (let i = 0; i < n; i++) await frame();
+};
+
+/** Wait until `ok()` holds, checking every frame, up to `ms`. */
+async function until(ok: () => boolean, ms = 3000): Promise<boolean> {
+  const end = performance.now() + ms;
+  while (!ok()) {
+    if (performance.now() > end) return false;
+    await frame();
+  }
+  return true;
+}
+
+async function dumpRenderScenario(ctx: SelftestContext, check: Check) {
+  const { output } = ctx;
+  const pane = output.element;
+  output.clear();
+  const titled = (kind: string, title: string) =>
+    [...pane.querySelectorAll<HTMLElement>(`.dump-kind-${kind}`)].find(
+      (d) => d.querySelector(":scope > .dump-head > .dump-title")?.textContent === title,
+    );
+
+  // Every kind, from the dev "render examples" command.
+  const examples = await renderExamples(output);
+  await output.flushed();
+  const missing = examples.map((e) => e.kind).filter((k) => !pane.querySelector(`.dump-kind-${k}`));
+  await check(
+    "render examples shows one of every kind",
+    examples.length === 9 && missing.length === 0,
+    `${examples.length} examples, missing ${JSON.stringify(missing)}`,
+  );
+  const captions = [...pane.querySelectorAll(".dump-title")].map((t) => t.textContent);
+  await check(
+    "titles render as captions",
+    ["answer", "users", "config"].every((t) => captions.includes(t)),
+    JSON.stringify(captions),
+  );
+
+  const value = titled("value", "answer");
+  await check(
+    "value shows the literal and a type badge",
+    value?.querySelector(".j-num")?.textContent === "42" && value.querySelector(".dump-type")?.textContent === "int",
+    value?.textContent ?? "missing",
+  );
+  const timing = pane.querySelector<HTMLElement>(".dump-kind-timing");
+  await check(
+    "timing is a small inline badge",
+    !!timing?.classList.contains("dump-inline") && timing.querySelector(".timing-ms")?.textContent === "12.5 ms",
+    timing?.textContent ?? "missing",
+  );
+  const text = pane.querySelector<HTMLElement>(".dump-text");
+  await check(
+    "text with a bundled highlighter is highlighted",
+    text?.dataset.lang === "json" && text.querySelector(".tok-propertyName") !== null,
+    text?.innerHTML.slice(0, 120) ?? "missing",
+  );
+  const plainText = renderRich({ v: 1, kind: "text", text: "fn main() {}", lang: "rust" }, { scrollRoot: pane });
+  await check(
+    "text without a bundled highlighter is plain",
+    plainText.querySelector(".dump-text")?.children.length === 0 &&
+      plainText.querySelector(".dump-text")?.textContent === "fn main() {}",
+  );
+  const htmlHost = pane.querySelector<HTMLElement>(".dump-html");
+  await check(
+    "html renders in its own isolated root",
+    htmlHost?.shadowRoot?.querySelector("strong")?.textContent === "world" &&
+      getComputedStyle(htmlHost).overflowY === "auto",
+  );
+
+  const img = pane.querySelector<HTMLImageElement>(".dump-image")!;
+  await until(() => img.complete);
+  await check(
+    "image shows inline with a max height",
+    img.naturalWidth === 160 && getComputedStyle(img).maxHeight === "240px",
+    `${img.naturalWidth}px, max ${getComputedStyle(img).maxHeight}`,
+  );
+  img.click();
+  await check("clicking an image expands it", getComputedStyle(img).maxHeight === "none");
+
+  const unknown = pane.querySelector(".dump-kind-unknown");
+  await check(
+    "an unknown kind shows its raw JSON",
+    !!unknown?.querySelector(".dump-tree") && (unknown.textContent ?? "").includes('"chart"'),
+  );
+  await check(
+    "a truncated dump says it was too large",
+    (pane.querySelector(".dump-kind-truncated")?.textContent ?? "").includes("too large"),
+  );
+
+  // Tables: headers, sorting, nested cells, clipping, copy.
+  const users = titled("table", "users")!;
+  const column = (table: Element, c: number) =>
+    [...table.querySelectorAll("tbody tr:not(.dump-placeholder)")].map((tr) => tr.children[c]?.textContent ?? "");
+  const header = (table: Element, c: number) => table.querySelectorAll<HTMLElement>("th")[c]!;
+  await check(
+    "table header shows names and type hints",
+    header(users, 0).querySelector(".col-name")?.textContent === "id" &&
+      header(users, 0).querySelector(".dump-type")?.textContent === "int",
+  );
+  await check(
+    "table shows its row count",
+    users.querySelector(".dump-table-foot")?.textContent === "3 rows",
+    users.querySelector(".dump-table-foot")?.textContent ?? "",
+  );
+  header(users, 0).click();
+  const ascending = column(users, 0);
+  header(users, 0).click();
+  const descending = column(users, 0);
+  header(users, 0).click();
+  const original = column(users, 0);
+  await check(
+    "clicking a header sorts up, down, then back",
+    JSON.stringify([ascending, descending, original]) === JSON.stringify([["1", "2", "3"], ["3", "2", "1"], ["3", "1", "2"]]),
+    JSON.stringify([ascending, descending, original]),
+  );
+  header(users, 2).click();
+  const bornUp = column(users, 2);
+  header(users, 2).click();
+  const bornDown = column(users, 2);
+  header(users, 2).click();
+  await check(
+    "missing values sort last both ways",
+    JSON.stringify([bornUp, bornDown]) === JSON.stringify([["1815", "1906", "null"], ["1906", "1815", "null"]]),
+    JSON.stringify([bornUp, bornDown]),
+  );
+
+  const ties = renderRich(
+    {
+      v: 1,
+      kind: "table",
+      columns: [{ name: "name" }, { name: "score" }],
+      rows: [["a", 1], ["b", 1], ["c", 0], ["d", 1]],
+      truncated: true,
+    },
+    { scrollRoot: pane },
+  );
+  pane.querySelector(".output-body")!.append(ties);
+  header(ties, 1).click();
+  const tiesUp = column(ties, 0).join("");
+  header(ties, 1).click();
+  const tiesDown = column(ties, 0).join("");
+  await check("sorting is stable", tiesUp === "cabd" && tiesDown === "abdc", `${tiesUp} ${tiesDown}`);
+  await check(
+    "a truncated table says so",
+    (ties.querySelector(".dump-table-foot")?.textContent ?? "").includes("truncated"),
+  );
+
+  const nested = users.querySelector<HTMLElement>(".dump-toggle")!;
+  const closedBefore = nested.getAttribute("aria-expanded") === "false" && !users.querySelector(".dump-cell-content");
+  nested.click();
+  const cellContent = nested.parentElement?.querySelector(".dump-cell-content");
+  await check(
+    "a nested dump in a cell starts collapsed and expands",
+    closedBefore && !!cellContent?.querySelector(".dump") && nested.getAttribute("aria-expanded") === "true",
+    nested.textContent ?? "",
+  );
+  const clip = users.querySelector<HTMLElement>(".dump-clip")!;
+  const clipped = clip.scrollWidth > clip.clientWidth && clip.title.startsWith("Rear admiral");
+  clip.click();
+  await check(
+    "long strings are clipped with the full text on hover and expand",
+    clipped && !!clip.closest("td")?.classList.contains("expanded") && clip.scrollWidth <= clip.clientWidth + 1,
+    `${clip.scrollWidth} vs ${clip.clientWidth}`,
+  );
+
+  const copied: string[] = [];
+  const realWrite = clipboard.write;
+  clipboard.write = async (t: string) => {
+    copied.push(t);
+  };
+  try {
+    const buttons = [...users.querySelectorAll<HTMLButtonElement>(":scope > .dump-head .dump-action")];
+    await check(
+      "every node has copy as JSON, tables also CSV",
+      JSON.stringify(buttons.map((b) => b.textContent)) === '["JSON","CSV"]' &&
+        pane.querySelectorAll(".dump").length === pane.querySelectorAll(".dump .dump-action").length -
+          pane.querySelectorAll(".dump-kind-table").length,
+    );
+    buttons[1]!.click();
+    buttons[0]!.click();
+    await until(() => copied.length === 2);
+    const csv = copied[0] ?? "";
+    await check(
+      "copy as CSV writes the table in view order",
+      csv.startsWith("id,name,born,tags,bio\n3,grace,1906,") &&
+        csv.includes('""debugging""') &&
+        csv.includes('\n2,alan,,"[""logic"",""codes""]",\n'),
+      JSON.stringify(csv.slice(0, 160)),
+    );
+    const json = JSON.parse(copied[1] ?? "null") as { title?: string; rows?: unknown[] };
+    await check("copy as JSON writes the dump", json.title === "users" && json.rows?.length === 3);
+  } finally {
+    clipboard.write = realWrite;
+  }
+
+  // Trees: two levels open, lengths and key counts, lazy children.
+  const config = titled("tree", "config")!;
+  const rowOf = (tree: Element, key: string) =>
+    [...tree.querySelectorAll<HTMLElement>(".tree-row")].find((r) => r.querySelector(".tree-key")?.textContent === key);
+  const version = rowOf(config, "version");
+  const nestedRow = rowOf(config, "nested");
+  const deep = rowOf(config, "deep");
+  await check(
+    "tree opens the first two levels",
+    version?.getAttribute("aria-expanded") === "true" &&
+      nestedRow?.getAttribute("aria-expanded") === "true" &&
+      deep?.getAttribute("aria-expanded") === "false",
+  );
+  await check(
+    "arrays show their length and closed objects their key count",
+    version?.querySelector(".tree-summary")?.textContent === "[3]" &&
+      deep?.querySelector(".tree-summary")?.textContent === "{1 key}",
+    `${version?.querySelector(".tree-summary")?.textContent} ${deep?.querySelector(".tree-summary")?.textContent}`,
+  );
+  const keys = [...config.querySelectorAll(".dump-tree > .tree-node > .tree-children > .tree-node > .tree-row > .tree-key")]
+    .slice(0, 3)
+    .map((k) => k.textContent);
+  await check("tree keeps the program's key order", keys.join(",") === "name,version,stable", keys.join(","));
+  await check(
+    "closed nodes have no children yet",
+    deep?.parentElement?.querySelector(".tree-children")?.childElementCount === 0,
+  );
+  await check(
+    "primitives are coloured by type",
+    !!rowOf(config, "stable")?.querySelector(".j-bool") &&
+      !!rowOf(config, "license")?.querySelector(".j-null") &&
+      !!rowOf(config, "name")?.querySelector(".j-str"),
+  );
+
+  // Keyboard: Enter toggles, arrows move.
+  const press = (target: HTMLElement, key: string) =>
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  deep!.focus();
+  press(deep!, "Enter");
+  const openedByEnter = deep!.getAttribute("aria-expanded") === "true";
+  press(deep!, "ArrowDown");
+  const movedTo = document.activeElement as HTMLElement;
+  press(movedTo, "ArrowLeft");
+  const backToParent = document.activeElement === deep;
+  press(deep!, "ArrowLeft");
+  await check(
+    "keyboard: Enter toggles, arrows move, Left goes to the parent",
+    openedByEnter &&
+      movedTo.querySelector(".tree-key")?.textContent === "deeper" &&
+      backToParent &&
+      deep!.getAttribute("aria-expanded") === "false",
+    `${openedByEnter} ${movedTo.textContent} ${backToParent}`,
+  );
+  pane.focus();
+  press(pane, "ArrowDown");
+  await check(
+    "keyboard: Down from the pane focuses the first node",
+    (document.activeElement as HTMLElement | null)?.matches("[data-nav]") === true,
+  );
+  press(header(users, 0), "Enter");
+  await check("keyboard: Enter on a header sorts", header(users, 0).getAttribute("aria-sort") === "ascending");
+
+  // Sanitised HTML.
+  const hostile = renderRich(
+    {
+      v: 1,
+      kind: "html",
+      html: [
+        '<img src="x" onerror="window.__pwned=1">',
+        "<script>window.__pwned=2</script>",
+        '<a href="https://example.com/">link</a>',
+        '<img id="remote" src="https://example.com/x.png">',
+        '<img id="inline" src="data:image/png;base64,iVBORw0KGgo=">',
+        '<p id="bg" style="color: red; background: url(https://example.com/a.png)">bg</p>',
+        '<div id="cover" style="position: fixed; inset: 0; background: red">cover</div>',
+        '<form><input></form><iframe src="https://example.com"></iframe><style>body{display:none}</style>',
+      ].join(""),
+    },
+    { scrollRoot: pane },
+  );
+  pane.querySelector(".output-body")!.append(hostile);
+  await frames(2);
+  const root = hostile.querySelector<HTMLElement>(".dump-html")!.shadowRoot!;
+  const host = hostile.querySelector<HTMLElement>(".dump-html")!.getBoundingClientRect();
+  const cover = root.querySelector("#cover")?.getBoundingClientRect();
+  await check(
+    "html: scripts, handlers, remote loads, links, and forms are removed",
+    !root.querySelector("script, iframe, form, input, style:not(:first-child)") &&
+      root.querySelectorAll("[onerror]").length === 0 &&
+      !root.querySelector("a")?.hasAttribute("href") &&
+      !root.querySelector("#remote")?.hasAttribute("src") &&
+      root.querySelector("#inline")?.getAttribute("src")?.startsWith("data:image/png") === true &&
+      !root.querySelector("#bg")?.hasAttribute("style") &&
+      (window as { __pwned?: number }).__pwned === undefined,
+    root.innerHTML.slice(0, 300),
+  );
+  await check(
+    "html: position fixed stays inside the box",
+    !!cover && cover.width <= host.width + 1 && cover.top >= host.top - 1,
+    JSON.stringify({ cover, host }),
+  );
+
+  // Performance.
+  output.clear();
+  const makeRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => [i, `user ${i}`, i % 7 === 0 ? null : 1900 + (i % 100), i % 2 === 0]);
+  const columns = [{ name: "id", type: "int" }, { name: "name" }, { name: "year" }, { name: "active" }];
+  const bodyEl = pane.querySelector(".output-body")!;
+  let start = performance.now();
+  const thousand = renderRich({ v: 1, kind: "table", columns, rows: makeRows(1000), truncated: false }, { scrollRoot: pane });
+  bodyEl.append(thousand);
+  thousand.getBoundingClientRect();
+  const thousandMs = performance.now() - start;
+  await report(`INFO 1,000-row table rendered in ${thousandMs.toFixed(1)} ms`);
+  await check(
+    "a 1,000-row table renders every row at once",
+    thousand.querySelectorAll("tbody tr").length === 1000 && thousandMs < 1000,
+    `${thousandMs.toFixed(1)} ms`,
+  );
+
+  output.clear();
+  start = performance.now();
+  const big = renderRich(
+    { v: 1, title: "big", kind: "table", columns, rows: makeRows(10_000), truncated: false },
+    { scrollRoot: pane },
+  );
+  pane.querySelector(".output-body")!.append(big);
+  big.getBoundingClientRect();
+  const bigMs = performance.now() - start;
+  await report(`INFO 10,000-row table rendered in ${bigMs.toFixed(1)} ms`);
+  const realRows = () => big.querySelectorAll("tbody tr:not(.dump-placeholder)").length;
+  await frames(3);
+  const initialRows = realRows();
+  await check(
+    "a 10,000-row table is virtualised",
+    big.querySelectorAll("tbody.dump-chunk").length === 10_000 / CHUNK_ROWS && initialRows < 2000 && initialRows >= CHUNK_ROWS,
+    `${initialRows} rows in the DOM`,
+  );
+  pane.scrollTop = pane.scrollHeight;
+  const lastShown = await until(() => column(big, 0).includes("9999"));
+  const firstReleased = await until(() => !column(big, 0).includes("0"));
+  await check(
+    "scrolling fills rows in and releases far ones",
+    lastShown && firstReleased && realRows() < 2000,
+    `${realRows()} rows in the DOM`,
+  );
+  header(big, 0).click();
+  header(big, 0).click();
+  pane.scrollTop = 0;
+  await check("sorting a virtualised table works", await until(() => column(big, 0)[0] === "9999"), column(big, 0)[0]);
+
+  output.clear();
+  const wide = Array.from({ length: 50_000 }, (_, i) => ({ id: i, name: `node ${i}` }));
+  start = performance.now();
+  const tree = renderRich({ v: 1, kind: "tree", value: wide }, { scrollRoot: pane });
+  pane.querySelector(".output-body")!.append(tree);
+  tree.getBoundingClientRect();
+  const treeMs = performance.now() - start;
+  await report(`INFO 50,000-node tree rendered in ${treeMs.toFixed(1)} ms`);
+  const rowsBefore = tree.querySelectorAll(".tree-row").length;
+  const more = tree.querySelector<HTMLElement>(".tree-more");
+  await check(
+    "a 50,000-node tree renders one page of children",
+    // Root, a page of objects (open: second level), and their two keys each.
+    rowsBefore === 1 + TREE_PAGE * 3 && (more?.textContent ?? "").includes(`${(49_800).toLocaleString()} more`) && treeMs < 1000,
+    `${rowsBefore} rows, ${more?.textContent}, ${treeMs.toFixed(1)} ms`,
+  );
+  more?.click();
+  await check(
+    "show more adds the next page",
+    tree.querySelectorAll(".tree-row").length === 1 + 2 * TREE_PAGE * 3,
+    `${tree.querySelectorAll(".tree-row").length}`,
+  );
+  output.clear();
+
+  // Leave the examples on screen for a screenshot.
+  await renderExamples(output);
+  await output.flushed();
 }
 
 /** Create a playground of the node-check test plugin and open it. */
@@ -423,6 +811,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   layout: layoutScenario,
   run: runScenario,
   dump: dumpScenario,
+  "dump-render": dumpRenderScenario,
   plugins: pluginsScenario,
   toolchains: toolchainsScenario,
   library: libraryScenario,
