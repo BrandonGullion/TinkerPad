@@ -1,0 +1,20 @@
+# Past the cap the payload is skipped and a marker with its size takes its
+# place. Scanning resumes at the terminator, BEL or ST. At exactly the cap
+# the value is kept. The cap counts payload bytes only.
+cap 32
+# 41 bytes: over.
+in <\e]1337;TinkerPad={"kind":"text","text":"0123456789abcdef"}\a>
+# 32 bytes: exactly the cap.
+in \e]1337;TinkerPad={"kind":"text","text":"0123456"}\a
+# Under the cap with a lone ESC: malformed, not truncated.
+in \e]1337;TinkerPad={"k"\ex}\e\\!
+# 45 bytes, ended by ST.
+in \e]1337;TinkerPad={"kind":"text","text":"0123456789abcdefghij"}\e\\?
+out text <
+out truncated 41
+out text >
+out rich {"kind":"text","text":"0123456"}
+out malformed {"k"\ex}
+out text !
+out truncated 45
+out text ?

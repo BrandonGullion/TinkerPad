@@ -1,0 +1,11 @@
+# Something that starts like a sentinel but isn't is text, and a real
+# sentinel can start right where the false one stopped. A prefix cut off at
+# exit is text too.
+in \e]1337;Tinker\e]1337;TinkerPad={"kind":"value","value":true}\a
+in \e\e]1337;TinkerPad={"kind":"value","value":false}\a
+in tail\e]1337;Tink
+out text \e]1337;Tinker
+out rich {"kind":"value","value":true}
+out text \e
+out rich {"kind":"value","value":false}
+out text tail\e]1337;Tink

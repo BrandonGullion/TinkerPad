@@ -4,7 +4,7 @@
 import { invoke } from "./ipc";
 import type { StatusBar } from "./layout";
 import type { OutputPane } from "./output";
-import type { Envelope, RunEvent } from "./protocol";
+import type { Envelope, RichValue, RunEvent } from "./protocol";
 
 export type RunOutcome =
   | { kind: "exited"; code: number | null; durationMs: number }
@@ -16,6 +16,14 @@ export type RunOutcome =
 const CLEAR_OUTPUT_ON_RUN = true;
 
 export const NO_PLAYGROUND_NOTE = "Open a playground to run it.";
+
+/** The stand-in line for a dumped value until 01-08 renders it. */
+export function richPlaceholder(value: RichValue): string {
+  const detail =
+    value.kind === "truncated" ? ` too large to show (${value.bytes.toLocaleString()} bytes)` : "";
+  const title = value.title ? ` "${value.title}"` : "";
+  return `[dump: ${value.kind}${title}${detail}]`;
+}
 
 export class RunController {
   /** Id of the run whose events we display. `null` while a start is pending. */
@@ -113,6 +121,15 @@ export class RunController {
       case "stderr":
         this.firstOutputAt ??= performance.now();
         this.output.append(event.kind, event.text);
+        break;
+      case "rich":
+        // Renderers arrive with work item 01-08; until then a one-line marker
+        // shows where the value was, so it isn't silently lost.
+        this.firstOutputAt ??= performance.now();
+        this.output.append("info", `${richPlaceholder(event.value)}\n`);
+        break;
+      case "warning":
+        this.output.append("info", `⚠ ${event.message}\n`);
         break;
       case "exited":
         this.finish({ kind: "exited", code: event.code, durationMs: event.durationMs });

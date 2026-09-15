@@ -95,13 +95,22 @@ pub enum ToolchainState {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RunEvent {
     Started,
-    /// Output text. Decoded lossily from bytes at this boundary; the raw
-    /// bytes stay in the runner for future Dump parsing.
+    /// Output text. Decoded lossily from bytes at this boundary, after the
+    /// runner has taken out any dumped values.
     Stdout {
         text: String,
     },
     Stderr {
         text: String,
+    },
+    /// A value the program dumped, in order with the surrounding output.
+    Rich {
+        value: crate::RichValue,
+    },
+    /// Something about the run's output the user should know, such as a dump
+    /// that couldn't be read. The run carries on.
+    Warning {
+        message: String,
     },
     /// The process ended on its own.
     #[serde(rename_all = "camelCase")]
@@ -147,6 +156,20 @@ mod tests {
         assert_eq!(
             json,
             r#"{"seq":3,"scope":"run:7","event":{"type":"run","kind":"exited","code":0,"durationMs":12}}"#
+        );
+    }
+
+    #[test]
+    fn rich_wire_format() {
+        let event = CoreEvent::Run(RunEvent::Rich {
+            value: crate::RichValue::new(crate::RichNode::Timing {
+                label: "q".into(),
+                ms: 2.0,
+            }),
+        });
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"type":"run","kind":"rich","value":{"v":1,"kind":"timing","label":"q","ms":2.0}}"#
         );
     }
 

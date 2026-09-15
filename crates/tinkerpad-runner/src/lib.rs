@@ -4,14 +4,20 @@
 //! plugin helpers for warm execution, and the parser that pulls
 //! `tinkerpad-dump-v1` rich values out of a program's stdout.
 //!
-//! Today: [`run`] executes a [`RunSpec`] and streams [`RunEvent`]s.
+//! Today: [`run`] executes a [`RunSpec`] and streams [`RunEvent`]s, and
+//! [`OutputDecoder`] turns their bytes into UI events, with dumped values
+//! found by [`DumpParser`].
 //!
 //! See `docs/ARCHITECTURE.md` §5 and work items 00-06, 01-06, 01-07, 03-02, 03-03.
 
+pub mod dump;
+mod output;
 mod run;
 pub mod spec;
 mod utf8;
 
+pub use dump::{DumpParser, Dumped};
+pub use output::OutputDecoder;
 pub use run::{RunError, RunEvent, RunHandle, RunSpec, run};
 pub use spec::{RunContext, SpecError, run_spec};
 pub use utf8::Utf8Stream;

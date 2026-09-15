@@ -16,37 +16,35 @@ impl Utf8Stream {
 
     /// Decode the next chunk.
     pub fn push(&mut self, chunk: &[u8]) -> String {
-        self.pending.extend_from_slice(chunk);
-        let mut out = String::with_capacity(self.pending.len());
-        let mut rest: &[u8] = &self.pending;
-        loop {
-            match std::str::from_utf8(rest) {
+        let mut out = String::with_capacity(chunk.len());
+        self.push_into(chunk, &mut out);
+        out
+    }
+
+    /// Decode the next chunk, appending to `out`. The chunk isn't copied
+    /// except for a character split across chunks.
+    pub fn push_into(&mut self, chunk: &[u8], out: &mut String) {
+        let mut rest = chunk;
+        // Finish a character held back from the previous chunk, one byte at
+        // a time (at most three more).
+        while !self.pending.is_empty() && !rest.is_empty() {
+            self.pending.push(rest[0]);
+            rest = &rest[1..];
+            match std::str::from_utf8(&self.pending) {
                 Ok(s) => {
                     out.push_str(s);
-                    rest = &[];
-                    break;
+                    self.pending.clear();
                 }
-                Err(e) => {
-                    let valid = e.valid_up_to();
-                    // SAFETY-free: from_utf8 guarantees this prefix is valid.
-                    out.push_str(std::str::from_utf8(&rest[..valid]).expect("valid prefix"));
-                    match e.error_len() {
-                        // Invalid sequence: replace it and keep going.
-                        Some(len) => {
-                            out.push('\u{FFFD}');
-                            rest = &rest[valid + len..];
-                        }
-                        // Incomplete sequence at the end: wait for more bytes.
-                        None => {
-                            rest = &rest[valid..];
-                            break;
-                        }
-                    }
+                Err(e) if e.error_len().is_some() => {
+                    let pending = std::mem::take(&mut self.pending);
+                    self.pending = decode(&pending, out).to_vec();
                 }
+                Err(_) => {}
             }
         }
-        self.pending = rest.to_vec();
-        out
+        if self.pending.is_empty() {
+            self.pending.extend_from_slice(decode(rest, out));
+        }
     }
 
     /// Flush at end of stream. Any held-back partial character becomes U+FFFD.
@@ -60,9 +58,51 @@ impl Utf8Stream {
     }
 }
 
+/// Decode as much of `bytes` as is complete into `out`, replacing invalid
+/// sequences with U+FFFD. Returns the incomplete character at the end, if any.
+fn decode<'a>(mut bytes: &'a [u8], out: &mut String) -> &'a [u8] {
+    loop {
+        match std::str::from_utf8(bytes) {
+            Ok(s) => {
+                out.push_str(s);
+                return &[];
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                out.push_str(std::str::from_utf8(&bytes[..valid]).expect("valid prefix"));
+                match e.error_len() {
+                    Some(len) => {
+                        out.push('\u{FFFD}');
+                        bytes = &bytes[valid + len..];
+                    }
+                    None => return &bytes[valid..],
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_byte_after_a_held_back_start() {
+        let mut s = Utf8Stream::new();
+        assert_eq!(s.push(b"a\xE6"), "a");
+        assert_eq!(s.push(b"\xE6\x97\xA5b"), "\u{FFFD}\u{65E5}b");
+        assert_eq!(s.finish(), "");
+    }
+
+    #[test]
+    fn split_character_then_more_text() {
+        let mut s = Utf8Stream::new();
+        let mut out = String::new();
+        s.push_into(b"x\xF0\x9F", &mut out);
+        s.push_into(b"\x8E", &mut out);
+        s.push_into(b"\x89 done", &mut out);
+        assert_eq!(out, "x\u{1F389} done");
+    }
 
     #[test]
     fn ascii_passes_through() {

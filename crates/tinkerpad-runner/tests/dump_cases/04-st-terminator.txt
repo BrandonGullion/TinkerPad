@@ -1,0 +1,9 @@
+# ST (ESC \) ends a payload just like BEL, and the two can be mixed.
+in a\e]1337;TinkerPad={"kind":"text","text":"x","lang":"sql"}\e\\b
+in \e]1337;TinkerPad={"kind":"html","html":"<b>hi</b>"}\a
+in c
+out text a
+out rich {"kind":"text","text":"x","lang":"sql"}
+out text b
+out rich {"kind":"html","html":"<b>hi</b>"}
+out text c
