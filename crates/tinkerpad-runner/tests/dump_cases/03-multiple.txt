@@ -1,0 +1,14 @@
+# Several sentinels in one chunk, back to back and with text between.
+in \e]1337;TinkerPad={"kind":"value","value":1}\a
+in \e]1337;TinkerPad={"kind":"value","value":2}\a
+in and\n
+in \e]1337;TinkerPad={"kind":"timing","label":"q","ms":1.5}\a
+in \e]1337;TinkerPad={"kind":"table","title":"users","columns":[{"name":"id","type":"int"},{"name":"name","type":"string"}],"rows":[[1,"ada"],[2,"grace"]],"truncated":false}\a
+in end
+split 10,20,30,40,50,60,70,80,90,100,110,120
+out rich {"kind":"value","value":1}
+out rich {"kind":"value","value":2}
+out text and\n
+out rich {"kind":"timing","label":"q","ms":1.5}
+out rich {"v":1,"kind":"table","title":"users","columns":[{"name":"id","type":"int"},{"name":"name","type":"string"}],"rows":[[1,"ada"],[2,"grace"]],"truncated":false}
+out text end

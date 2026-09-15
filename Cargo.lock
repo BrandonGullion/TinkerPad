@@ -4018,6 +4018,8 @@ name = "tinkerpad-runner"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "memchr",
+ "serde_json",
  "thiserror 2.0.20",
  "tinkerpad-core",
  "tinkerpad-plugin",

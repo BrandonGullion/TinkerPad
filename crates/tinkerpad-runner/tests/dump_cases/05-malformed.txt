@@ -1,0 +1,16 @@
+# A payload that isn't a valid dump comes back with its bytes, never dropped:
+# broken JSON, a known kind missing its fields, an empty payload, and a lone
+# ESC inside the payload (JSON can't contain one).
+in 1\e]1337;TinkerPad={"kind":"value",\a2
+in \e]1337;TinkerPad={"kind":"table","columns":[]}\a3
+in \e]1337;TinkerPad=\a4
+in \e]1337;TinkerPad={"kind"\ex:1}\a5\n
+out text 1
+out malformed {"kind":"value",
+out text 2
+out malformed {"kind":"table","columns":[]}
+out text 3
+out malformed
+out text 4
+out malformed {"kind"\ex:1}
+out text 5\n

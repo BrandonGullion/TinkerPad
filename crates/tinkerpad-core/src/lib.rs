@@ -6,11 +6,13 @@
 //!
 //! See `docs/ARCHITECTURE.md` §3.
 
+pub mod dump;
 pub mod error;
 pub mod events;
 pub mod language;
 pub mod playground;
 
+pub use dump::{RichNode, RichValue};
 pub use error::{CommandError, ErrorCode};
 pub use events::{CoreEvent, Envelope, Level, RunEvent, Scope, ToolchainState};
 pub use language::LanguageId;

@@ -1,0 +1,22 @@
+# One of every kind, with title and id, as a dump library would write them.
+in \e]1337;TinkerPad={"v":1,"kind":"value","value":3.5,"type":"float","title":"pi-ish","id":"a1"}\a\n
+in \e]1337;TinkerPad={"v":1,"kind":"tree","value":{"a":[1,{"b":null}]},"type":"object"}\a\n
+in \e]1337;TinkerPad={"v":1,"kind":"table","columns":[{"name":"n"}],"rows":[[{"v":1,"kind":"value","value":1}]],"truncated":true}\a\n
+in \e]1337;TinkerPad={"v":1,"kind":"text","text":"line\\nnext"}\a\n
+in \e]1337;TinkerPad={"v":1,"kind":"html","html":"<i>x</i>"}\a\n
+in \e]1337;TinkerPad={"v":1,"kind":"image","mime":"image/png","base64":"iVBORw0KGgo="}\a\n
+in \e]1337;TinkerPad={"v":1,"kind":"timing","label":"load","ms":12}\a\n
+out rich {"v":1,"kind":"value","value":3.5,"type":"float","title":"pi-ish","id":"a1"}
+out text \n
+out rich {"v":1,"kind":"tree","value":{"a":[1,{"b":null}]},"type":"object"}
+out text \n
+out rich {"v":1,"kind":"table","columns":[{"name":"n"}],"rows":[[{"v":1,"kind":"value","value":1}]],"truncated":true}
+out text \n
+out rich {"v":1,"kind":"text","text":"line\nnext"}
+out text \n
+out rich {"v":1,"kind":"html","html":"<i>x</i>"}
+out text \n
+out rich {"v":1,"kind":"image","mime":"image/png","base64":"iVBORw0KGgo="}
+out text \n
+out rich {"v":1,"kind":"timing","label":"load","ms":12}
+out text \n

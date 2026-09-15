@@ -1,0 +1,8 @@
+# Plain output passes through untouched, including escape sequences that
+# aren't dump sentinels (ANSI colours, other OSC codes).
+in hello\n
+in \e[31mred\e[0m and \e]0;window title\a done\n
+in \e]1337;SetMark\a still text\n
+out text hello\n
+out text \e[31mred\e[0m and \e]0;window title\a done\n
+out text \e]1337;SetMark\a still text\n

@@ -13,7 +13,7 @@ import { invoke, subscribe } from "./ipc";
 import type { StatusBar } from "./layout";
 import { LOCKED_HINT, MISMATCH_NOTE, openPlayground } from "./playground";
 import type { OutputPane } from "./output";
-import type { LanguageToolchain, Listing, Playground, PluginsStatus } from "./protocol";
+import type { LanguageToolchain, Listing, Playground, PluginsStatus, RunEvent } from "./protocol";
 import type { RunController } from "./run";
 
 export interface SelftestContext {
@@ -309,6 +309,105 @@ async function runScenario(ctx: SelftestContext, check: Check) {
   unsubscribe();
 }
 
+/** A program that writes dump sentinels the way a dump library would, plus the
+ * awkward cases: bad JSON, a payload far bigger than one pipe read, and the ST
+ * terminator. */
+const DUMP_PROGRAM = String.raw`const dump = (v) => process.stdout.write("\x1b]1337;TinkerPad=" + JSON.stringify(v) + "\x07");
+process.stdout.write("before ");
+dump({ v: 1, kind: "value", value: 42, type: "int", title: "answer" });
+process.stdout.write(" after\n");
+process.stdout.write("\x1b]1337;TinkerPad={broken\x07");
+const rows = Array.from({ length: 20000 }, (_, i) => [i, "row " + i]);
+dump({ v: 1, kind: "table", title: "rows", columns: [{ name: "id" }, { name: "name" }], rows, truncated: false });
+process.stdout.write("\x1b]1337;TinkerPad=" + JSON.stringify({ kind: "text", text: "st" }) + "\x1b\\");
+console.log("end");
+`;
+
+async function dumpScenario(ctx: SelftestContext, check: Check) {
+  const { output, runs } = ctx;
+  await openTestPlayground(ctx, "Dump Test");
+  const seen: { scope: string; event: RunEvent }[] = [];
+  const unsubscribe = subscribe(({ scope, event }) => {
+    if (event.type !== "run") return;
+    const { type: _type, ...rest } = event;
+    seen.push({ scope, event: rest as RunEvent });
+  });
+  const end = runs.waitForEnd();
+  runCode(ctx, DUMP_PROGRAM);
+  const outcome = await withTimeout(end, 15_000, "dump program");
+  await output.flushed();
+  unsubscribe();
+
+  const scope = seen.filter((s) => s.event.kind === "exited").at(-1)?.scope;
+  // Adjacent text is merged: how it's chunked depends on the pipe.
+  const events: RunEvent[] = [];
+  for (const { event } of seen.filter((s) => s.scope === scope && s.event.kind !== "started")) {
+    const last = events.at(-1);
+    if (last && (last.kind === "stdout" || last.kind === "stderr") && last.kind === event.kind) {
+      last.text += (event as { text: string }).text;
+    } else {
+      events.push(structuredClone(event));
+    }
+  }
+  const describe = (e: RunEvent) => {
+    switch (e.kind) {
+      case "stdout":
+      case "stderr":
+        return `${e.kind} ${JSON.stringify(e.text)}`;
+      case "rich":
+        return `rich ${e.value.kind}${e.value.title ? ` ${e.value.title}` : ""}`;
+      default:
+        return e.kind;
+    }
+  };
+  const actual = events.map(describe);
+  const expected = [
+    'stdout "before "',
+    "rich value answer",
+    'stdout " after\\n"',
+    'stderr "{broken"',
+    "warning",
+    "rich table rows",
+    "rich text",
+    'stdout "end\\n"',
+    "exited",
+  ];
+  await check(
+    "dumped values arrive in order with the text around them",
+    outcome.kind === "exited" && JSON.stringify(actual) === JSON.stringify(expected),
+    JSON.stringify(actual),
+  );
+
+  const rich = events.filter((e) => e.kind === "rich").map((e) => e.value);
+  const value = rich.find((v) => v.kind === "value");
+  await check(
+    "a value dump keeps its fields",
+    value?.kind === "value" && value.value === 42 && value.type === "int" && value.v === 1,
+    JSON.stringify(value),
+  );
+  const table = rich.find((v) => v.kind === "table");
+  await check(
+    "a dump bigger than one pipe read parses whole",
+    table?.kind === "table" && table.rows.length === 20000 && table.rows[19999]?.[1] === "row 19999",
+    table?.kind === "table" ? `${table.rows.length} rows` : "no table",
+  );
+  const warning = events.find((e) => e.kind === "warning");
+  await check(
+    "malformed dump shows its text and a warning",
+    warning?.kind === "warning" && warning.message.includes("couldn't be read"),
+    JSON.stringify(warning),
+  );
+  const text = rich.find((v) => v.kind === "text");
+  await check("ST-terminated dump parses", text?.kind === "text" && text.text === "st", JSON.stringify(text));
+
+  const pane = output.element.querySelector(".output-body")?.textContent ?? "";
+  await check(
+    "output pane marks where each dump was",
+    pane.includes('before [dump: value "answer"]') && pane.includes('[dump: table "rows"]'),
+    pane.slice(0, 200),
+  );
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -323,6 +422,7 @@ async function openTestPlayground(
 const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<void>> = {
   layout: layoutScenario,
   run: runScenario,
+  dump: dumpScenario,
   plugins: pluginsScenario,
   toolchains: toolchainsScenario,
   library: libraryScenario,

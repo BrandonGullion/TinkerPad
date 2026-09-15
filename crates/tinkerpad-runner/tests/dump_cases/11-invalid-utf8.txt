@@ -1,0 +1,10 @@
+# Bytes that aren't UTF-8 pass through as bytes, around a sentinel and inside
+# a payload (where they make it malformed, but still aren't lost). A split
+# multi-byte character next to a sentinel stays whole.
+in \xff\xfe\e]1337;TinkerPad={"kind":"value","value":"\xe6\x97\xa5"}\a\xc3
+in \e]1337;TinkerPad={"kind":"value","value":"\xff"}\a\xe6\x97\xa5
+out text \xff\xfe
+out rich {"kind":"value","value":"日"}
+out text \xc3
+out malformed {"kind":"value","value":"\xff"}
+out text \xe6\x97\xa5

@@ -1,0 +1,6 @@
+# Text before and after a sentinel on the same line stays in order.
+in count:\s\e]1337;TinkerPad={"v":1,"kind":"value","value":42,"type":"int"}\a items\n
+split 3,9,10,27,40
+out text count:\s
+out rich {"v":1,"kind":"value","value":42,"type":"int"}
+out text \sitems\n

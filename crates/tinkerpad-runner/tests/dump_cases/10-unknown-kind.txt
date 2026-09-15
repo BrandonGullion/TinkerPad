@@ -1,0 +1,3 @@
+# A kind this build doesn't know is kept as raw JSON, not an error.
+in \e]1337;TinkerPad={"v":2,"kind":"chart","series":[1,2,3],"title":"sales"}\a
+out rich {"v":2,"kind":"chart","series":[1,2,3],"title":"sales"}

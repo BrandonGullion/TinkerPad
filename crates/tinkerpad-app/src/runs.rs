@@ -19,7 +19,7 @@ use tinkerpad_library::Library;
 use tinkerpad_plugin::Plugin;
 use tinkerpad_process::KillHandle;
 use tinkerpad_runner::spec::scratch_dir;
-use tinkerpad_runner::{RunContext, RunEvent, SpecError, Utf8Stream, run, run_spec};
+use tinkerpad_runner::{OutputDecoder, RunContext, RunEvent, SpecError, run, run_spec};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -158,46 +158,42 @@ impl Runs {
         let kill = handle.canceller();
         let events = self.events.clone();
         let forwarder = tauri::async_runtime::spawn(async move {
-            let mut stdout = Utf8Stream::new();
-            let mut stderr = Utf8Stream::new();
+            // Text, dumped values, and warnings, decoded from the output bytes.
+            let mut decoder = OutputDecoder::new();
+            let mut out = Vec::new();
+            let (mut dumps, mut malformed) = (0u32, 0u32);
             while let Some(event) = handle.recv().await {
-                let ui = match event {
-                    RunEvent::Started { .. } => UiRunEvent::Started,
-                    RunEvent::Stdout(b) => UiRunEvent::Stdout {
-                        text: stdout.push(&b),
-                    },
-                    RunEvent::Stderr(b) => UiRunEvent::Stderr {
-                        text: stderr.push(&b),
-                    },
-                    end @ (RunEvent::Exited { .. } | RunEvent::Cancelled { .. }) => {
-                        for (text, is_err) in [(stdout.finish(), false), (stderr.finish(), true)] {
-                            if !text.is_empty() {
-                                let e = if is_err {
-                                    UiRunEvent::Stderr { text }
-                                } else {
-                                    UiRunEvent::Stdout { text }
-                                };
-                                events.publish(scope.clone(), CoreEvent::Run(e));
-                            }
-                        }
-                        match end {
-                            RunEvent::Exited { code, duration } => UiRunEvent::Exited {
-                                code,
-                                duration_ms: duration.as_millis() as u64,
-                            },
-                            RunEvent::Cancelled { duration } => UiRunEvent::Cancelled {
-                                duration_ms: duration.as_millis() as u64,
-                            },
-                            _ => unreachable!(),
-                        }
+                match event {
+                    RunEvent::Started { .. } => out.push(UiRunEvent::Started),
+                    RunEvent::Stdout(b) => decoder.stdout(&b, &mut out),
+                    RunEvent::Stderr(b) => decoder.stderr(&b, &mut out),
+                    RunEvent::Exited { code, duration } => {
+                        decoder.finish(&mut out);
+                        out.push(UiRunEvent::Exited {
+                            code,
+                            duration_ms: duration.as_millis() as u64,
+                        });
                     }
-                };
-                let skip = matches!(&ui, UiRunEvent::Stdout { text } | UiRunEvent::Stderr { text } if text.is_empty());
-                if !skip {
+                    RunEvent::Cancelled { duration } => {
+                        decoder.finish(&mut out);
+                        out.push(UiRunEvent::Cancelled {
+                            duration_ms: duration.as_millis() as u64,
+                        });
+                    }
+                }
+                for ui in out.drain(..) {
+                    match &ui {
+                        UiRunEvent::Rich { .. } => dumps += 1,
+                        UiRunEvent::Warning { message } => {
+                            malformed += 1;
+                            warn!(run = id, %message, "run output warning");
+                        }
+                        _ => {}
+                    }
                     events.publish(scope.clone(), CoreEvent::Run(ui));
                 }
             }
-            info!(run = id, "run finished");
+            info!(run = id, dumps, malformed, "run finished");
         });
 
         *active = Some(Active {

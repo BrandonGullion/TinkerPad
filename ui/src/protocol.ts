@@ -13,6 +13,10 @@ export type RunEvent =
   | { kind: "started" }
   | { kind: "stdout"; text: string }
   | { kind: "stderr"; text: string }
+  /** A value the program dumped, in order with the surrounding output. */
+  | { kind: "rich"; value: RichValue }
+  /** Something about the output worth knowing, e.g. an unreadable dump. */
+  | { kind: "warning"; message: string }
   | { kind: "exited"; code: number | null; durationMs: number }
   | { kind: "cancelled"; durationMs: number }
   | { kind: "failed"; message: string };
@@ -24,6 +28,32 @@ export type CoreEvent =
   | { type: "toolchain"; language: string; state: ToolchainState }
   | { type: "libraryChanged" }
   | { type: "sourceChangedOnDisk"; playground: string };
+
+/** Any JSON value, as found inside a dump. */
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
+/** A dumped value (`tinkerpad-dump-v1`, docs/PLUGINS.md §6). Mirror of
+ * `tinkerpad-core/src/dump.rs`. */
+export type RichValue = { v: number; title?: string; id?: string } & RichNode;
+
+export type RichNode =
+  | { kind: "value"; value: Json; type?: string }
+  | {
+      kind: "table";
+      columns: { name: string; type?: string }[];
+      /** A cell may itself be a rich value object. */
+      rows: Json[][];
+      truncated: boolean;
+    }
+  | { kind: "tree"; value: Json; type?: string }
+  | { kind: "text"; text: string; lang?: string }
+  | { kind: "html"; html: string }
+  | { kind: "image"; mime: string; base64: string }
+  | { kind: "timing"; label: string; ms: number }
+  /** A kind this build doesn't know; the whole payload as sent. */
+  | { kind: "unknown"; raw: Json }
+  /** A dump over the payload size limit; only its size is kept. */
+  | { kind: "truncated"; bytes: number };
 
 /** Whether a language's toolchain is usable. */
 export type ToolchainState =

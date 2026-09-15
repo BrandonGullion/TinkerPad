@@ -1,0 +1,6 @@
+# An oversized payload still open at exit becomes a marker: its bytes are
+# gone, so there's no text to flush.
+cap 8
+in x\e]1337;TinkerPad={"kind":"text","text":"a long one
+out text x
+out truncated 33

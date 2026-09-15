@@ -354,6 +354,21 @@ Optional on every node: `title` (string), `id` (string, for future lazy expansio
 sequences of records and `tree` for everything else, and type names. The core only
 parses and renders. That keeps language semantics in the language.
 
+**What the core does with the stream** (`tinkerpad-runner`'s dump parser):
+
+- `ST` (`ESC \`) ends a payload as well as `BEL`.
+- `v` may be left out and means 1. A `kind` the app doesn't know is kept and shown
+  as raw JSON, so a library can add kinds before the app renders them.
+- A payload that isn't valid JSON, or a known kind with missing fields, is shown as
+  error-styled text with a warning. It is never dropped.
+- A payload over 8 MiB is skipped and replaced by a "too large" marker. Keep dumps
+  well under that; the item cap above is the real protection.
+- A sentinel still open when the program exits is shown as plain text.
+- Only stdout is scanned. Sentinels written to stderr appear as text.
+
+The fixtures in `crates/tinkerpad-runner/tests/dump_cases/` pin down this behaviour
+byte for byte.
+
 Each plugin's `dump/` folder ships that library. How the user gets it:
 
 | Language | Helper | Mechanism |

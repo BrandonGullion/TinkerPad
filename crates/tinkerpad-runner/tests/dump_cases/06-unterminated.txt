@@ -1,0 +1,4 @@
+# A sentinel still open when the program exits is flushed as text, prefix
+# and all.
+in done\n\e]1337;TinkerPad={"kind":"value","value":
+out text done\n\e]1337;TinkerPad={"kind":"value","value":
