@@ -125,7 +125,7 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,dump,plugins,toolchains,library,library-trash,locked
+          TINKERPAD_SELFTEST: layout,run,dump,dump-render,plugins,toolchains,library,library-trash,locked
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -137,11 +137,12 @@ jobs:
           grep -q "selftest: PASS delete removes the playground" launch.log
           grep -q "selftest: PASS select-all + delete leaves the locked lines" launch.log
           grep -q "selftest: PASS dumped values arrive in order with the text around them" launch.log
+          grep -q "selftest: PASS a 10,000-row table is virtualised" launch.log
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,dump,plugins,toolchains,library,library-trash,locked
+          TINKERPAD_SELFTEST: layout,run,dump,dump-render,plugins,toolchains,library,library-trash,locked
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -153,3 +154,4 @@ jobs:
           grep -q "selftest: PASS delete removes the playground" launch.log
           grep -q "selftest: PASS select-all + delete leaves the locked lines" launch.log
           grep -q "selftest: PASS dumped values arrive in order with the text around them" launch.log
+          grep -q "selftest: PASS a 10,000-row table is virtualised" launch.log

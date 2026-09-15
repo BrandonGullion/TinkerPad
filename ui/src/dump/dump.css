@@ -1,0 +1,305 @@
+/* Rendered dumps in the output pane. Colours are variables so themes (04-04)
+   can restyle dumps and highlighting together. */
+
+:root {
+  --j-string: #86efac;
+  --j-number: #93c5fd;
+  --j-bool: #f0abfc;
+  --j-null: #8b8d94;
+  --j-key: #e5c07b;
+  --dump-bg: #232428;
+  --dump-row-alt: #26272c;
+  --dump-hover: #2f3137;
+}
+
+.j-str { color: var(--j-string); }
+.j-num { color: var(--j-number); }
+.j-bool { color: var(--j-bool); }
+.j-null { color: var(--j-null); font-style: italic; }
+.j-other { color: var(--muted); }
+
+/* Highlighted text dumps (classHighlighter token classes). */
+.tok-string { color: var(--j-string); }
+.tok-number { color: var(--j-number); }
+.tok-bool, .tok-atom, .tok-keyword { color: var(--j-bool); }
+.tok-null { color: var(--j-null); }
+.tok-propertyName { color: var(--j-key); }
+.tok-punctuation { color: var(--muted); }
+.tok-comment { color: var(--muted); font-style: italic; }
+
+.dump {
+  position: relative;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
+.dump:not(.dump-inline) {
+  display: block;
+  margin: 4px 0 6px;
+  padding: 4px 8px 6px;
+  background: var(--dump-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-width: 100%;
+  box-sizing: border-box;
+  width: fit-content;
+  min-width: min(240px, 100%);
+}
+
+.dump-inline {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.dump-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  margin-bottom: 2px;
+}
+
+.dump-title {
+  font: 600 12px/1.3 var(--font-ui);
+  color: var(--fg);
+}
+
+.dump-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 80ms;
+}
+
+.dump:hover > .dump-head > .dump-actions,
+.dump-inline:hover > .dump-actions,
+.dump:focus-within > .dump-head > .dump-actions,
+.dump-inline:focus-within > .dump-actions {
+  opacity: 1;
+}
+
+.dump-action {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: 11px/1.2 var(--font-ui);
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.dump-action:hover,
+.dump-action:focus-visible {
+  color: var(--fg);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.dump-action.flashed {
+  color: var(--success);
+}
+
+.dump [data-nav]:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.dump-type {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: 10px/1.5 var(--font-ui);
+  vertical-align: 1px;
+}
+
+.dump-value {
+  white-space: pre-wrap;
+}
+
+.dump-timing {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  font: 11px/1.6 var(--font-ui);
+}
+
+.timing-label { color: var(--muted); }
+.timing-ms { color: var(--warning); font-variant-numeric: tabular-nums; }
+
+.dump-note {
+  color: var(--muted);
+  font: italic 12px/1.4 var(--font-ui);
+  padding: 2px 0;
+}
+
+.dump-kind-truncated .dump-note { color: var(--warning); }
+
+/* Tree */
+
+.dump-tree {
+  white-space: nowrap;
+}
+
+.tree-row {
+  cursor: default;
+  padding: 0 4px 0 0;
+  border-radius: 2px;
+}
+
+.tree-row:hover { background: var(--dump-hover); }
+
+.tree-toggle {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--muted);
+  user-select: none;
+}
+
+.tree-key { color: var(--j-key); }
+.tree-colon { color: var(--muted); }
+.tree-summary { color: var(--muted); }
+
+.tree-children {
+  padding-left: 1.2em;
+  border-left: 1px solid var(--border);
+  margin-left: 0.45em;
+}
+
+.tree-more {
+  color: var(--accent);
+  cursor: pointer;
+  padding-left: 1.2em;
+}
+
+/* Table */
+
+.dump-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.dump-table {
+  border-collapse: collapse;
+  font-size: calc(var(--editor-font-size) - 1px);
+}
+
+.dump-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: 600 12px/1.5 var(--font-ui);
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.dump-table th:hover { background: var(--dump-hover); }
+.sort-mark { color: var(--accent); font-size: 10px; }
+
+.dump-table td {
+  padding: 1px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  white-space: pre;
+  height: 21px;
+  box-sizing: border-box;
+}
+
+.dump-table tbody tr:nth-child(even) td { background: var(--dump-row-alt); }
+.dump-table tbody tr:hover td { background: var(--dump-hover); }
+.dump-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.dump-table .dump-placeholder td { padding: 0; border: 0; background: none; }
+
+.dump-clip {
+  display: inline-block;
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  cursor: pointer;
+}
+
+.dump-table td.expanded .dump-clip {
+  max-width: 72ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dump-toggle {
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dump-toggle:hover { color: var(--fg); }
+
+.dump-cell-content {
+  margin-top: 2px;
+  white-space: normal;
+}
+
+.dump-cell-content > .dump:not(.dump-inline) {
+  margin: 2px 0;
+}
+
+.dump-table-foot {
+  color: var(--muted);
+  font: 11px/1.6 var(--font-ui);
+  padding-top: 2px;
+}
+
+.dump-truncated { color: var(--warning); }
+
+/* Text, HTML, image */
+
+.dump-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  max-height: 480px;
+  overflow: auto;
+}
+
+.dump-html {
+  max-height: 400px;
+  overflow: auto;
+  contain: layout paint;
+  position: relative;
+}
+
+.dump-image {
+  display: block;
+  max-height: 240px;
+  max-width: 100%;
+  cursor: zoom-in;
+}
+
+.dump-image.expanded {
+  max-height: none;
+  cursor: zoom-out;
+}
+
+/* Without a title the actions float in the corner instead of taking a row. */
+.dump-head.untitled {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  z-index: 2;
+  min-height: 0;
+  margin: 0;
+}

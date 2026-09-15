@@ -141,9 +141,15 @@ fn optional_string<'de, D: Deserializer<'de>>(
     }
 }
 
-/// One sample of every kind, for renderer tests and documentation.
+/// One sample of every kind, for renderer tests and documentation. The table
+/// also carries the awkward cells a renderer must handle: nested dump values,
+/// plain JSON structures, nulls, and a long string.
 pub fn examples() -> Vec<RichValue> {
     use serde_json::json;
+    let column = |name: &str, ty: &str| Column {
+        name: name.into(),
+        ty: Some(ty.into()),
+    };
     vec![
         RichValue::new(RichNode::Value {
             value: json!(42),
@@ -152,41 +158,54 @@ pub fn examples() -> Vec<RichValue> {
         .titled("answer"),
         RichValue::new(RichNode::Table {
             columns: vec![
-                Column {
-                    name: "id".into(),
-                    ty: Some("int".into()),
-                },
-                Column {
-                    name: "name".into(),
-                    ty: Some("string".into()),
-                },
-                Column {
-                    name: "tags".into(),
-                    ty: Some("list".into()),
-                },
+                column("id", "int"),
+                column("name", "string"),
+                column("born", "int"),
+                column("tags", "list"),
+                column("bio", "string"),
             ],
             rows: vec![
-                vec![json!(1), json!("ada"), json!({"v": 1, "kind": "tree", "value": ["math", "engines"]})],
-                vec![json!(2), json!("grace"), json!({"v": 1, "kind": "tree", "value": ["cobol"]})],
+                vec![
+                    json!(3),
+                    json!("grace"),
+                    json!(1906),
+                    json!({"v": 1, "kind": "tree", "value": ["cobol", "compilers"]}),
+                    json!("Rear admiral, wrote the first compiler, and popularised the word \"debugging\" after a moth was found in a relay."),
+                ],
+                vec![
+                    json!(1),
+                    json!("ada"),
+                    json!(1815),
+                    json!({"v": 1, "kind": "table", "columns": [{"name": "topic"}], "rows": [["math"], ["engines"]], "truncated": false}),
+                    json!("Wrote the first published algorithm for a machine."),
+                ],
+                vec![json!(2), json!("alan"), json!(null), json!(["logic", "codes"]), json!(null)],
             ],
             truncated: false,
         })
         .titled("users"),
         RichValue::new(RichNode::Tree {
-            value: json!({"name": "TinkerPad", "version": [0, 1, 0], "nested": {"deep": {"deeper": true}}}),
+            value: json!({
+                "name": "TinkerPad",
+                "version": [0, 1, 0],
+                "stable": false,
+                "license": null,
+                "nested": {"deep": {"deeper": {"deepest": true}}}
+            }),
             ty: Some("object".into()),
-        }),
+        })
+        .titled("config"),
         RichValue::new(RichNode::Text {
-            text: "fn main() {\n    println!(\"hi\");\n}\n".into(),
-            lang: Some("rust".into()),
+            text: "{\n  \"name\": \"TinkerPad\",\n  \"plugins\": [\"csharp\", \"typescript\"],\n  \"warm\": true\n}\n".into(),
+            lang: Some("json".into()),
         }),
         RichValue::new(RichNode::Html {
-            html: "<p>Hello <strong>world</strong></p>".into(),
+            html: "<p>Hello <strong>world</strong>, from <em>sanitised</em> HTML.</p><ul><li>one</li><li>two</li></ul>".into(),
         }),
         RichValue::new(RichNode::Image {
-            mime: "image/png".into(),
-            // A 1x1 transparent PNG.
-            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=".into(),
+            mime: "image/svg+xml".into(),
+            // A 160x90 SVG: a blue card with a yellow circle and "dump".
+            base64: "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiIHZpZXdCb3g9IjAgMCAxNjAgOTAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiIHJ4PSI4IiBmaWxsPSIjM2I4MmY2Ii8+PGNpcmNsZSBjeD0iNDUiIGN5PSI0NSIgcj0iMjQiIGZpbGw9IiNmYmJmMjQiLz48dGV4dCB4PSI4MCIgeT0iNTIiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXNpemU9IjE4IiBmaWxsPSIjZmZmIj5kdW1wPC90ZXh0Pjwvc3ZnPg==".into(),
         }),
         RichValue::new(RichNode::Timing {
             label: "query".into(),
@@ -285,6 +304,17 @@ mod tests {
                 String::from_utf8_lossy(bad)
             );
         }
+    }
+
+    #[test]
+    fn object_keys_keep_the_programs_order() {
+        let v =
+            RichValue::from_json(br#"{"kind":"tree","value":{"zeta":1,"alpha":{"b":2,"a":3}}}"#)
+                .unwrap();
+        assert_eq!(
+            serde_json::to_string(&v).unwrap(),
+            r#"{"v":1,"kind":"tree","value":{"zeta":1,"alpha":{"b":2,"a":3}}}"#
+        );
     }
 
     #[test]

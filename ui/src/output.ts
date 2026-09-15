@@ -1,10 +1,19 @@
-// The output pane: a fast, append-only stream of stdout and stderr text.
+// The output pane: an append-only list of blocks, in order. Text blocks are
+// runs of stdout, stderr, and info text; dump blocks are rendered values.
 //
-// Appends are batched per animation frame and merged into one text node per
-// stream run, so thousands of tiny chunks cost a handful of DOM operations.
-// The DOM is capped at MAX_LINES; older lines are dropped with a notice.
+// Appends are batched per animation frame and consecutive text of the same
+// stream is merged into one text node, so thousands of tiny chunks cost a
+// handful of DOM operations. The DOM is capped at MAX_LINES; older blocks are
+// dropped with a notice.
+
+import { handleDumpKey } from "./dump/nav";
+import { renderRich } from "./dump/render";
+import { disposeTables } from "./dump/table";
+import type { RichValue } from "./protocol";
 
 export type Stream = "stdout" | "stderr" | "info";
+
+type Pending = { stream: Stream; text: string } | { rich: RichValue };
 
 const MAX_LINES = 20_000;
 const BOTTOM_SLACK_PX = 4;
@@ -15,7 +24,7 @@ export class OutputPane {
   private readonly jump: HTMLButtonElement;
   private readonly trimmedNotice: HTMLElement;
 
-  private pending: { stream: Stream; text: string }[] = [];
+  private pending: Pending[] = [];
   private frame = 0;
   private lines = 0;
   private trimmed = 0;
@@ -31,7 +40,7 @@ export class OutputPane {
     this.trimmedNotice.className = "output-trimmed";
     this.trimmedNotice.hidden = true;
 
-    this.body = document.createElement("pre");
+    this.body = document.createElement("div");
     this.body.className = "output-body";
 
     this.jump = document.createElement("button");
@@ -54,20 +63,34 @@ export class OutputPane {
       if (e.key === "Escape") {
         e.preventDefault();
         this.onEscape();
+      } else if (handleDumpKey(e, this.element)) {
+        e.preventDefault();
       }
     });
+    // Dumps change height after they're added (images load, rows fill in,
+    // nodes open). Stay pinned to the bottom if we were there.
+    new ResizeObserver(() => {
+      if (this.stick) this.scrollToBottom();
+    }).observe(this.body);
   }
 
   append(stream: Stream, text: string): void {
     if (!text) return;
     this.pending.push({ stream, text });
-    this.frame ||= requestAnimationFrame(() => this.flush());
+    this.schedule();
+  }
+
+  /** Add a dumped value after whatever output came before it. */
+  appendRich(value: RichValue): void {
+    this.pending.push({ rich: value });
+    this.schedule();
   }
 
   clear(): void {
     cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.pending = [];
+    disposeTables(this.body);
     this.body.replaceChildren();
     this.lines = 0;
     this.trimmed = 0;
@@ -83,13 +106,17 @@ export class OutputPane {
     );
   }
 
+  private schedule(): void {
+    this.frame ||= requestAnimationFrame(() => this.flush());
+  }
+
   private flush(): void {
     this.frame = 0;
     const batch = this.pending;
     this.pending = [];
     if (batch.length === 0) return;
 
-    // Merge consecutive chunks of the same stream, then extend the last span
+    // Merge consecutive text of the same stream, then extend the last span
     // if it's the same stream too.
     const fragment = document.createDocumentFragment();
     let last = this.body.lastElementChild as HTMLElement | null;
@@ -113,13 +140,25 @@ export class OutputPane {
       run = "";
     };
 
-    for (const { stream, text } of batch) {
-      if (stream !== runStream) {
+    for (const item of batch) {
+      if ("rich" in item) {
         emit();
-        runStream = stream;
+        runStream = null;
+        const node = renderRich(item.rich, { scrollRoot: this.element });
+        // A block counts as one line towards the cap; inline values as none.
+        node.dataset.lines = node.classList.contains("dump-inline") ? "0" : "1";
+        this.lines += Number(node.dataset.lines);
+        fragment.append(node);
+        last = node;
+        lastStream = undefined;
+        continue;
       }
-      run += text;
-      this.lines += countNewlines(text);
+      if (item.stream !== runStream) {
+        emit();
+        runStream = item.stream;
+      }
+      run += item.text;
+      this.lines += countNewlines(item.text);
     }
     emit();
     this.body.append(fragment);
@@ -131,14 +170,21 @@ export class OutputPane {
   private trim(): void {
     while (this.lines > MAX_LINES && this.body.firstChild) {
       const first = this.body.firstChild as HTMLElement;
+      const excess = this.lines - MAX_LINES;
+      if (first.dataset.lines !== undefined) {
+        const n = Number(first.dataset.lines);
+        disposeTables(first);
+        first.remove();
+        this.lines -= n;
+        this.trimmed += n;
+        continue;
+      }
       const text = first.textContent ?? "";
       const n = countNewlines(text);
-      const excess = this.lines - MAX_LINES;
       if (n <= excess) {
         first.remove();
         this.lines -= n;
         this.trimmed += n;
-        if (n === 0) break;
       } else {
         // Cut the first `excess` lines out of this span.
         let idx = -1;

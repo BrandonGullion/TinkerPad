@@ -274,6 +274,13 @@ mod commands {
             .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e.to_string()))
     }
 
+    /// One sample of every dump kind, for the dev-only "render examples"
+    /// command and the renderer self-test.
+    #[tauri::command]
+    pub fn dump_examples() -> Vec<tinkerpad_core::RichValue> {
+        tinkerpad_core::dump::examples()
+    }
+
     /// Which in-app self-test scenarios to run, from `TINKERPAD_SELFTEST`
     /// (comma-separated). `None` in normal use. See `ui/src/selftest.ts`.
     #[tauri::command]
@@ -368,6 +375,7 @@ pub fn run() {
             commands::delete_playground,
             commands::read_source,
             commands::write_source,
+            commands::dump_examples,
             commands::selftest_scenario,
             commands::selftest_report,
         ])

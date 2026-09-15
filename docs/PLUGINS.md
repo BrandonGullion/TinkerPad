@@ -349,6 +349,18 @@ Kinds:
 
 Optional on every node: `title` (string), `id` (string, for future lazy expansion).
 
+Details a library author may want to know about how the app shows these:
+
+- Object keys are shown in the order the library wrote them.
+- A `value` or `timing` without a `title` sits inline in the surrounding text.
+  Everything else, and anything with a `title`, is a block.
+- A table cell that is a plain array or object shows as a collapsed tree.
+- `text` is highlighted only when the app bundles a grammar for `lang`. Today that is
+  `json`; the editor's languages join it with work item 02-04.
+- `html` loses scripts, event handlers, `<style>`, forms, frames, media, link
+  targets, and any URL except inline `data:image/…` sources. It renders in an
+  isolated box, so page styles don't apply to it.
+
 **The dump library, not the core, is responsible for:** cycle detection, depth limit
 (default 5), item cap (default 1000 rows, sets `truncated`), choosing `table` for
 sequences of records and `tree` for everything else, and type names. The core only
