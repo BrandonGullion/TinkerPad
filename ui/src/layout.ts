@@ -86,9 +86,12 @@ export type RunState =
 export class StatusBar {
   readonly element: HTMLElement;
   private readonly language: HTMLElement;
+  private readonly note: HTMLElement;
   private readonly run: HTMLElement;
   private readonly cancelButton: HTMLButtonElement;
   private timer = 0;
+  private noteTimer = 0;
+  private stickyNote: string | null = null;
 
   /** Called when the user clicks Cancel while a run is in progress. */
   onCancel: () => void = () => {};
@@ -101,6 +104,9 @@ export class StatusBar {
     this.language = document.createElement("span");
     this.language.className = "status-language";
     this.language.textContent = "Plain text";
+    this.note = document.createElement("span");
+    this.note.className = "status-note";
+    this.note.hidden = true;
     const spacer = document.createElement("span");
     spacer.className = "status-spacer";
     this.run = document.createElement("span");
@@ -116,12 +122,33 @@ export class StatusBar {
     logs.textContent = "Logs";
     logs.title = "Open the log folder";
     logs.addEventListener("click", () => this.onOpenLogs());
-    this.element.append(this.language, spacer, this.run, this.cancelButton, logs);
+    this.element.append(this.language, this.note, spacer, this.run, this.cancelButton, logs);
     this.setRun({ kind: "idle" });
   }
 
   setLanguage(name: string): void {
     this.language.textContent = name;
+  }
+
+  /**
+   * A note beside the language. A sticky note stays until replaced (pass
+   * `null` to clear); a flash shows for a moment, then the sticky note returns.
+   */
+  setNote(text: string | null): void {
+    this.stickyNote = text;
+    clearTimeout(this.noteTimer);
+    this.showNote(text);
+  }
+
+  flashNote(text: string, ms = 2500): void {
+    clearTimeout(this.noteTimer);
+    this.showNote(text);
+    this.noteTimer = window.setTimeout(() => this.showNote(this.stickyNote), ms);
+  }
+
+  private showNote(text: string | null): void {
+    this.note.textContent = text ?? "";
+    this.note.hidden = !text;
   }
 
   /** Update the run indicator. While running, elapsed time ticks at ~10 Hz. */

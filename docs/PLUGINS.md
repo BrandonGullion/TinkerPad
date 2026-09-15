@@ -211,6 +211,31 @@ This costs a little visual noise on the `expression` kind and removes an entire
 category of bugs (off-by-N diagnostics, hover at the wrong line, positions inside a
 prelude). Plugin authors don't have to think about it at all.
 
+**How a new playground's files are made**
+
+- The main file is `prelude + template + postlude`, in that order.
+- In the template, `{{name}}` becomes the playground's display name and `{{date}}`
+  today's date in UTC (`2026-09-14`). Any other `{{…}}` is left as written.
+- The prelude and postlude are written exactly as in the manifest, with no
+  substitution. A playground can be renamed, and its locked lines must still
+  match.
+- `[scaffold].files` templates get the same `{{name}}` and `{{date}}` treatment.
+  A scaffold entry at the main file's path is ignored, and an existing file is
+  never overwritten.
+- Templates are read from the plugin folder every time a playground is created, so
+  edits to a template take effect immediately.
+
+**How locked lines are found.** Nothing about them is stored. When a playground is
+opened, the file is locked if it still starts with the prelude and ends with the
+postlude, byte for byte. If it doesn't, for example after an edit in another editor
+or a change of line endings, nothing is locked and the status bar says so. Write
+preludes and postludes with `\n` line endings; a prelude usually ends with one and a
+postlude usually starts with one, so the lines between them stay fully editable.
+
+**In the editor.** Locked lines are dimmed with a lock in the gutter. The cursor can
+go there, but edits are refused with a hint. Select-all and delete clears only the
+editable middle, and Mod+A selects only the middle.
+
 ## 4. Shared servers and playground registration
 
 Some servers want one instance for many playgrounds and need to be told about each

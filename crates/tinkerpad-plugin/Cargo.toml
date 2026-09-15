@@ -25,3 +25,6 @@ workspace = true
 [[bin]]
 name = "tinkerpad-fakeprobe"
 path = "src/bin/fakeprobe.rs"
+
+[dev-dependencies]
+tinkerpad-library.workspace = true

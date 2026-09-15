@@ -4,10 +4,14 @@
 // "selftest: PASS ..." / "selftest: FAIL ..." lines, ending with
 // "selftest: done".
 
+import { undo } from "@codemirror/commands";
+import { EditorSelection } from "@codemirror/state";
 import { runScopeHandlers } from "@codemirror/view";
 
 import type { Editor } from "./editor";
 import { invoke, subscribe } from "./ipc";
+import type { StatusBar } from "./layout";
+import { LOCKED_HINT, MISMATCH_NOTE, openPlayground } from "./playground";
 import type { OutputPane } from "./output";
 import type { LanguageToolchain, Listing, Playground, PluginsStatus } from "./protocol";
 import type { RunController } from "./run";
@@ -16,6 +20,7 @@ export interface SelftestContext {
   editor: Editor;
   output: OutputPane;
   runs: RunController;
+  status: StatusBar;
 }
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -255,6 +260,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   toolchains: toolchainsScenario,
   library: libraryScenario,
   "library-trash": libraryTrashScenario,
+  locked: lockedScenario,
 };
 
 async function pluginsScenario(_ctx: SelftestContext, check: Check) {
@@ -444,4 +450,108 @@ async function libraryTrashScenario(_ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: p.id });
   const listing = await invoke<Listing>("list_playgrounds");
   await check("delete removes the playground", !listing.playgrounds.some((x) => x.id === p.id));
+}
+
+/**
+ * Templates, scaffolding, and locked lines, through the real editor. Needs the
+ * node-check test plugin (its "expression" kind has a prelude and postlude)
+ * and a throwaway TINKERPAD_LIBRARY.
+ */
+async function lockedScenario({ editor, status }: SelftestContext, check: Check) {
+  const view = editor.view;
+  const text = () => view.state.doc.toString();
+  const note = () => document.querySelector(".status-note")?.textContent ?? "";
+  const noteShown = () => !(document.querySelector<HTMLElement>(".status-note")?.hidden ?? true);
+  const prelude = "console.log(\n";
+  const postlude = "\n);\n";
+
+  // A kind without locked lines: the template gets {{name}} and {{date}}.
+  const script = await invoke<Playground>("create_playground", {
+    name: "Locked Script",
+    language: "node-check",
+    kind: "script",
+  });
+  const openedScript = await openPlayground(editor, status, script.id);
+  await check(
+    "template renders name and date",
+    /^\/\/ Locked Script, created \d{4}-\d{2}-\d{2}$/m.test(openedScript.text) &&
+      openedScript.lock === "none",
+    JSON.stringify(openedScript.text.split("\n")[0]),
+  );
+  await frame();
+  await check("no locked lines for a plain kind", document.querySelectorAll(".cm-locked-line").length === 0);
+
+  // A kind with a prelude and postlude.
+  const expr = await invoke<Playground>("create_playground", {
+    name: "Locked Expression",
+    language: "node-check",
+    kind: "expression",
+  });
+  const opened = await openPlayground(editor, status, expr.id);
+  await frame();
+  await check(
+    "file is prelude + template + postlude",
+    text() === "console.log(\n1 + 1\n);\n" && opened.lock === "locked",
+    JSON.stringify(text()),
+  );
+  await check(
+    "locked lines are dimmed and marked",
+    document.querySelectorAll(".cm-locked-line").length === 3 &&
+      document.querySelectorAll(".cm-lock-marker").length === 3,
+    `${document.querySelectorAll(".cm-locked-line").length} lines, ${document.querySelectorAll(".cm-lock-marker").length} markers`,
+  );
+
+  // The cursor can sit in a locked line.
+  view.dispatch({ selection: EditorSelection.cursor(3) });
+  await check("cursor can enter a locked line", view.state.selection.main.head === 3);
+
+  // Typing there is refused with a hint.
+  view.dispatch({ changes: { from: 3, insert: "X" }, userEvent: "input.type" });
+  await sleep(20);
+  await check("typing in a locked line is refused", text() === "console.log(\n1 + 1\n);\n");
+  await check("refusal shows a hint", noteShown() && note() === LOCKED_HINT, note());
+
+  // Typing in the middle works.
+  view.dispatch({ changes: { from: prelude.length + 5, insert: " + 40" }, userEvent: "input.type" });
+  await check("typing in the editable middle works", text() === "console.log(\n1 + 1 + 40\n);\n", JSON.stringify(text()));
+
+  // Mod+A selects only the middle, so typing replaces just that.
+  runScopeHandlers(view, key("a", { mod: true }), "editor");
+  const sel = view.state.selection.main;
+  await check(
+    "Mod+A selects only the editable middle",
+    sel.from === prelude.length && sel.to === text().length - postlude.length,
+    `${sel.from}-${sel.to}`,
+  );
+  view.dispatch(view.state.replaceSelection("40 + 2"), { userEvent: "input.type" });
+  await check("typing after Mod+A replaces only the middle", text() === "console.log(\n40 + 2\n);\n", JSON.stringify(text()));
+
+  // A real select-all (the whole document) and delete keeps the locked lines.
+  view.dispatch({
+    selection: EditorSelection.single(0, text().length),
+  });
+  view.dispatch({ changes: { from: 0, to: text().length }, userEvent: "delete.selection" });
+  await check("select-all + delete leaves the locked lines", text() === prelude + postlude, JSON.stringify(text()));
+
+  // Undo brings the middle back.
+  undo(view);
+  await check("undo restores the middle", text() === "console.log(\n40 + 2\n);\n", JSON.stringify(text()));
+
+  // Saving writes exactly the editor's text; nothing is added or stripped.
+  await invoke("write_source", { id: expr.id, text: text() });
+  const onDisk = await invoke<string>("read_source", { id: expr.id });
+  await check("file on disk is byte-identical to the editor", onDisk === text(), JSON.stringify(onDisk));
+
+  // Edited outside the wrapper: nothing is locked, and the status bar says why.
+  await invoke("write_source", { id: expr.id, text: "40 + 2\n" });
+  const mismatch = await openPlayground(editor, status, expr.id);
+  await frame();
+  await check(
+    "a file without its wrapper opens unlocked",
+    mismatch.lock === "mismatch" && document.querySelectorAll(".cm-locked-line").length === 0,
+    mismatch.lock,
+  );
+  await check("the status bar explains why", noteShown() && note() === MISMATCH_NOTE, note());
+  view.dispatch({ changes: { from: 0, insert: "// free to edit\n" }, userEvent: "input.type" });
+  await check("an unlocked file is fully editable", text().startsWith("// free to edit\n"));
 }

@@ -17,6 +17,7 @@ mod os;
 pub mod placeholders;
 mod plugin;
 mod registry;
+pub mod scaffold;
 mod suggest;
 pub mod toolchain;
 
