@@ -415,7 +415,7 @@ async function dumpScenario(ctx: SelftestContext, check: Check) {
     "output pane renders dumps as blocks between the text",
     JSON.stringify(blocks) ===
       JSON.stringify(["stdout", "dump:value", "stdout", "stderr", "info", "dump:table", "dump:text", "stdout"]) &&
-      tableFoot.startsWith("20,000 rows"),
+      tableFoot.startsWith(`${(20_000).toLocaleString()} rows`),
     JSON.stringify({ blocks, tableFoot }),
   );
 }
@@ -780,7 +780,7 @@ async function dumpRenderScenario(ctx: SelftestContext, check: Check) {
   await check(
     "a 50,000-node tree renders one page of children",
     // Root, a page of objects (open: second level), and their two keys each.
-    rowsBefore === 1 + TREE_PAGE * 3 && (more?.textContent ?? "").includes("49,800 more") && treeMs < 1000,
+    rowsBefore === 1 + TREE_PAGE * 3 && (more?.textContent ?? "").includes(`${(49_800).toLocaleString()} more`) && treeMs < 1000,
     `${rowsBefore} rows, ${more?.textContent}, ${treeMs.toFixed(1)} ms`,
   );
   more?.click();
