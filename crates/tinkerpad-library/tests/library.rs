@@ -349,3 +349,64 @@ fn scaffolding_never_overwrites_and_first_entry_wins() {
         "a\n"
     );
 }
+
+#[test]
+fn create_with_scaffolds_from_the_folder_and_keeps_plugin_metadata() {
+    let s = Scratch::new("create-with");
+    let lib = Library::open(&s.0).unwrap();
+    lib.create(new("Taken")).unwrap();
+
+    let mut seen = None;
+    let p = lib
+        .create_with(new("Taken"), |claimed| {
+            seen = Some((claimed.folder.to_owned(), claimed.id.clone()));
+            Ok(tinkerpad_library::Scaffold {
+                files: vec![(
+                    "Cargo.toml".into(),
+                    format!("name = \"{}\"\n", claimed.folder).into_bytes(),
+                )],
+                plugin_meta: [("plugin_dir".to_owned(), "C:/plugins/rust".to_owned())].into(),
+            })
+        })
+        .unwrap();
+
+    let (folder_seen, id_seen) = seen.unwrap();
+    assert_eq!(folder_seen, "taken-2");
+    assert_eq!(folder(&p.dir), "taken-2");
+    assert_eq!(id_seen, p.id, "the callback sees the final id");
+    assert_eq!(
+        std::fs::read_to_string(p.dir.join("Cargo.toml")).unwrap(),
+        "name = \"taken-2\"\n"
+    );
+    let meta = std::fs::read_to_string(p.dir.join(METADATA_FILE)).unwrap();
+    assert!(meta.contains("[plugin.csharp]"), "{meta}");
+    assert!(meta.contains("plugin_dir = \"C:/plugins/rust\""), "{meta}");
+
+    // A rename rewrites playground.toml; the plugin table survives it.
+    let renamed = lib.rename(&p.id, "Renamed").unwrap();
+    let meta = std::fs::read_to_string(renamed.dir.join(METADATA_FILE)).unwrap();
+    assert!(meta.contains("plugin_dir = \"C:/plugins/rust\""), "{meta}");
+    assert!(meta.contains("name = \"Renamed\""), "{meta}");
+
+    // And the folder still reads back as a playground.
+    lib.rescan();
+    assert!(
+        lib.list()
+            .playgrounds
+            .iter()
+            .any(|x| x.playground.id == p.id)
+    );
+    assert!(lib.list().broken.is_empty(), "{:?}", lib.list().broken);
+}
+
+#[test]
+fn create_with_failure_leaves_nothing_behind() {
+    let s = Scratch::new("create-with-fail");
+    let lib = Library::open(&s.0).unwrap();
+    let err = lib
+        .create_with(new("Nope"), |_| Err("template missing".into()))
+        .unwrap_err();
+    assert!(err.to_string().contains("template missing"));
+    assert!(!s.0.join("nope").exists());
+    assert!(lib.list().playgrounds.is_empty());
+}

@@ -1,0 +1,15 @@
+[package]
+name = "tinkerpad"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Rich output for TinkerPad's Rust playgrounds: dump() anything that implements serde::Serialize."
+license = "MIT"
+
+[dependencies]
+serde = "1"
+# preserve_order: struct fields become table columns in declaration order.
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -1078,6 +1078,135 @@ async function csharpScenario(ctx: SelftestContext, check: Check) {
   await runUntilVisible(ctx, ".dump-kind-table", "C# screenshot run", LONG);
 }
 
+/** The bundled Rust plugin, end to end in the app (01-11). */
+async function rustScenario(ctx: SelftestContext, check: Check) {
+  const { output, editor, status } = ctx;
+  const pane = output.element;
+  const outText = () => (pane.querySelector(".output-body")?.textContent ?? "").replaceAll("\r\n", "\n");
+  // A first build downloads and compiles serde; slow on CI.
+  const LONG = 300_000;
+
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const rs = plugins.plugins.find((p) => p.id === "rust");
+  await check("the Rust plugin is bundled", rs?.source === "bundled", JSON.stringify(rs ?? null));
+  const state = await settledToolchain("rust");
+  await check("Cargo is ready for Rust", state?.kind === "ready", JSON.stringify(state ?? null));
+  if (state?.kind !== "ready") return;
+
+  const created = await invoke<Playground>("create_playground", { name: "RS Self Test", language: "rust" });
+  const opened = await openPlayground(editor, status, created.id);
+  await check(
+    "a new playground is a crate with src/main.rs from the program template",
+    created.kind === "program" &&
+      /[\\/]src[\\/]main\.rs$/.test(created.mainFile) &&
+      editor.text.includes("fn main()") &&
+      opened.lock === "none",
+    JSON.stringify({ mainFile: created.mainFile, lock: opened.lock }),
+  );
+
+  const table = () => pane.querySelector(".dump-kind-table");
+  const first = await runUntilVisible(ctx, ".dump-kind-table", "Rust first run of a new playground", LONG);
+  await check(
+    "the template's dump renders a table",
+    first.ms !== null &&
+      first.outcome.kind === "exited" &&
+      first.outcome.code === 0 &&
+      outText().startsWith("Hello from Rust\n") &&
+      table()?.querySelector(".dump-title")?.textContent === "people" &&
+      table()?.querySelectorAll("tbody tr").length === 2,
+    JSON.stringify({ outcome: first.outcome, text: outText().slice(0, 300) }),
+  );
+  const second = await runUntilVisible(ctx, ".dump-kind-table", "Rust second run, unchanged", LONG);
+  await check("an unchanged rerun shows the table again", second.ms !== null && second.outcome.kind === "exited");
+
+  editor.view.dispatch({
+    changes: {
+      from: 0,
+      to: editor.view.state.doc.length,
+      insert: editor.text.replace('println!("Hello from Rust");', 'println!("héllo 日本");'),
+    },
+  });
+  const edited = await runUntilVisible(ctx, ".dump-kind-table", "Rust run after a one-line edit", LONG);
+  await check(
+    "a one-line edit rebuilds and runs",
+    edited.outcome.kind === "exited" && outText().startsWith("héllo 日本\n"),
+    JSON.stringify(outText().slice(0, 80)),
+  );
+
+  const other = await invoke<Playground>("create_playground", { name: "RS Second Test", language: "rust" });
+  await openPlayground(editor, status, other.id);
+  const shared = await runUntilVisible(ctx, ".dump-kind-table", "Rust first run of a second playground", LONG);
+  await check("a second playground builds and runs", shared.ms !== null && shared.outcome.kind === "exited");
+
+  editor.view.dispatch({
+    changes: {
+      from: 0,
+      to: editor.view.state.doc.length,
+      insert: "fn main() {\n    let n: u32 = 1;\n    let s: String = n;\n    println!(\"{s}\");\n}\n",
+    },
+  });
+  const broken = await runUntilVisible(ctx, ".dump", "Rust compile error", LONG);
+  await check(
+    "a compile error is shown and the run fails",
+    broken.outcome.kind === "exited" &&
+      broken.outcome.code !== 0 &&
+      outText().includes("error[E0308]: mismatched types") &&
+      /--> src[\\/]main\.rs:3:21/.test(outText()),
+    JSON.stringify({ outcome: broken.outcome, text: outText().slice(0, 400) }),
+  );
+
+  const expression = await invoke<Playground>("create_playground", {
+    name: "RS Expression Test",
+    language: "rust",
+    kind: "expression",
+  });
+  const exprOpened = await openPlayground(editor, status, expression.id);
+  await check(
+    "the expression kind opens with locked lines",
+    exprOpened.lock === "locked" && editor.text.startsWith("fn main() {\n    tinkerpad::dump(&(\n"),
+    JSON.stringify({ lock: exprOpened.lock, text: editor.text }),
+  );
+  const expr = await runUntilVisible(ctx, ".dump-kind-tree", "Rust expression kind", LONG);
+  await check(
+    "the expression kind dumps its value",
+    expr.outcome.kind === "exited" && (pane.querySelector(".dump-kind-tree")?.textContent ?? "").includes("[10]"),
+    JSON.stringify({ outcome: expr.outcome, text: outText().slice(0, 200) }),
+  );
+
+  // Leave a table on screen for a screenshot.
+  await openPlayground(editor, status, created.id);
+  editor.view.dispatch({
+    changes: {
+      from: 0,
+      to: editor.view.state.doc.length,
+      insert: [
+        "use serde::Serialize;",
+        "use tinkerpad::Dump;",
+        "",
+        "#[derive(Serialize)]",
+        "struct Person {",
+        "    name: &'static str,",
+        "    born: u16,",
+        "    languages: Vec<&'static str>,",
+        "}",
+        "",
+        "fn main() {",
+        '    println!("Hello from Rust");',
+        "    let people = vec![",
+        '        Person { name: "Ada Lovelace", born: 1815, languages: vec!["Analytical Engine"] },',
+        '        Person { name: "Grace Hopper", born: 1906, languages: vec!["COBOL", "FLOW-MATIC"] },',
+        '        Person { name: "Alan Turing", born: 1912, languages: vec![] },',
+        "    ];",
+        '    let oldest = people.dump_titled("people").iter().map(|p| p.born).min().unwrap();',
+        '    println!("oldest born {oldest}");',
+        "}",
+        "",
+      ].join("\n"),
+    },
+  });
+  await runUntilVisible(ctx, ".dump-kind-table", "Rust screenshot run", LONG);
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -1096,6 +1225,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "dump-render": dumpRenderScenario,
   typescript: typescriptScenario,
   csharp: csharpScenario,
+  rust: rustScenario,
   plugins: pluginsScenario,
   toolchains: toolchainsScenario,
   library: libraryScenario,

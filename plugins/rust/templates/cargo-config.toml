@@ -1,0 +1,4 @@
+# Written by TinkerPad's Rust plugin. Every Rust playground builds into the same
+# target folder, so dependencies (and std) compile once and are reused.
+[build]
+target-dir = "{{scratch}}/target"

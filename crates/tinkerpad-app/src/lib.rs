@@ -143,18 +143,40 @@ mod commands {
             })?,
             None => plugin.default_kind(),
         };
-        use tinkerpad_plugin::scaffold;
-        let files = scaffold::playground_files(&plugin, kind, name.trim(), &scaffold::today_utc())
-            .map_err(|e| CommandError::new(ErrorCode::Io, e.to_string()))?;
+        use tinkerpad_plugin::scaffold::{self, ScaffoldVars};
+        let display_name = name.trim().to_owned();
+        let date = scaffold::today_utc();
+        let scratch = tinkerpad_runner::spec::scratch_dir(&state.data_dir.join("scratch"), &plugin);
         state
             .library
-            .create(tinkerpad_library::NewPlayground {
-                name,
-                language: plugin.id.clone(),
-                kind: KindId::new(kind.id.clone()),
-                main_path: plugin.main_path.clone(),
-                files,
-            })
+            .create_with(
+                tinkerpad_library::NewPlayground {
+                    name,
+                    language: plugin.id.clone(),
+                    kind: KindId::new(kind.id.clone()),
+                    main_path: plugin.main_path.clone(),
+                    files: Vec::new(),
+                },
+                |claimed| {
+                    // Templates can name the folder, so they're rendered once
+                    // the library has chosen it.
+                    let package = scaffold::package_name(claimed.folder, claimed.id.as_str());
+                    let vars = ScaffoldVars {
+                        name: &display_name,
+                        date: &date,
+                        folder: claimed.folder,
+                        package: &package,
+                        plugin_dir: &plugin.dir,
+                        scratch: &scratch,
+                    };
+                    let out = scaffold::playground_files(&plugin, kind, &vars)
+                        .map_err(|e| e.to_string())?;
+                    Ok(tinkerpad_library::Scaffold {
+                        files: out.files,
+                        plugin_meta: out.paths,
+                    })
+                },
+            )
             .map_err(crate::library::to_command_error)
     }
 

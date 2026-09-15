@@ -8,6 +8,9 @@
 //! main = "main.cs"                     # relative to the folder
 //! created = 2026-09-14T20:11:00Z
 //! tags = ["experiments"]
+//!
+//! [plugin.rust]                        # optional, owned by that plugin
+//! plugin_dir = "C:/Program Files/TinkerPad/plugins/rust"
 //! ```
 
 use std::path::{Component, Path, PathBuf};
@@ -31,6 +34,10 @@ struct Meta {
     created: Option<toml::value::Datetime>,
     #[serde(default)]
     tags: Vec<String>,
+    /// Plugin-owned values, one table per plugin id: `[plugin.rust]`. The
+    /// library keeps them but never interprets them.
+    #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
+    plugin: toml::Table,
 }
 
 /// Read `dir/playground.toml` into a [`Playground`].
@@ -83,8 +90,25 @@ pub fn read(dir: &Path) -> Result<Playground, String> {
     })
 }
 
-/// Write `playground.toml` for `p` atomically.
+/// Write `playground.toml` for `p` atomically, keeping any `[plugin.*]`
+/// tables already in the file.
 pub fn write(p: &Playground) -> std::io::Result<()> {
+    write_with(p, plugin_tables(&p.dir))
+}
+
+/// The `[plugin.*]` tables of `dir/playground.toml`, or none if it can't be
+/// read.
+pub fn plugin_tables(dir: &Path) -> toml::Table {
+    std::fs::read_to_string(dir.join(FILE_NAME))
+        .ok()
+        .and_then(|text| toml::from_str::<Meta>(&text).ok())
+        .map(|m| m.plugin)
+        .unwrap_or_default()
+}
+
+/// Write `playground.toml` for `p` atomically with exactly these `[plugin.*]`
+/// tables.
+pub fn write_with(p: &Playground, plugin: toml::Table) -> std::io::Result<()> {
     let main = p
         .main_file
         .strip_prefix(&p.dir)
@@ -104,6 +128,7 @@ pub fn write(p: &Playground) -> std::io::Result<()> {
         main,
         created,
         tags: p.tags.clone(),
+        plugin,
     };
     let text = toml::to_string(&meta).map_err(std::io::Error::other)?;
     crate::fsutil::write_atomic(&p.dir.join(FILE_NAME), text.as_bytes())

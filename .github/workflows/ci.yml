@@ -134,13 +134,13 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,library,library-trash,locked
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
           set -o pipefail
-          xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 300 | tee launch.log
-          grep -q "selftest: INFO plugins loaded=4 failures=1" launch.log
+          xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
+          grep -q "selftest: INFO plugins loaded=5 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
@@ -149,17 +149,18 @@ jobs:
           grep -q "selftest: PASS a 10,000-row table is virtualised" launch.log
           grep -q "selftest: PASS the template.s dump renders a table" launch.log
           grep -q "selftest: PASS the template.s .Dump() renders a table" launch.log
+          grep -q "selftest: PASS a second playground builds and runs" launch.log
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,library,library-trash,locked
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
           set -o pipefail
-          bash scripts/smoke-launch.sh target/debug/tinkerpad 300 | tee launch.log
-          grep -q "selftest: INFO plugins loaded=4 failures=1" launch.log
+          bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
+          grep -q "selftest: INFO plugins loaded=5 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
@@ -168,3 +169,4 @@ jobs:
           grep -q "selftest: PASS a 10,000-row table is virtualised" launch.log
           grep -q "selftest: PASS the template.s dump renders a table" launch.log
           grep -q "selftest: PASS the template.s .Dump() renders a table" launch.log
+          grep -q "selftest: PASS a second playground builds and runs" launch.log
