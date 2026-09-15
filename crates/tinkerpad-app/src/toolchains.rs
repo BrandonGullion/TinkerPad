@@ -51,6 +51,15 @@ impl Toolchains {
         self.resolver.read().expect("resolver lock").clone()
     }
 
+    /// The latest state for one language, if it has been checked at all.
+    pub fn state(&self, language: &str) -> Option<ToolchainState> {
+        self.states
+            .read()
+            .expect("toolchain states lock")
+            .get(language)
+            .cloned()
+    }
+
     pub fn snapshot(&self) -> Vec<LanguageToolchain> {
         self.states
             .read()

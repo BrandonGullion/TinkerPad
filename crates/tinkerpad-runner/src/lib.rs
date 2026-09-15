@@ -9,7 +9,9 @@
 //! See `docs/ARCHITECTURE.md` §5 and work items 00-06, 01-06, 01-07, 03-02, 03-03.
 
 mod run;
+pub mod spec;
 mod utf8;
 
 pub use run::{RunError, RunEvent, RunHandle, RunSpec, run};
+pub use spec::{RunContext, SpecError, run_spec};
 pub use utf8::Utf8Stream;

@@ -3,6 +3,7 @@ import { invoke, ready, subscribe } from "./ipc";
 import { createLayout } from "./layout";
 import { OutputPane } from "./output";
 import { BottomPanel } from "./panels";
+import { currentPlayground, openMostRecent } from "./playground";
 import { RunController } from "./run";
 import { maybeRunSelftest } from "./selftest";
 import { toast } from "./toast";
@@ -17,19 +18,30 @@ panel.register({ id: "output", title: "Output", element: output.element });
 panelHost.append(panel.element);
 
 const runs = new RunController(output, statusBar);
-statusBar.setLanguage("JavaScript (node)");
 statusBar.onCancel = () => void runs.cancel();
 statusBar.onOpenLogs = () => void invoke("open_log_folder").catch(() => {});
+
+/** Shown until a playground is open. Creating and opening playgrounds from
+ * the UI arrives with tabs (01-12); bundled language plugins with 01-09. */
+const NO_PLAYGROUND_TEXT = `// No playground is open.
+//
+// Runs now use each language's plugin. Bundled plugins arrive with work item
+// 01-09, and creating and opening playgrounds from here with 01-12. Until then
+// the most recently used playground opens at startup, if its plugin is loaded.
+`;
+
+const runCurrent = () => void runs.run(currentPlayground(), editor.text);
 
 const editor = new Editor(
   editorHost,
   {
-    run: () => void runs.run(editor.text),
+    run: runCurrent,
     cancel: () => void runs.cancel(),
     clearOutput: () => output.clear(),
   },
-  'console.log("hello from TinkerPad");\n',
+  NO_PLAYGROUND_TEXT,
 );
+statusBar.setLanguage("No playground");
 editor.focus();
 
 // App shortcuts that must work when focus is outside the editor too. Inside
@@ -41,7 +53,7 @@ document.addEventListener("keydown", (e) => {
   if (inEditor) return;
   if (e.key === "Enter") {
     e.preventDefault();
-    void runs.run(editor.text);
+    runCurrent();
   } else if (e.key === ".") {
     e.preventDefault();
     void runs.cancel();
@@ -68,4 +80,10 @@ subscribe((env) => {
 
 await ready();
 await invoke("ping");
+
+// Self-tests set up their own playgrounds; otherwise reopen the latest one.
+const selftest = await invoke<string | null>("selftest_scenario");
+if (!selftest) {
+  await openMostRecent(editor, statusBar).catch(() => false);
+}
 await maybeRunSelftest({ editor, output, runs, status: statusBar });
