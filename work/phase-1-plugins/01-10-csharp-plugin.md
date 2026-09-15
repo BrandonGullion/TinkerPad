@@ -160,7 +160,14 @@ here by a terminal `dotnet run`.
   1,919 ms with the server shut down before each run.
   `UseSharedCompilation=false` doesn't help: `dotnet run --file` still starts a
   server, and it measured 1,910 ms.
-- macOS and Linux weren't measured.
+- It's Windows-only. In CI's debug builds on shared runners, macOS and Linux
+  kept the server between runs:
+
+  | Run | macOS | Linux (Xvfb) |
+  |---|---|---|
+  | First run of a new playground | 4,064 ms | 5,909 ms |
+  | Second run, unchanged | 528 ms | 892 ms |
+  | Run after an edit | 349 ms | 918 ms |
 - This isn't changed here. Letting build servers outlive a run means changing
   how 00-04 supervises processes, for example keeping a run's job open until the
   app exits. That is a design decision for its own work item, or for 03-05,
