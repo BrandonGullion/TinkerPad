@@ -796,6 +796,119 @@ async function dumpRenderScenario(ctx: SelftestContext, check: Check) {
   await output.flushed();
 }
 
+/** The bundled TypeScript plugin, end to end in the app (01-09). */
+async function typescriptScenario(ctx: SelftestContext, check: Check) {
+  const { output, runs, editor, status } = ctx;
+  const pane = output.element;
+  const outText = () => pane.querySelector(".output-body")?.textContent ?? "";
+
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const ts = plugins.plugins.find((p) => p.id === "typescript");
+  await check("the TypeScript plugin is bundled", ts?.source === "bundled", JSON.stringify(ts ?? null));
+
+  let state: LanguageToolchain["state"] | undefined;
+  for (let i = 0; i < 100; i++) {
+    state = (await invoke<LanguageToolchain[]>("toolchain_status")).find((s) => s.language === "typescript")?.state;
+    if (state && state.kind !== "checking") break;
+    await sleep(100);
+  }
+  await check("Node is ready for TypeScript", state?.kind === "ready", JSON.stringify(state ?? null));
+  if (state?.kind !== "ready") return;
+
+  const created = await invoke<Playground>("create_playground", { name: "TS Self Test", language: "typescript" });
+  await openPlayground(editor, status, created.id);
+  await check(
+    "a new playground starts from the statements template",
+    created.kind === "statements" && editor.text.startsWith('import { dump } from "tinkerpad";\n'),
+    JSON.stringify(editor.text.slice(0, 60)),
+  );
+
+  // Mod+Enter on the untouched template, until its table is on screen.
+  const tableVisible = async (label: string) => {
+    const end = runs.waitForEnd();
+    const start = performance.now();
+    runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+    let ms: number | null = null;
+    while (performance.now() - start < 15_000) {
+      const table = pane.querySelector<HTMLElement>(".dump-kind-table");
+      if (table && table.getClientRects().length > 0) {
+        ms = performance.now() - start;
+        break;
+      }
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const outcome = await withTimeout(end, 15_000, label);
+    await report(`INFO ${label}: Mod+Enter to table visible ${ms === null ? "never" : `${ms.toFixed(0)} ms`}`);
+    return { ms, outcome };
+  };
+  const first = await tableVisible("TypeScript first run");
+  await output.flushed();
+  const table = pane.querySelector(".dump-kind-table");
+  await check(
+    "the template's dump renders a table",
+    first.ms !== null &&
+      first.outcome.kind === "exited" &&
+      first.outcome.code === 0 &&
+      table?.querySelector(".dump-title")?.textContent === "people" &&
+      table.querySelectorAll("tbody tr").length === 2 &&
+      !pane.querySelector(".out-stderr"),
+    JSON.stringify({ outcome: first.outcome, text: outText().slice(0, 200) }),
+  );
+  await tableVisible("TypeScript warm run");
+
+  const end = runs.waitForEnd();
+  runCode(ctx, 'const who: string = "world";\nconsole.log(`Hello, ${who}!`);\n');
+  const hello = await withTimeout(end, 15_000, "hello world");
+  await output.flushed();
+  await check(
+    "hello world prints",
+    hello.kind === "exited" && hello.code === 0 && outText() === "Hello, world!\n",
+    JSON.stringify({ hello, out: outText() }),
+  );
+
+  const program = await invoke<Playground>("create_playground", {
+    name: "TS Program Test",
+    language: "typescript",
+    kind: "program",
+  });
+  await openPlayground(editor, status, program.id);
+  const programEnd = runs.waitForEnd();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  const programOutcome = await withTimeout(programEnd, 15_000, "program template");
+  await output.flushed();
+  await check(
+    "the program template prints and dumps",
+    programOutcome.kind === "exited" &&
+      outText().startsWith("Hello from TS Program Test\n") &&
+      pane.querySelector(".dump-kind-tree") !== null,
+    JSON.stringify({ programOutcome, out: outText().slice(0, 120) }),
+  );
+
+  // Leave a table and some text on screen for a screenshot.
+  await openPlayground(editor, status, created.id);
+  const last = runs.waitForEnd();
+  runCode(
+    ctx,
+    [
+      'import { dump } from "tinkerpad";',
+      "",
+      'console.log("Hello, world!");',
+      "const people = dump(",
+      "  [",
+      '    { name: "Ada Lovelace", born: 1815, languages: ["Analytical Engine"] },',
+      '    { name: "Grace Hopper", born: 1906, languages: ["COBOL", "FLOW-MATIC"] },',
+      '    { name: "Alan Turing", born: 1912 },',
+      "  ],",
+      '  "people",',
+      ");",
+      'console.log(`${people.length} people`);',
+      "",
+    ].join("\n"),
+  );
+  await withTimeout(last, 15_000, "final run");
+  await output.flushed();
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -812,6 +925,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   run: runScenario,
   dump: dumpScenario,
   "dump-render": dumpRenderScenario,
+  typescript: typescriptScenario,
   plugins: pluginsScenario,
   toolchains: toolchainsScenario,
   library: libraryScenario,

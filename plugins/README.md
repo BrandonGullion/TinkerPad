@@ -8,5 +8,8 @@ This folder is copied into the app bundle as a resource
 loads these first, then the user's plugin folder, where a plugin with the same
 id replaces the bundled one.
 
-The first bundled plugins arrive with work items 01-09 (TypeScript),
-01-10 (C#), and 01-11 (Rust).
+Bundled today: `typescript` (01-09). C# (01-10) and Rust (01-11) follow.
+
+Editing a file here re-copies the folder into `target/` on the next build (the
+app's `build.rs` watches it). To try changes without rebuilding, copy a plugin
+into your user plugins folder instead: it overrides the bundled one.

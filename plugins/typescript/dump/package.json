@@ -1,0 +1,11 @@
+{
+  "name": "tinkerpad",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./tinkerpad.d.ts",
+      "default": "./tinkerpad.js"
+    }
+  }
+}
