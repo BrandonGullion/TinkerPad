@@ -4026,6 +4026,7 @@ dependencies = [
  "tinkerpad-plugin",
  "tinkerpad-process",
  "tokio",
+ "toml 0.8.23",
  "tracing",
 ]
 

@@ -18,6 +18,9 @@ pub enum LibraryError {
     Trash { path: PathBuf, message: String },
     #[error("could not watch the library: {0}")]
     Watch(String),
+    /// The files for a new playground couldn't be produced.
+    #[error("{0}")]
+    Scaffold(String),
 }
 
 impl LibraryError {

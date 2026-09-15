@@ -1,0 +1,1 @@
+(1..=10).map(|n| n * n).collect::<Vec<u64>>()

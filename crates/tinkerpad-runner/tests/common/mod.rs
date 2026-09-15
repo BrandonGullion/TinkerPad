@@ -10,7 +10,8 @@ use tinkerpad_core::dump::RichNode;
 use tinkerpad_core::{
     KindId, LanguageId, Playground, PlaygroundId, RichValue, RunEvent as UiEvent, ToolchainState,
 };
-use tinkerpad_plugin::{PROBE_TIMEOUT, Plugin, Resolver, ToolchainOverrides, probe, scaffold};
+use tinkerpad_plugin::scaffold::{self, ScaffoldVars};
+use tinkerpad_plugin::{PROBE_TIMEOUT, Plugin, Resolver, ToolchainOverrides, probe};
 use tinkerpad_runner::dump::PREFIX;
 use tinkerpad_runner::{OutputDecoder, RunContext, RunEvent, run, run_spec};
 
@@ -126,7 +127,61 @@ impl Output {
 /// The playground's main file as a new playground of `kind` would start.
 pub fn template_text(tc: &Toolchain, kind: &str) -> String {
     let kind = tc.plugin.kind(kind).unwrap();
-    scaffold::main_file(kind, PLAYGROUND_NAME, "2026-09-15").unwrap()
+    let scratch = Path::new("/scratch");
+    scaffold::main_file(
+        kind,
+        &vars(tc, "test-playground", "test-playground", scratch),
+    )
+    .unwrap()
+}
+
+fn vars<'a>(
+    tc: &'a Toolchain,
+    folder: &'a str,
+    package: &'a str,
+    scratch: &'a Path,
+) -> ScaffoldVars<'a> {
+    ScaffoldVars {
+        name: PLAYGROUND_NAME,
+        date: "2026-09-15",
+        folder,
+        package,
+        plugin_dir: &tc.plugin.dir,
+        scratch,
+    }
+}
+
+/// Write a new playground of `kind` into `library/<folder>` as the app would,
+/// with the plugin's scratch folder under `scratch_root`.
+pub fn scaffold_playground(
+    tc: &Toolchain,
+    library: &Path,
+    folder: &str,
+    kind: &str,
+    scratch_root: &Path,
+) -> Playground {
+    let kind = tc.plugin.kind(kind).unwrap();
+    let dir = library.join(folder);
+    let id = PlaygroundId::new("01K0000000000000000000TEST");
+    let package = scaffold::package_name(folder, id.as_str());
+    let scratch = tinkerpad_runner::spec::scratch_dir(scratch_root, &tc.plugin);
+    let out = scaffold::playground_files(&tc.plugin, kind, &vars(tc, folder, &package, &scratch))
+        .unwrap();
+    for (path, bytes) in out.files {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+    Playground {
+        id,
+        name: PLAYGROUND_NAME.into(),
+        language: LanguageId::new(tc.plugin.id.as_str()),
+        kind: KindId::new(kind.id.clone()),
+        main_file: dir.join(&tc.plugin.main_path),
+        dir,
+        created_ms: 0,
+        tags: Vec::new(),
+    }
 }
 
 /// Scaffold a playground of `kind` in `scratch`, optionally replace its main
@@ -137,37 +192,27 @@ pub async fn run_playground(
     kind: &str,
     source: Option<&str>,
 ) -> Output {
-    let kind = tc.plugin.kind(kind).unwrap();
-    let dir = scratch.join("library").join(&kind.id);
-    let files =
-        scaffold::playground_files(&tc.plugin, kind, PLAYGROUND_NAME, "2026-09-15").unwrap();
-    for (path, bytes) in files {
-        let path = dir.join(path);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, bytes).unwrap();
-    }
-    let main_file = dir.join(&tc.plugin.main_path);
-    if let Some(source) = source {
-        std::fs::write(&main_file, source).unwrap();
-    }
-    let playground = Playground {
-        id: PlaygroundId::new("01K0000000000000000000TEST"),
-        name: PLAYGROUND_NAME.into(),
-        language: LanguageId::new(tc.plugin.id.as_str()),
-        kind: KindId::new(kind.id.clone()),
-        main_file,
-        dir,
-        created_ms: 0,
-        tags: Vec::new(),
-    };
     let scratch_root = scratch.join("scratch");
+    let playground = scaffold_playground(tc, &scratch.join("library"), kind, kind, &scratch_root);
+    if let Some(source) = source {
+        std::fs::write(&playground.main_file, source).unwrap();
+    }
+    run_scaffolded(tc, &playground, &scratch_root).await
+}
+
+/// Run an existing playground to the end.
+pub async fn run_scaffolded(
+    tc: &Toolchain,
+    playground: &Playground,
+    scratch_root: &Path,
+) -> Output {
     let ctx = RunContext {
         resolver: &tc.resolver,
-        scratch_root: &scratch_root,
+        scratch_root,
         toolchain_program: &tc.program,
         toolchain_version: &tc.version,
     };
-    let spec = run_spec(&tc.plugin, &playground, &ctx).unwrap();
+    let spec = run_spec(&tc.plugin, playground, &ctx).unwrap();
 
     let mut handle = run(spec).unwrap();
     let mut decoder = OutputDecoder::new();

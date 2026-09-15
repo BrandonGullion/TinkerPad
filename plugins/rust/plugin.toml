@@ -1,0 +1,55 @@
+api = 1
+
+# Rust with Cargo. Each playground is a real crate. See README.md.
+
+[language]
+id = "rust"
+name = "Rust"
+extension = "rs"
+highlighter = "rust"
+main_path = "src/main.rs"
+
+[toolchain]
+# Edition 2024 needs Rust 1.85.
+probe = [{ command = "cargo", args = ["--version"], min_version = "1.85" }]
+install_hint = "Install Rust with rustup: https://rustup.rs"
+
+[[kind]]
+id = "program"
+name = "Rust Program"
+template = "program.rs"
+default = true
+
+# Locked lines: main() dumps the one expression in between.
+[[kind]]
+id = "expression"
+name = "Rust Expression"
+template = "expression.rs"
+prelude = "fn main() {\n    tinkerpad::dump(&(\n"
+postlude = "\n    ));\n}\n"
+
+[scaffold]
+# Absolute paths are written at creation: the dump crate in this folder, and a
+# target folder shared by every Rust playground. Both are also recorded in
+# playground.toml under [plugin.rust].
+files = [
+  { path = "Cargo.toml", template = "Cargo.toml" },
+  { path = ".cargo/config.toml", template = "cargo-config.toml" },
+]
+
+[run]
+command = "{toolchain}"
+args = ["run", "--quiet"]
+cwd = "{dir}"
+# The output pane shows plain text.
+env = { CARGO_TERM_COLOR = "never" }
+
+[deps]
+kind = "command"
+add = ["cargo", "add", "{name}@{version}"]
+
+[output]
+# error[E0308]: mismatched types
+#  --> src/main.rs:3:9
+error_regex = '(?m)^(?<severity>error|warning)(?:\[[A-Z]\d+\])?: (?<message>.+)\n\s*--> (?<file>.+?):(?<line>\d+):(?<col>\d+)$'
+error_regex_multiline = true

@@ -1,0 +1,25 @@
+# Written by TinkerPad's Rust plugin. Safe to edit; `cargo add` works too.
+[package]
+name = "{{package}}"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# The dump library, from the Rust plugin folder. The path is also recorded in
+# playground.toml, in case the app moves and it needs repairing.
+tinkerpad = { path = "{{plugin_dir}}/dump" }
+
+# A playground is its own workspace, even inside another Rust project.
+[workspace]
+
+# Fast to build, with line tables so a debugger can still step (DEBUGGING.md D8).
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+
+# For inspecting variables in the debugger (Phase 6). Shares the target dir.
+[profile.tp-debug]
+inherits = "dev"
+debug = true

@@ -18,6 +18,8 @@ mod platform;
 mod slug;
 
 pub use error::LibraryError;
-pub use library::{DEBOUNCE, Library, LibraryEvent, Listing, NewPlayground, Watcher};
+pub use library::{
+    Claimed, DEBOUNCE, Library, LibraryEvent, Listing, NewPlayground, Scaffold, Watcher,
+};
 pub use meta::FILE_NAME as METADATA_FILE;
 pub use slug::slugify;

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# Plugin folders are shipped to users, not built with the app. The Rust
+# plugin's dump crate is built by each playground that uses it.
+exclude = ["plugins"]
 
 # Dependency direction (strictly downward; see docs/ARCHITECTURE.md §2):
 #

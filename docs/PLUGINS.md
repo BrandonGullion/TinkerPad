@@ -214,12 +214,27 @@ prelude). Plugin authors don't have to think about it at all.
 **How a new playground's files are made**
 
 - The main file is `prelude + template + postlude`, in that order.
-- In the template, `{{name}}` becomes the playground's display name and `{{date}}`
-  today's date in UTC (`2026-09-14`). Any other `{{…}}` is left as written.
+- Templates can use these variables. Any other `{{…}}` is left as written.
+
+  | Variable | Becomes |
+  |---|---|
+  | `{{name}}` | The display name. |
+  | `{{date}}` | Today's date in UTC, such as `2026-09-14`. |
+  | `{{folder}}` | The playground's folder name, such as `fizz-buzz-2`. |
+  | `{{package}}` | A package-manager-safe name. It is the folder name when that is lowercase ASCII starting with a letter, otherwise `playground-<id>`. It is unique in the library. |
+  | `{{plugin_dir}}` | The plugin folder, absolute. |
+  | `{{scratch}}` | The plugin's scratch folder, absolute. |
+
+- Paths are written with `/` separators, which work on Windows too and need no
+  escaping in TOML or JSON strings.
+- Absolute paths go stale if the app or its data folder moves. So when a playground's
+  files use `{{plugin_dir}}` or `{{scratch}}`, the values written are also recorded
+  in its `playground.toml` under `[plugin.<language id>]`, where a repair can find
+  them.
 - The prelude and postlude are written exactly as in the manifest, with no
   substitution. A playground can be renamed, and its locked lines must still
   match.
-- `[scaffold].files` templates get the same `{{name}}` and `{{date}}` treatment.
+- `[scaffold].files` templates get the same variables.
   A scaffold entry at the main file's path is ignored, and an existing file is
   never overwritten.
 - Templates are read from the plugin folder every time a playground is created, so
@@ -446,12 +461,19 @@ The template for each kind already imports the helper, so a new playground can c
 
 ### Rust (Phase 1)
 
-- **Layout:** each playground folder is a real crate. `[scaffold]` writes
-  `Cargo.toml` (with the `tinkerpad` dump crate as a path dependency) and
-  `.cargo/config.toml` setting `build.target-dir` to `{scratch}/target`, shared by
-  every Rust playground so dependencies compile once.
-- **Run:** `cargo run --quiet`, cwd `{dir}`. `[output].error_regex` turns rustc's
-  `--> src/main.rs:3:9` lines into clickable annotations.
+- **Layout:** each playground folder is a real crate with `src/main.rs`.
+  `[scaffold]` writes two files.
+  - `Cargo.toml` has package name `{{package}}`, edition 2024, and `serde`. It
+    adds the `tinkerpad` dump crate as a path dependency on
+    `{{plugin_dir}}/dump`, and an empty `[workspace]`.
+  - `.cargo/config.toml` sets `build.target-dir` to `{{scratch}}/target`, shared by
+    every Rust playground so dependencies compile once. Package names are unique,
+    so binaries in the shared folder don't collide.
+- **Profiles:** `dev` uses `opt-level = 0` and `debug = "line-tables-only"`.
+  `tp-debug` inherits from `dev` with `debug = true`, for Phase 6.
+- **Run:** `cargo run --quiet`, cwd `{dir}`, with `CARGO_TERM_COLOR=never`.
+  rustc prints the message on one line and ` --> src/main.rs:3:9` on the next.
+  So `[output].error_regex` spans both lines, with `error_regex_multiline = true`.
 - **Kinds:** `program` (default; template has `fn main()`), `expression` (locked
   `fn main() { tinkerpad::dump(&(` ... `)); }`).
 - **LSP:** one `rust-analyzer`, workspace `scratch_workspace`, `[lsp.register]` with

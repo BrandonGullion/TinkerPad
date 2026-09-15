@@ -79,9 +79,10 @@ pub fn to_command_error(error: LibraryError) -> CommandError {
     let code = match &error {
         LibraryError::NotFound(_) => ErrorCode::NotFound,
         LibraryError::InvalidName(_) => ErrorCode::InvalidInput,
-        LibraryError::Io { .. } | LibraryError::Trash { .. } | LibraryError::Watch(_) => {
-            ErrorCode::Io
-        }
+        LibraryError::Io { .. }
+        | LibraryError::Trash { .. }
+        | LibraryError::Watch(_)
+        | LibraryError::Scaffold(_) => ErrorCode::Io,
     };
     CommandError::new(code, error.to_string())
 }

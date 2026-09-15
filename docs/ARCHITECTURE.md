@@ -288,6 +288,9 @@ with a marker so a `dump(hugeList)` doesn't freeze the UI).
   kind = "statements"
   created = 2026-09-13T20:11:00Z
   tags = ["json", "experiments"]
+
+  [plugin.rust]              # optional; values a plugin wrote into its files
+  plugin_dir = "C:/Program Files/TinkerPad/plugins/rust"
   ```
 
 - The main file name is `main.<ext>` where the plugin declares `<ext>`. Deps manifests

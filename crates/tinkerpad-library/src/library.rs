@@ -55,6 +55,24 @@ pub struct NewPlayground {
     pub files: Vec<(PathBuf, Vec<u8>)>,
 }
 
+/// Where a new playground is being made, for [`Library::create_with`].
+#[derive(Debug)]
+pub struct Claimed<'a> {
+    /// The folder name chosen for it, such as `fizz-buzz-2`.
+    pub folder: &'a str,
+    pub dir: &'a Path,
+    pub id: &'a PlaygroundId,
+}
+
+/// Files and plugin metadata from [`Library::create_with`]'s callback.
+#[derive(Clone, Debug, Default)]
+pub struct Scaffold {
+    /// Relative to the playground folder.
+    pub files: Vec<(PathBuf, Vec<u8>)>,
+    /// Recorded in `playground.toml` under `[plugin.<language>]`.
+    pub plugin_meta: BTreeMap<String, String>,
+}
+
 /// Something that changed on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LibraryEvent {
@@ -183,6 +201,18 @@ impl Library {
 
     /// Create a playground folder with its metadata and files.
     pub fn create(&self, new: NewPlayground) -> Result<Playground, LibraryError> {
+        self.create_with(new, |_| Ok(Scaffold::default()))
+    }
+
+    /// Like [`Library::create`], with more files (and plugin metadata) made
+    /// by `scaffold` once the folder name and id are known, for templates that
+    /// need them. `new.files` are written first; `scaffold`'s files after, so
+    /// they win on the same path.
+    pub fn create_with(
+        &self,
+        new: NewPlayground,
+        scaffold: impl FnOnce(&Claimed<'_>) -> Result<Scaffold, String>,
+    ) -> Result<Playground, LibraryError> {
         let name = new.name.trim();
         if name.is_empty() {
             return Err(LibraryError::InvalidName(
@@ -215,9 +245,24 @@ impl Library {
             }
         };
 
+        let id = meta::new_id();
         let result = (|| {
+            let folder = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let extra = scaffold(&Claimed {
+                folder: &folder,
+                dir: &dir,
+                id: &id,
+            })
+            .map_err(LibraryError::Scaffold)?;
+            let mut files = new.files.clone();
+            files.retain(|(path, _)| !extra.files.iter().any(|(p, _)| p == path));
+            files.extend(extra.files);
+
             let mut wrote_main = false;
-            for (rel, bytes) in &new.files {
+            for (rel, bytes) in &files {
                 let rel_str = rel.to_string_lossy();
                 let rel = meta::safe_relative(&rel_str).ok_or_else(|| {
                     LibraryError::InvalidName(format!("file `{rel_str}` must be a relative path"))
@@ -230,7 +275,7 @@ impl Library {
             }
 
             let playground = Playground {
-                id: meta::new_id(),
+                id: id.clone(),
                 name: name.to_owned(),
                 language: new.language.clone(),
                 kind: new.kind.clone(),
@@ -242,7 +287,16 @@ impl Library {
                 tags: Vec::new(),
             };
             // Metadata last, so a watcher never sees a half-made playground.
-            meta::write(&playground).map_err(|e| LibraryError::io(&dir, e))?;
+            let mut plugin = toml::Table::new();
+            if !extra.plugin_meta.is_empty() {
+                let table: toml::Table = extra
+                    .plugin_meta
+                    .into_iter()
+                    .map(|(k, v)| (k, toml::Value::String(v)))
+                    .collect();
+                plugin.insert(new.language.to_string(), toml::Value::Table(table));
+            }
+            meta::write_with(&playground, plugin).map_err(|e| LibraryError::io(&dir, e))?;
             Ok(playground)
         })();
 

@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use tinkerpad_core::KindId;
-use tinkerpad_library::{Library, NewPlayground};
-use tinkerpad_plugin::scaffold::{self, Locked};
+use tinkerpad_library::{Library, NewPlayground, Scaffold};
+use tinkerpad_plugin::scaffold::{self, Locked, ScaffoldVars};
 use tinkerpad_plugin::{Os, Plugin};
 
 fn fixture(name: &str) -> Plugin {
@@ -33,17 +33,46 @@ impl Drop for Scratch {
     }
 }
 
+const SCRATCH: &str = "/scratch/test";
+
+/// The variables the app would give `p`'s templates.
+fn vars_for<'a>(
+    plugin: &'a Plugin,
+    name: &'a str,
+    folder: &'a str,
+    package: &'a str,
+) -> ScaffoldVars<'a> {
+    ScaffoldVars {
+        name,
+        date: "2026-09-14",
+        folder,
+        package,
+        plugin_dir: &plugin.dir,
+        scratch: Path::new(SCRATCH),
+    }
+}
+
 /// Create a playground of `kind` exactly as the app does.
 fn create(lib: &Library, plugin: &Plugin, kind: &str, name: &str) -> tinkerpad_core::Playground {
     let kind = plugin.kind(kind).unwrap();
-    let files = scaffold::playground_files(plugin, kind, name, "2026-09-14").unwrap();
-    lib.create(NewPlayground {
-        name: name.into(),
-        language: plugin.id.clone(),
-        kind: KindId::new(kind.id.clone()),
-        main_path: plugin.main_path.clone(),
-        files,
-    })
+    lib.create_with(
+        NewPlayground {
+            name: name.into(),
+            language: plugin.id.clone(),
+            kind: KindId::new(kind.id.clone()),
+            main_path: plugin.main_path.clone(),
+            files: Vec::new(),
+        },
+        |claimed| {
+            let package = scaffold::package_name(claimed.folder, claimed.id.as_str());
+            let vars = vars_for(plugin, name, claimed.folder, &package);
+            let out = scaffold::playground_files(plugin, kind, &vars).map_err(|e| e.to_string())?;
+            Ok(Scaffold {
+                files: out.files,
+                plugin_meta: out.paths,
+            })
+        },
+    )
     .unwrap()
 }
 
@@ -64,10 +93,12 @@ fn every_kind_of_every_test_plugin() {
             let text = std::fs::read_to_string(&p.main_file).unwrap();
 
             let template = std::fs::read_to_string(&kind.template).unwrap();
+            let folder = p.dir.file_name().unwrap().to_string_lossy().into_owned();
+            let package = scaffold::package_name(&folder, p.id.as_str());
             let expected = format!(
                 "{}{}{}",
                 kind.prelude.as_deref().unwrap_or(""),
-                scaffold::render(&template, &p.name, "2026-09-14"),
+                scaffold::render(&template, &vars_for(&plugin, &p.name, &folder, &package)),
                 kind.postlude.as_deref().unwrap_or("")
             );
             assert_eq!(text, expected, "{plugin_name}/{}", kind.id);
