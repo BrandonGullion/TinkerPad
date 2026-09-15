@@ -33,7 +33,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [01-02 Plugin discovery](phase-1-plugins/01-02-plugin-discovery.md) · S
 - [x] [01-03 Toolchain probing](phase-1-plugins/01-03-toolchain-probing.md) · S · 3 open criteria
 - [x] [01-04 Playground library on disk](phase-1-plugins/01-04-playground-library.md) · M · 1 open criterion
-- [ ] [01-05 Kinds, templates, scaffold, locked lines](phase-1-plugins/01-05-kinds-and-scaffold.md) · M
+- [x] [01-05 Kinds, templates, scaffold, locked lines](phase-1-plugins/01-05-kinds-and-scaffold.md) · M
 - [ ] [01-06 Per-run runner from manifest](phase-1-plugins/01-06-per-run-runner.md) · S
 - [ ] [01-07 Dump sentinel parser](phase-1-plugins/01-07-dump-parser.md) · M
 - [ ] [01-08 Dump renderers in the UI](phase-1-plugins/01-08-dump-renderers.md) · L

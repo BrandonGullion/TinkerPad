@@ -125,7 +125,7 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,library,library-trash
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,library,library-trash,locked
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -135,11 +135,12 @@ jobs:
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
+          grep -q "selftest: PASS select-all + delete leaves the locked lines" launch.log
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,library,library-trash
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,library,library-trash,locked
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -149,3 +150,4 @@ jobs:
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
+          grep -q "selftest: PASS select-all + delete leaves the locked lines" launch.log

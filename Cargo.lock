@@ -3993,6 +3993,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tinkerpad-core",
+ "tinkerpad-library",
  "tinkerpad-process",
  "tokio",
  "toml 0.8.23",

@@ -269,3 +269,9 @@ body {
   color: var(--fg);
   text-decoration: underline;
 }
+
+.status-note {
+  color: var(--warning);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

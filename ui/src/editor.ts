@@ -80,9 +80,9 @@ export class Editor {
     this.view = new EditorView({ parent, state: this.createState(doc) });
   }
 
-  /** A fresh state with the editor's standard extensions. */
-  createState(doc: string): EditorState {
-    return EditorState.create({ doc, extensions: this.base });
+  /** A fresh state with the editor's standard extensions, plus `extra`. */
+  createState(doc: string, extra: Extension = []): EditorState {
+    return EditorState.create({ doc, extensions: [this.base, extra] });
   }
 
   /** Swap in another state (another tab's document). */

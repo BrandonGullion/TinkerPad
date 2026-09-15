@@ -325,3 +325,27 @@ fn delete_moves_to_trash() {
     assert!(lib.get(&p.id).is_none());
     assert!(lib.delete(&p.id).is_err(), "already gone");
 }
+
+#[test]
+fn scaffolding_never_overwrites_and_first_entry_wins() {
+    let s = Scratch::new("no-overwrite");
+    let lib = Library::open(&s.0).unwrap();
+    let p = lib
+        .create(NewPlayground {
+            files: vec![
+                ("main.cs".into(), b"from the template\n".to_vec()),
+                ("main.cs".into(), b"from a scaffold entry\n".to_vec()),
+                ("sub/a.txt".into(), b"a\n".to_vec()),
+            ],
+            ..new("Twice")
+        })
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&p.main_file).unwrap(),
+        "from the template\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(p.dir.join("sub/a.txt")).unwrap(),
+        "a\n"
+    );
+}

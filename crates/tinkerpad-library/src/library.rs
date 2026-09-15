@@ -510,11 +510,26 @@ fn load_folder(index: &mut Index, dir: &Path) {
     }
 }
 
+/// Write a file only if nothing is there yet. An existing file is left alone,
+/// so scaffolding never clobbers a user's work (and the first of two entries
+/// for the same path wins).
 fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), LibraryError> {
+    use std::io::Write;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| LibraryError::io(parent, e))?;
     }
-    std::fs::write(path, bytes).map_err(|e| LibraryError::io(path, e))
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => file.write_all(bytes).map_err(|e| LibraryError::io(path, e)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            debug!(file = %path.display(), "exists; not overwritten");
+            Ok(())
+        }
+        Err(e) => Err(LibraryError::io(path, e)),
+    }
 }
 
 fn modified_ms(p: &Playground) -> u64 {

@@ -18,6 +18,15 @@ name = "Script"
 template = "main.js"
 default = true
 
+# Locked lines: the prelude and postlude are part of the file and read-only in
+# the editor. The self-tests use this kind to exercise locking.
+[[kind]]
+id = "expression"
+name = "Expression"
+template = "expression.js"
+prelude = "console.log(\n"
+postlude = "\n);\n"
+
 [run]
 command = "{toolchain}"
 args = ["{main}"]

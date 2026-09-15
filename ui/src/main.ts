@@ -68,4 +68,4 @@ subscribe((env) => {
 
 await ready();
 await invoke("ping");
-await maybeRunSelftest({ editor, output, runs });
+await maybeRunSelftest({ editor, output, runs, status: statusBar });

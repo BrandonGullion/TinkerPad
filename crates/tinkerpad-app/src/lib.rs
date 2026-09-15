@@ -11,6 +11,7 @@
 pub mod events;
 mod library;
 mod logging;
+mod playgrounds;
 mod plugins;
 mod runs;
 mod settings;
@@ -110,8 +111,9 @@ mod commands {
     }
 
     /// Create a playground for a loaded plugin. `kind` defaults to the
-    /// plugin's default kind. The main file starts empty; templates and
-    /// scaffold files arrive with work item 01-05.
+    /// plugin's default kind. The main file is the kind's prelude, template
+    /// (with `{{name}}` and `{{date}}` filled in), and postlude; the plugin's
+    /// scaffold files are written alongside it.
     #[tauri::command(async)]
     pub fn create_playground(
         state: State<'_, AppState>,
@@ -141,6 +143,9 @@ mod commands {
             })?,
             None => plugin.default_kind(),
         };
+        use tinkerpad_plugin::scaffold;
+        let files = scaffold::playground_files(&plugin, kind, name.trim(), &scaffold::today_utc())
+            .map_err(|e| CommandError::new(ErrorCode::Io, e.to_string()))?;
         state
             .library
             .create(tinkerpad_library::NewPlayground {
@@ -148,9 +153,18 @@ mod commands {
                 language: plugin.id.clone(),
                 kind: KindId::new(kind.id.clone()),
                 main_path: plugin.main_path.clone(),
-                files: Vec::new(),
+                files,
             })
             .map_err(crate::library::to_command_error)
+    }
+
+    /// A playground's source and which of its lines are locked.
+    #[tauri::command(async)]
+    pub fn open_playground(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+    ) -> Result<crate::playgrounds::OpenedPlayground, CommandError> {
+        crate::playgrounds::open(&state, &id)
     }
 
     /// Rename a playground; its folder follows the new name.
@@ -318,6 +332,7 @@ pub fn run() {
             commands::recheck_toolchains,
             commands::list_playgrounds,
             commands::create_playground,
+            commands::open_playground,
             commands::rename_playground,
             commands::delete_playground,
             commands::read_source,
