@@ -20,7 +20,14 @@ function save(key: string, value: string): void {
 }
 
 export interface Layout {
+  /** The playground tabs. */
+  tabStrip: HTMLElement;
+  /** A bar shown above the editor when a tab needs a decision. */
+  conflictBar: HTMLElement;
+  /** Where CodeMirror mounts. */
   editorHost: HTMLElement;
+  /** Shown over the editor when no tab is open. */
+  emptyState: HTMLElement;
   panelHost: HTMLElement;
   statusBar: StatusBar;
 }
@@ -29,8 +36,22 @@ export function createLayout(root: HTMLElement): Layout {
   const workspace = document.createElement("main");
   workspace.className = "workspace";
 
+  const editorPane = document.createElement("div");
+  editorPane.className = "editor-pane";
+  const tabStrip = document.createElement("div");
+  tabStrip.className = "tab-strip";
+  tabStrip.setAttribute("role", "tablist");
+  const conflictBar = document.createElement("div");
+  conflictBar.className = "conflict-bar";
+  conflictBar.setAttribute("role", "alert");
+  conflictBar.hidden = true;
   const editorHost = document.createElement("div");
   editorHost.className = "editor-host";
+  const emptyState = document.createElement("div");
+  emptyState.className = "empty-state";
+  emptyState.hidden = true;
+  editorHost.append(emptyState);
+  editorPane.append(tabStrip, conflictBar, editorHost);
 
   const splitter = document.createElement("div");
   splitter.className = "splitter";
@@ -40,7 +61,7 @@ export function createLayout(root: HTMLElement): Layout {
   const panelHost = document.createElement("div");
   panelHost.className = "panel-host";
 
-  workspace.append(editorHost, splitter, panelHost);
+  workspace.append(editorPane, splitter, panelHost);
   const statusBar = new StatusBar();
   root.replaceChildren(workspace, statusBar.element);
 
@@ -73,7 +94,7 @@ export function createLayout(root: HTMLElement): Layout {
     splitter.addEventListener("pointerup", up, { once: true });
   });
 
-  return { editorHost, panelHost, statusBar };
+  return { tabStrip, conflictBar, editorHost, emptyState, panelHost, statusBar };
 }
 
 export type RunState =

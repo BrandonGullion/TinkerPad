@@ -93,6 +93,15 @@ pub struct PluginSummary {
     pub extension: String,
     pub source: Source,
     pub dir: String,
+    pub kinds: Vec<KindSummary>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KindSummary {
+    pub id: String,
+    pub name: String,
+    pub default: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -118,6 +127,16 @@ impl PluginsStatus {
                     extension: e.plugin.extension.clone(),
                     source: e.source,
                     dir: e.plugin.dir.display().to_string(),
+                    kinds: e
+                        .plugin
+                        .kinds
+                        .iter()
+                        .map(|k| KindSummary {
+                            id: k.id.clone(),
+                            name: k.name.clone(),
+                            default: k.default,
+                        })
+                        .collect(),
                 })
                 .collect(),
             failures: r

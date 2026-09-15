@@ -92,14 +92,24 @@ export interface PluginsStatus {
   bundledDir: string | null;
   userDir: string;
   loadMs: number;
-  plugins: {
-    id: string;
-    name: string;
-    extension: string;
-    source: PluginSource;
-    dir: string;
-  }[];
+  plugins: PluginSummary[];
   failures: { dir: string; source: PluginSource; message: string }[];
+}
+
+export interface PluginSummary {
+  id: string;
+  name: string;
+  extension: string;
+  source: PluginSource;
+  dir: string;
+  kinds: { id: string; name: string; default: boolean }[];
+}
+
+/** `<app-data>/session.json`: the tabs to reopen at launch. */
+export interface Session {
+  tabs: { playground: string; scrollTop: number }[];
+  active: string | null;
+  lastLanguage: string | null;
 }
 
 export interface Playground {

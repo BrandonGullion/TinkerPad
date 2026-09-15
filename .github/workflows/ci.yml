@@ -134,7 +134,7 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -150,11 +150,25 @@ jobs:
           grep -q "selftest: PASS the template.s dump renders a table" launch.log
           grep -q "selftest: PASS the template.s .Dump() renders a table" launch.log
           grep -q "selftest: PASS a second playground builds and runs" launch.log
+          grep -q "selftest: PASS Mod+N creates an Untitled playground" launch.log
+          grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
+
+      - name: Session restore across two launches (Linux)
+        if: runner.os == 'Linux'
+        env:
+          TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
+          TINKERPAD_LIBRARY: ${{ runner.temp }}/session-library
+          TINKERPAD_SESSION: ${{ runner.temp }}/session.json
+        run: |
+          set -o pipefail
+          TINKERPAD_SELFTEST=session-prepare xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee prepare.log
+          TINKERPAD_SELFTEST=session-restore xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee restore.log
+          grep -q "selftest: PASS the last session.s tabs reopen at launch" restore.log
 
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -170,3 +184,17 @@ jobs:
           grep -q "selftest: PASS the template.s dump renders a table" launch.log
           grep -q "selftest: PASS the template.s .Dump() renders a table" launch.log
           grep -q "selftest: PASS a second playground builds and runs" launch.log
+          grep -q "selftest: PASS Mod+N creates an Untitled playground" launch.log
+          grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
+
+      - name: Session restore across two launches (macOS)
+        if: runner.os == 'macOS'
+        env:
+          TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
+          TINKERPAD_LIBRARY: ${{ runner.temp }}/session-library
+          TINKERPAD_SESSION: ${{ runner.temp }}/session.json
+        run: |
+          set -o pipefail
+          TINKERPAD_SELFTEST=session-prepare bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee prepare.log
+          TINKERPAD_SELFTEST=session-restore bash scripts/smoke-launch.sh target/debug/tinkerpad 120 | tee restore.log
+          grep -q "selftest: PASS the last session.s tabs reopen at launch" restore.log

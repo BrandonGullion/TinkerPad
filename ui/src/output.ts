@@ -99,6 +99,11 @@ export class OutputPane {
     this.jump.hidden = true;
   }
 
+  /** The pane was put back on screen: stay pinned to the bottom if it was. */
+  attached(): void {
+    if (this.stick) this.scrollToBottom();
+  }
+
   /** Resolves after pending appends have reached the DOM. */
   flushed(): Promise<void> {
     return new Promise((resolve) =>

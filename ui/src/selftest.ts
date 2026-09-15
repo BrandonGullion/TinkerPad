@@ -18,14 +18,19 @@ import { invoke, subscribe } from "./ipc";
 import type { StatusBar } from "./layout";
 import { LOCKED_HINT, MISMATCH_NOTE, openPlayground } from "./playground";
 import type { OutputPane } from "./output";
-import type { LanguageToolchain, Listing, Playground, PluginsStatus, RunEvent } from "./protocol";
+import type { LanguageToolchain, Listing, Playground, PluginsStatus, RunEvent, Session } from "./protocol";
 import type { RunController } from "./run";
+import type { TabManager } from "./tabs";
 
 export interface SelftestContext {
   editor: Editor;
-  output: OutputPane;
+  /** The active tab's output pane. */
+  readonly output: OutputPane;
   runs: RunController;
   status: StatusBar;
+  tabs: TabManager;
+  /** The app's global shortcut handler, for pressing keys without the OS. */
+  handleGlobalKey: (e: KeyboardEvent) => boolean;
 }
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -77,10 +82,10 @@ export async function maybeRunSelftest(ctx: SelftestContext): Promise<void> {
 type Check = (name: string, ok: boolean, detail?: string) => Promise<void>;
 
 async function layoutScenario(ctx: SelftestContext, check: Check) {
-  const { editor, output, runs } = ctx;
+  const { editor, runs } = ctx;
   await openTestPlayground(ctx, "Layout Test");
   const view = editor.view;
-  const outText = () => output.element.querySelector(".output-body")?.textContent ?? "";
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
 
   // Typing into the editor.
   view.dispatch({ changes: { from: view.state.doc.length, insert: "const x = [1, 2, 3];\n" } });
@@ -91,7 +96,7 @@ async function layoutScenario(ctx: SelftestContext, check: Check) {
   const handled = runScopeHandlers(view, key("Enter", { mod: true }), "editor");
   await check("Mod+Enter handled by keymap", handled);
   await end;
-  await output.flushed();
+  await ctx.output.flushed();
 
   // Mod+L clears output (overriding CodeMirror's select-line).
   runScopeHandlers(view, key("l", { mod: true }), "editor");
@@ -104,28 +109,28 @@ async function layoutScenario(ctx: SelftestContext, check: Check) {
   for (let chunk = 0; chunk < 1000; chunk++) {
     let text = "";
     for (let i = 0; i < 10; i++) text += `line ${++n} of 10000\n`;
-    output.append(chunk % 7 === 0 ? "stderr" : "stdout", text);
+    ctx.output.append(chunk % 7 === 0 ? "stderr" : "stdout", text);
   }
-  await output.flushed();
+  await ctx.output.flushed();
   const ms = performance.now() - start;
   // Timing is informational: CI renders in software and would be flaky.
   await report(`INFO 10k lines in 1k chunks rendered in ${ms.toFixed(1)} ms`);
   await check(
     "stderr styled separately",
-    output.element.querySelector(".out-stderr") !== null &&
-      output.element.querySelector(".out-stdout") !== null,
+    ctx.output.element.querySelector(".out-stderr") !== null &&
+      ctx.output.element.querySelector(".out-stdout") !== null,
   );
 
   // Auto-scroll sticks to the bottom while at the bottom.
-  const el = output.element;
+  const el = ctx.output.element;
   const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight <= 4;
   await check("auto-scrolls while at bottom", atBottom());
 
   // Scrolling up stops auto-scroll and shows the jump button.
   el.scrollTop = 0;
   el.dispatchEvent(new Event("scroll"));
-  output.append("stdout", "more\n");
-  await output.flushed();
+  ctx.output.append("stdout", "more\n");
+  await ctx.output.flushed();
   const jump = el.querySelector<HTMLButtonElement>(".output-jump")!;
   await check("scrolled up stays put", el.scrollTop === 0 && !jump.hidden);
 
@@ -137,8 +142,8 @@ async function layoutScenario(ctx: SelftestContext, check: Check) {
   // Line cap: push past 20,000 lines and expect a trimmed notice.
   let big = "";
   for (let i = 0; i < 15_000; i++) big += "x\n";
-  output.append("stdout", big);
-  await output.flushed();
+  ctx.output.append("stdout", big);
+  await ctx.output.flushed();
   const notice = el.querySelector<HTMLElement>(".output-trimmed")!;
   await check("caps DOM lines", !notice.hidden, notice.textContent ?? "");
 
@@ -186,16 +191,16 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
 }
 
 async function runScenario(ctx: SelftestContext, check: Check) {
-  const { output, runs, editor } = ctx;
+  const { runs, editor } = ctx;
   const main = await openTestPlayground(ctx, "Run Test");
-  const outText = () => output.element.querySelector(".output-body")?.textContent ?? "";
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
   const status = () => document.querySelector(".status-run")?.textContent ?? "";
 
   // console.log(1) end to end.
   let end = runs.waitForEnd();
   runCode(ctx, "console.log(1)\n");
   let outcome = await withTimeout(end, 15_000, "console.log(1)");
-  await output.flushed();
+  await ctx.output.flushed();
   await check(
     "console.log(1) prints 1 and exits 0",
     outcome.kind === "exited" && outcome.code === 0 && outText() === "1\n",
@@ -214,12 +219,12 @@ async function runScenario(ctx: SelftestContext, check: Check) {
   end = runs.waitForEnd();
   runCode(ctx, 'console.error("oops"); process.exit(2)\n');
   outcome = await withTimeout(end, 15_000, "exit 2");
-  await output.flushed();
+  await ctx.output.flushed();
   await check(
     "stderr shown and non-zero exit reported",
     outcome.kind === "exited" &&
       outcome.code === 2 &&
-      (output.element.querySelector(".out-stderr")?.textContent ?? "").includes("oops") &&
+      (ctx.output.element.querySelector(".out-stderr")?.textContent ?? "").includes("oops") &&
       status().startsWith("Exit 2"),
     JSON.stringify({ outcome, status: status() }),
   );
@@ -228,7 +233,7 @@ async function runScenario(ctx: SelftestContext, check: Check) {
   end = runs.waitForEnd();
   runCode(ctx, 'console.log("héllo wörld → 日本 🎉")\n');
   await withTimeout(end, 15_000, "utf8");
-  await output.flushed();
+  await ctx.output.flushed();
   await check("UTF-8 output intact", outText() === "héllo wörld → 日本 🎉\n", outText());
 
   // An infinite loop can be cancelled with Mod+.
@@ -253,7 +258,7 @@ async function runScenario(ctx: SelftestContext, check: Check) {
   runCode(ctx, 'console.log("B")\n');
   outcome = await withTimeout(end, 15_000, "run while running");
   await sleep(200); // give any stray "A" a chance to show up
-  await output.flushed();
+  await ctx.output.flushed();
   await check(
     "run while running replaces the old run cleanly",
     outcome.kind === "exited" && outText() === "B\n",
@@ -329,7 +334,7 @@ console.log("end");
 `;
 
 async function dumpScenario(ctx: SelftestContext, check: Check) {
-  const { output, runs } = ctx;
+  const { runs } = ctx;
   await openTestPlayground(ctx, "Dump Test");
   const seen: { scope: string; event: RunEvent }[] = [];
   const unsubscribe = subscribe(({ scope, event }) => {
@@ -340,7 +345,7 @@ async function dumpScenario(ctx: SelftestContext, check: Check) {
   const end = runs.waitForEnd();
   runCode(ctx, DUMP_PROGRAM);
   const outcome = await withTimeout(end, 15_000, "dump program");
-  await output.flushed();
+  await ctx.output.flushed();
   unsubscribe();
 
   const scope = seen.filter((s) => s.event.kind === "exited").at(-1)?.scope;
@@ -406,7 +411,7 @@ async function dumpScenario(ctx: SelftestContext, check: Check) {
   await check("ST-terminated dump parses", text?.kind === "text" && text.text === "st", JSON.stringify(text));
 
   // The pane shows them as blocks, in order with the text.
-  const body = output.element.querySelector(".output-body")!;
+  const body = ctx.output.element.querySelector(".output-body")!;
   const blocks = [...body.children].map((c) =>
     c.classList.contains("dump") ? `dump:${(c as HTMLElement).dataset.kind}` : (c as HTMLElement).dataset.stream,
   );
@@ -798,9 +803,8 @@ async function dumpRenderScenario(ctx: SelftestContext, check: Check) {
 
 /** The bundled TypeScript plugin, end to end in the app (01-09). */
 async function typescriptScenario(ctx: SelftestContext, check: Check) {
-  const { output, runs, editor, status } = ctx;
-  const pane = output.element;
-  const outText = () => pane.querySelector(".output-body")?.textContent ?? "";
+  const { runs, editor, status } = ctx;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
 
   const plugins = await invoke<PluginsStatus>("list_plugins");
   const ts = plugins.plugins.find((p) => p.id === "typescript");
@@ -830,7 +834,7 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
     runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
     let ms: number | null = null;
     while (performance.now() - start < 15_000) {
-      const table = pane.querySelector<HTMLElement>(".dump-kind-table");
+      const table = ctx.output.element.querySelector<HTMLElement>(".dump-kind-table");
       if (table && table.getClientRects().length > 0) {
         ms = performance.now() - start;
         break;
@@ -842,8 +846,8 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
     return { ms, outcome };
   };
   const first = await tableVisible("TypeScript first run");
-  await output.flushed();
-  const table = pane.querySelector(".dump-kind-table");
+  await ctx.output.flushed();
+  const table = ctx.output.element.querySelector(".dump-kind-table");
   await check(
     "the template's dump renders a table",
     first.ms !== null &&
@@ -851,7 +855,7 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
       first.outcome.code === 0 &&
       table?.querySelector(".dump-title")?.textContent === "people" &&
       table.querySelectorAll("tbody tr").length === 2 &&
-      !pane.querySelector(".out-stderr"),
+      !ctx.output.element.querySelector(".out-stderr"),
     JSON.stringify({ outcome: first.outcome, text: outText().slice(0, 200) }),
   );
   await tableVisible("TypeScript warm run");
@@ -859,7 +863,7 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
   const end = runs.waitForEnd();
   runCode(ctx, 'const who: string = "world";\nconsole.log(`Hello, ${who}!`);\n');
   const hello = await withTimeout(end, 15_000, "hello world");
-  await output.flushed();
+  await ctx.output.flushed();
   await check(
     "hello world prints",
     hello.kind === "exited" && hello.code === 0 && outText() === "Hello, world!\n",
@@ -875,12 +879,12 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
   const programEnd = runs.waitForEnd();
   runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
   const programOutcome = await withTimeout(programEnd, 15_000, "program template");
-  await output.flushed();
+  await ctx.output.flushed();
   await check(
     "the program template prints and dumps",
     programOutcome.kind === "exited" &&
       outText().startsWith("Hello from TS Program Test\n") &&
-      pane.querySelector(".dump-kind-tree") !== null,
+      ctx.output.element.querySelector(".dump-kind-tree") !== null,
     JSON.stringify({ programOutcome, out: outText().slice(0, 120) }),
   );
 
@@ -906,7 +910,7 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
     ].join("\n"),
   );
   await withTimeout(last, 15_000, "final run");
-  await output.flushed();
+  await ctx.output.flushed();
 }
 
 /** A language's toolchain state once its check has finished (or 10 s passed). */
@@ -957,9 +961,8 @@ async function runUntilVisible(
 
 /** The bundled C# plugin, end to end in the app (01-10). */
 async function csharpScenario(ctx: SelftestContext, check: Check) {
-  const { output, editor, status } = ctx;
-  const pane = output.element;
-  const outText = () => (pane.querySelector(".output-body")?.textContent ?? "").replaceAll("\r\n", "\n");
+  const { editor, status } = ctx;
+  const outText = () => (ctx.output.element.querySelector(".output-body")?.textContent ?? "").replaceAll("\r\n", "\n");
   // A cold first build (restore, compiler start) can take a while on CI.
   const LONG = 180_000;
 
@@ -978,7 +981,7 @@ async function csharpScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify(editor.text.slice(0, 120)),
   );
 
-  const table = () => pane.querySelector(".dump-kind-table");
+  const table = () => ctx.output.element.querySelector(".dump-kind-table");
   const first = await runUntilVisible(ctx, ".dump-kind-table", "C# first run of a new playground", LONG);
   await check(
     "the template's .Dump() renders a table",
@@ -987,7 +990,7 @@ async function csharpScenario(ctx: SelftestContext, check: Check) {
       first.outcome.code === 0 &&
       table()?.querySelector(".dump-title")?.textContent === "people" &&
       table()?.querySelectorAll("tbody tr").length === 2 &&
-      !pane.querySelector(".out-stderr"),
+      !ctx.output.element.querySelector(".out-stderr"),
     JSON.stringify({ outcome: first.outcome, text: outText().slice(0, 300) }),
   );
   const second = await runUntilVisible(ctx, ".dump-kind-table", "C# second run, unchanged", LONG);
@@ -1005,7 +1008,7 @@ async function csharpScenario(ctx: SelftestContext, check: Check) {
     "UTF-8 text and a value dump after an edit",
     edited.outcome.kind === "exited" &&
       outText().startsWith("héllo 日本\n") &&
-      pane.querySelector(".dump-kind-value .j-num")?.textContent === "42",
+      ctx.output.element.querySelector(".dump-kind-value .j-num")?.textContent === "42",
     JSON.stringify(outText().slice(0, 120)),
   );
 
@@ -1080,9 +1083,8 @@ async function csharpScenario(ctx: SelftestContext, check: Check) {
 
 /** The bundled Rust plugin, end to end in the app (01-11). */
 async function rustScenario(ctx: SelftestContext, check: Check) {
-  const { output, editor, status } = ctx;
-  const pane = output.element;
-  const outText = () => (pane.querySelector(".output-body")?.textContent ?? "").replaceAll("\r\n", "\n");
+  const { editor, status } = ctx;
+  const outText = () => (ctx.output.element.querySelector(".output-body")?.textContent ?? "").replaceAll("\r\n", "\n");
   // A first build downloads and compiles serde; slow on CI.
   const LONG = 300_000;
 
@@ -1104,7 +1106,7 @@ async function rustScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify({ mainFile: created.mainFile, lock: opened.lock }),
   );
 
-  const table = () => pane.querySelector(".dump-kind-table");
+  const table = () => ctx.output.element.querySelector(".dump-kind-table");
   const first = await runUntilVisible(ctx, ".dump-kind-table", "Rust first run of a new playground", LONG);
   await check(
     "the template's dump renders a table",
@@ -1169,7 +1171,7 @@ async function rustScenario(ctx: SelftestContext, check: Check) {
   const expr = await runUntilVisible(ctx, ".dump-kind-tree", "Rust expression kind", LONG);
   await check(
     "the expression kind dumps its value",
-    expr.outcome.kind === "exited" && (pane.querySelector(".dump-kind-tree")?.textContent ?? "").includes("[10]"),
+    expr.outcome.kind === "exited" && (ctx.output.element.querySelector(".dump-kind-tree")?.textContent ?? "").includes("[10]"),
     JSON.stringify({ outcome: expr.outcome, text: outText().slice(0, 200) }),
   );
 
@@ -1207,6 +1209,330 @@ async function rustScenario(ctx: SelftestContext, check: Check) {
   await runUntilVisible(ctx, ".dump-kind-table", "Rust screenshot run", LONG);
 }
 
+/** A key press through the app's real document listeners. */
+function pressKey(k: string, mods: { mod?: boolean; shift?: boolean; ctrl?: boolean } = {}, target?: EventTarget): boolean {
+  const e = new KeyboardEvent("keydown", {
+    key: k,
+    bubbles: true,
+    cancelable: true,
+    ctrlKey: !!mods.ctrl || (!isMac && !!mods.mod),
+    metaKey: isMac && !!mods.mod,
+    shiftKey: !!mods.shift,
+  });
+  (target ?? document.activeElement ?? document.body).dispatchEvent(e);
+  return e.defaultPrevented;
+}
+
+/** Choose in the open picker: type `filter`, then Enter. */
+async function choosePicked(filter: string): Promise<boolean> {
+  if (!(await until(() => document.querySelector(".picker-input") !== null, 5000))) return false;
+  const input = document.querySelector<HTMLInputElement>(".picker-input")!;
+  input.value = filter;
+  input.dispatchEvent(new Event("input"));
+  const matched = document.querySelectorAll(".picker-item").length > 0;
+  pressKey("Enter", {}, input);
+  return matched;
+}
+
+/** Tabs, the new-playground flow, autosave, changes on disk, and the session (01-12). */
+async function tabsScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs, runs } = ctx;
+  const view = editor.view;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+  const activeEl = () => document.querySelector<HTMLElement>(".tab.active");
+  const tabEl = (id: string) => document.querySelector<HTMLElement>(`.tab[data-id="${id}"]`);
+  const empty = document.querySelector<HTMLElement>(".empty-state")!;
+  const visible = (el: Element | null | undefined) => !!el && el.getClientRects().length > 0;
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await check(
+    "closing the last tab shows the empty-state hint",
+    tabs.tabs.length === 0 &&
+      visible(empty) &&
+      /N for a new playground, .*O to open one/.test(empty.textContent ?? "") &&
+      document.querySelector(".tab") === null,
+    empty.textContent ?? "",
+  );
+
+  // Mod+N: last used language, default kind, "Untitled N", editor focused.
+  const first = await openTestPlayground(ctx, "Tabs First");
+  const before = tabs.tabs.length;
+  const handled = pressKey("n", { mod: true });
+  await until(() => tabs.tabs.length === before + 1 && tabs.activeId !== first.id, 10_000);
+  const created = tabs.activeTab!;
+  const summary = tabs.summary(created.id);
+  await frame();
+  await check(
+    "Mod+N creates an Untitled playground in the last used language, no prompts",
+    handled &&
+      /^Untitled \d+$/.test(summary?.name ?? "") &&
+      summary?.language === "node-check" &&
+      summary.kind === "script" &&
+      view.contentDOM.contains(document.activeElement) &&
+      document.querySelector(".picker") === null,
+    JSON.stringify({ handled, name: summary?.name, language: summary?.language, kind: summary?.kind }),
+  );
+  await check(
+    "the tab shows its name and language",
+    activeEl()?.querySelector(".tab-name")?.textContent === summary?.name &&
+      (activeEl()?.querySelector(".tab-lang")?.textContent ?? "") !== "",
+    activeEl()?.textContent ?? "",
+  );
+
+  // Dirty dot, then autosave.
+  view.dispatch({ changes: { from: view.state.doc.length, insert: "// typed\n" } });
+  const dirtyShown = activeEl()?.querySelector<HTMLElement>(".tab-dirty")?.hidden === false;
+  const typedAt = performance.now();
+  const saved = await until(() => !created.dirty, 5000);
+  const savedAfter = performance.now() - typedAt;
+  const onDisk = await invoke<string>("read_source", { id: created.id });
+  await report(`INFO autosave landed ${savedAfter.toFixed(0)} ms after the edit`);
+  await check(
+    "typing shows the dirty dot and autosave clears it about 500 ms later",
+    dirtyShown &&
+      saved &&
+      savedAfter >= 450 &&
+      activeEl()?.querySelector<HTMLElement>(".tab-dirty")?.hidden === true &&
+      onDisk === editor.text,
+    JSON.stringify({ dirtyShown, saved, savedAfter, same: onDisk === editor.text }),
+  );
+
+  // Each tab keeps its text, cursor, undo history, and scroll.
+  const longText = Array.from({ length: 300 }, (_, i) => `// line ${i + 1}`).join("\n") + "\n";
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: longText } });
+  const cursor = view.state.doc.line(150).from + 3;
+  view.dispatch({ selection: EditorSelection.cursor(cursor) });
+  await frame();
+  view.scrollDOM.scrollTop = 1500;
+  await frame();
+  const scrolled = view.scrollDOM.scrollTop;
+  tabEl(first.id)!.click();
+  await frame();
+  const showsFirst = tabs.activeId === first.id && !editor.text.startsWith("// line 1\n");
+  tabEl(created.id)!.click();
+  await frames(3);
+  await check(
+    "switching tabs keeps each tab's text, cursor, and scroll",
+    showsFirst &&
+      editor.text === longText &&
+      view.state.selection.main.head === cursor &&
+      Math.abs(view.scrollDOM.scrollTop - scrolled) < 5,
+    JSON.stringify({ showsFirst, head: view.state.selection.main.head, cursor, scroll: view.scrollDOM.scrollTop, scrolled }),
+  );
+  undo(view);
+  await check("undo history survives a tab switch", editor.text.endsWith("// typed\n"), JSON.stringify(editor.text.slice(-40)));
+
+  // Ctrl+Tab cycles (Ctrl on every platform).
+  const order = tabs.tabs.map((t) => t.id);
+  const at = order.indexOf(created.id);
+  pressKey("Tab", { ctrl: true });
+  const next = tabs.activeId;
+  pressKey("Tab", { ctrl: true, shift: true });
+  await check(
+    "Ctrl+Tab and Ctrl+Shift+Tab cycle tabs",
+    next === order[(at + 1) % order.length] && tabs.activeId === created.id,
+    JSON.stringify({ next, active: tabs.activeId, order }),
+  );
+
+  // Output and run state are per tab.
+  tabEl(first.id)!.click();
+  runCode(ctx, 'console.log("first out"); setInterval(() => {}, 1000);\n');
+  await until(() => outText().includes("first out"), 15_000);
+  tabEl(created.id)!.click();
+  await frame();
+  const firstRunning = tabEl(first.id)?.querySelector<HTMLElement>(".tab-running")?.hidden === false;
+  const statusHere = document.querySelector(".status-run")?.textContent ?? "";
+  const end = runs.waitForEnd();
+  runCode(ctx, 'console.log("second out")\n');
+  await withTimeout(end, 15_000, "second tab run");
+  await ctx.output.flushed();
+  const secondText = outText();
+  tabEl(first.id)!.click();
+  await ctx.output.flushed();
+  await check(
+    "each tab keeps its own output and run state",
+    firstRunning &&
+      !statusHere.startsWith("Running") &&
+      secondText === "second out\n" &&
+      outText().startsWith("first out") &&
+      (document.querySelector(".status-run")?.textContent ?? "").startsWith("Running"),
+    JSON.stringify({ firstRunning, statusHere, secondText, firstText: outText().slice(0, 40) }),
+  );
+  await runs.cancel();
+  await until(() => !runs.isRunning(first.id), 10_000);
+  await check("the running indicator clears when the run ends", tabEl(first.id)?.querySelector<HTMLElement>(".tab-running")?.hidden === true);
+
+  // Rename with F2 and with a double-click.
+  tabEl(created.id)!.click();
+  editor.focus();
+  pressKey("F2");
+  const renameInput = activeEl()?.querySelector<HTMLInputElement>(".tab-rename");
+  if (renameInput) {
+    renameInput.value = "Renamed Tab";
+    pressKey("Enter", {}, renameInput);
+  }
+  await until(() => activeEl()?.querySelector(".tab-name")?.textContent === "Renamed Tab", 5000);
+  const listing = await invoke<Listing>("list_playgrounds");
+  const renamed = listing.playgrounds.find((p) => p.id === created.id);
+  await check(
+    "F2 renames the playground and its folder",
+    !!renameInput && renamed?.name === "Renamed Tab" && /renamed-tab$/.test(renamed.dir),
+    JSON.stringify({ input: !!renameInput, name: renamed?.name, dir: renamed?.dir }),
+  );
+  tabEl(first.id)!.querySelector(".tab-name")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  const dblInput = tabEl(first.id)?.querySelector<HTMLInputElement>(".tab-rename");
+  if (dblInput) pressKey("Escape", {}, dblInput);
+  await check(
+    "double-clicking a tab name starts a rename; Escape cancels it",
+    !!dblInput && !tabEl(first.id)?.querySelector(".tab-rename") && tabs.summary(first.id)?.name === "Tabs First",
+  );
+
+  // Changed on disk: a clean tab reloads; a dirty one asks.
+  tabEl(created.id)!.click();
+  await invoke("selftest_touch_source", { id: created.id, text: "// changed outside\n" });
+  await check(
+    "a clean tab reloads silently when its file changes on disk",
+    (await until(() => editor.text === "// changed outside\n", 10_000)) &&
+      !visible(document.querySelector(".conflict-bar")) &&
+      !visible(empty),
+    JSON.stringify(editor.text.slice(0, 40)),
+  );
+  const bar = () => document.querySelector<HTMLElement>(".conflict-bar")!;
+  view.dispatch({ changes: { from: 0, insert: "// mine\n" } });
+  await invoke("selftest_touch_source", { id: created.id, text: "// theirs\n" });
+  const askedKeep = await until(() => visible(bar()), 10_000);
+  bar().querySelector<HTMLButtonElement>(".conflict-keep")!.click();
+  await until(() => bar().hidden && !created.dirty, 5000);
+  const kept = await invoke<string>("read_source", { id: created.id });
+  await check(
+    "a dirty tab asks, and Keep mine saves the tab's text",
+    askedKeep && !visible(bar()) && kept === "// mine\n// changed outside\n" && editor.text === kept,
+    JSON.stringify({ askedKeep, kept }),
+  );
+  view.dispatch({ changes: { from: 0, insert: "// mine again\n" } });
+  await invoke("selftest_touch_source", { id: created.id, text: "// theirs wins\n" });
+  const askedReload = await until(() => visible(bar()), 10_000);
+  bar().querySelector<HTMLButtonElement>(".conflict-reload")!.click();
+  await check(
+    "Reload replaces the tab's text with the file",
+    askedReload && (await until(() => editor.text === "// theirs wins\n", 5000)) && !created.dirty,
+    JSON.stringify(editor.text),
+  );
+
+  // New playground through the picker: language, then kind.
+  const beforePick = tabs.tabs.length;
+  pressKey("n", { mod: true, shift: true });
+  const pickedLanguage = await choosePicked("node check");
+  const pickedKind = await choosePicked("expression");
+  await until(() => tabs.tabs.length === beforePick + 1, 10_000);
+  const pickedSummary = tabs.activeId ? tabs.summary(tabs.activeId) : undefined;
+  await check(
+    "Mod+Shift+N picks a language, then a kind",
+    pickedLanguage && pickedKind && pickedSummary?.language === "node-check" && pickedSummary.kind === "expression",
+    JSON.stringify({ pickedLanguage, pickedKind, language: pickedSummary?.language, kind: pickedSummary?.kind }),
+  );
+
+  // Closing: Mod+W and middle-click.
+  const beforeClose = tabs.tabs.length;
+  const closing = tabs.activeId;
+  pressKey("w", { mod: true });
+  await until(() => tabs.tabs.length === beforeClose - 1, 5000);
+  const middle = tabs.tabs.find((t) => t.id !== created.id && t.id !== first.id);
+  middle?.element.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+  await until(() => tabs.tabs.length === beforeClose - (middle ? 2 : 1), 5000);
+  await check(
+    "Mod+W and middle-click close tabs",
+    !tabs.find(closing ?? "") && (!middle || !tabs.find(middle.id)),
+    JSON.stringify(tabs.tabs.map((t) => t.id)),
+  );
+
+  // The session follows the tabs.
+  tabEl(created.id)!.click();
+  await sleep(900);
+  const session = await invoke<Session>("load_session");
+  await check(
+    "the session file lists the open tabs and the active one",
+    JSON.stringify(session.tabs.map((t) => t.playground)) === JSON.stringify(tabs.tabs.map((t) => t.id)) &&
+      session.active === created.id &&
+      session.lastLanguage === "node-check",
+    JSON.stringify(session),
+  );
+
+  // Quick open from the empty state.
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  pressKey("o", { mod: true });
+  const opened = await choosePicked("Renamed Tab");
+  await until(() => tabs.activeId === created.id, 5000);
+  await check("Mod+O opens a playground by name", opened && tabs.activeId === created.id && empty.hidden === true);
+
+  // Restoring a session reopens its tabs, skips missing ones, and says so.
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const toastsBefore = document.querySelectorAll(".toast").length;
+  const restored = await tabs.restoreSession({
+    tabs: [
+      { playground: first.id, scrollTop: 0 },
+      { playground: "01ZZZZZZZZZZZZZZZZZZZZZZZZ", scrollTop: 0 },
+      { playground: created.id, scrollTop: 0 },
+    ],
+    active: created.id,
+    lastLanguage: "node-check",
+  });
+  await frame();
+  const warned = [...document.querySelectorAll(".toast")]
+    .slice(toastsBefore)
+    .some((t) => (t.textContent ?? "").includes("no longer in the library"));
+  await check(
+    "restoring a session reopens tabs and skips a missing playground with a toast",
+    restored.opened === 2 &&
+      restored.skipped === 1 &&
+      JSON.stringify(tabs.tabs.map((t) => t.id)) === JSON.stringify([first.id, created.id]) &&
+      tabs.activeId === created.id &&
+      warned,
+    JSON.stringify({ restored, warned }),
+  );
+}
+
+/**
+ * First of two launches: leave a session with two tabs and a scrolled active
+ * tab. `session-restore` checks the next launch reopens it.
+ */
+async function sessionPrepareScenario(ctx: SelftestContext, check: Check) {
+  const { tabs, editor } = ctx;
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const a = await openTestPlayground(ctx, "Session A");
+  const b = await openTestPlayground(ctx, "Session B");
+  editor.view.dispatch({
+    changes: { from: 0, to: editor.view.state.doc.length, insert: Array.from({ length: 300 }, (_, i) => `// ${i}`).join("\n") },
+  });
+  await tabs.save(tabs.find(b.id)!);
+  await frames(2);
+  editor.view.scrollDOM.scrollTop = 1200;
+  await frames(2);
+  await tabs.saveSession();
+  const session = await invoke<Session>("load_session");
+  await check(
+    "session saved for the next launch",
+    session.tabs.length === 2 && session.active === b.id && (session.tabs[1]?.scrollTop ?? 0) > 1000,
+    JSON.stringify(session),
+  );
+  await report(`INFO session tabs ${a.id} ${b.id}`);
+}
+
+/** Second launch: the tabs from `session-prepare` are back. */
+async function sessionRestoreScenario(ctx: SelftestContext, check: Check) {
+  const { tabs, editor } = ctx;
+  const session = await invoke<Session>("load_session");
+  await frames(3);
+  const names = tabs.tabs.map((t) => tabs.summary(t.id)?.name);
+  await check(
+    "the last session's tabs reopen at launch, with the active tab and its scroll",
+    JSON.stringify(names) === JSON.stringify(["Session A", "Session B"]) &&
+      tabs.activeId === session.active &&
+      Math.abs(editor.view.scrollDOM.scrollTop - (session.tabs[1]?.scrollTop ?? -1)) < 5,
+    JSON.stringify({ names, active: tabs.activeId, scroll: editor.view.scrollDOM.scrollTop, session }),
+  );
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -1226,6 +1552,9 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   typescript: typescriptScenario,
   csharp: csharpScenario,
   rust: rustScenario,
+  tabs: tabsScenario,
+  "session-prepare": sessionPrepareScenario,
+  "session-restore": sessionRestoreScenario,
   plugins: pluginsScenario,
   toolchains: toolchainsScenario,
   library: libraryScenario,
@@ -1427,7 +1756,7 @@ async function libraryTrashScenario(_ctx: SelftestContext, check: Check) {
  * node-check test plugin (its "expression" kind has a prelude and postlude)
  * and a throwaway TINKERPAD_LIBRARY.
  */
-async function lockedScenario({ editor, status }: SelftestContext, check: Check) {
+async function lockedScenario({ editor, status, tabs }: SelftestContext, check: Check) {
   const view = editor.view;
   const text = () => view.state.doc.toString();
   const note = () => document.querySelector(".status-note")?.textContent ?? "";
@@ -1508,18 +1837,20 @@ async function lockedScenario({ editor, status }: SelftestContext, check: Check)
   await check("undo restores the middle", text() === "console.log(\n40 + 2\n);\n", JSON.stringify(text()));
 
   // Saving writes exactly the editor's text; nothing is added or stripped.
-  await invoke("write_source", { id: expr.id, text: text() });
+  await tabs.save(tabs.find(expr.id)!);
   const onDisk = await invoke<string>("read_source", { id: expr.id });
   await check("file on disk is byte-identical to the editor", onDisk === text(), JSON.stringify(onDisk));
 
-  // Edited outside the wrapper: nothing is locked, and the status bar says why.
-  await invoke("write_source", { id: expr.id, text: "40 + 2\n" });
-  const mismatch = await openPlayground(editor, status, expr.id);
+  // Edited outside the app without the wrapper: the clean tab reloads, nothing
+  // is locked, and the status bar says why.
+  await invoke("selftest_touch_source", { id: expr.id, text: "40 + 2\n" });
+  await until(() => text() === "40 + 2\n", 10_000);
   await frame();
+  const mismatch = tabs.find(expr.id)?.opened.lock;
   await check(
     "a file without its wrapper opens unlocked",
-    mismatch.lock === "mismatch" && document.querySelectorAll(".cm-locked-line").length === 0,
-    mismatch.lock,
+    mismatch === "mismatch" && document.querySelectorAll(".cm-locked-line").length === 0,
+    `${mismatch} ${JSON.stringify(text())}`,
   );
   await check("the status bar explains why", noteShown() && note() === MISMATCH_NOTE, note());
   view.dispatch({ changes: { from: 0, insert: "// free to edit\n" }, userEvent: "input.type" });

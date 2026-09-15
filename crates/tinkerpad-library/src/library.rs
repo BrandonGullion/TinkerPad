@@ -391,15 +391,22 @@ impl Library {
         std::fs::read_to_string(&p.main_file).map_err(|e| LibraryError::io(&p.main_file, e))
     }
 
-    /// Replace a playground's main file atomically.
-    pub fn write_source(&self, id: &PlaygroundId, text: &str) -> Result<(), LibraryError> {
+    /// Replace a playground's main file atomically. Returns whether it was
+    /// written: a file that already holds exactly `text` is left alone, so its
+    /// modification time only changes when its content does (builds that key
+    /// off it, such as Cargo's and `dotnet run`'s, then skip their work).
+    pub fn write_source(&self, id: &PlaygroundId, text: &str) -> Result<bool, LibraryError> {
         let p = self.require(id)?;
+        if std::fs::read(&p.main_file).is_ok_and(|current| current == text.as_bytes()) {
+            return Ok(false);
+        }
         // Remember first: the watcher may see the rename before this returns.
         self.known_source
             .lock()
             .expect("known lock")
             .insert(p.main_file.clone(), hash_bytes(text.as_bytes()));
         fsutil::write_atomic(&p.main_file, text.as_bytes())
+            .map(|()| true)
             .map_err(|e| LibraryError::io(&p.main_file, e))
     }
 

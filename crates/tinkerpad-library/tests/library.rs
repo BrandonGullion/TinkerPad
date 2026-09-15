@@ -410,3 +410,25 @@ fn create_with_failure_leaves_nothing_behind() {
     assert!(!s.0.join("nope").exists());
     assert!(lib.list().playgrounds.is_empty());
 }
+
+#[test]
+fn writing_identical_source_leaves_the_file_alone() {
+    let s = Scratch::new("identical");
+    let lib = Library::open(&s.0).unwrap();
+    let p = lib.create(new("Same")).unwrap();
+
+    assert!(
+        lib.write_source(&p.id, "one\n").unwrap(),
+        "new text is written"
+    );
+    let before = std::fs::metadata(&p.main_file).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    assert!(
+        !lib.write_source(&p.id, "one\n").unwrap(),
+        "identical text isn't"
+    );
+    let after = std::fs::metadata(&p.main_file).unwrap().modified().unwrap();
+    assert_eq!(before, after, "modification time unchanged");
+    assert!(lib.write_source(&p.id, "two\n").unwrap());
+    assert_eq!(std::fs::read_to_string(&p.main_file).unwrap(), "two\n");
+}

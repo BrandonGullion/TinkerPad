@@ -14,6 +14,7 @@ mod logging;
 mod playgrounds;
 mod plugins;
 mod runs;
+mod session;
 mod settings;
 mod toolchains;
 
@@ -42,6 +43,8 @@ pub struct AppState {
     runs: Runs,
     /// `<app-data>`: settings, scratch folders, the user plugin folder.
     data_dir: PathBuf,
+    /// Where the open tabs are remembered (`session.rs`).
+    session_path: PathBuf,
     toolchains: Arc<Toolchains>,
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
@@ -225,13 +228,14 @@ mod commands {
             .map_err(crate::library::to_command_error)
     }
 
-    /// Replace a playground's main file atomically.
+    /// Replace a playground's main file atomically. Returns whether the file
+    /// changed: identical text leaves it (and its modification time) alone.
     #[tauri::command(async)]
     pub fn write_source(
         state: State<'_, AppState>,
         id: tinkerpad_core::PlaygroundId,
         text: String,
-    ) -> Result<(), CommandError> {
+    ) -> Result<bool, CommandError> {
         state
             .library
             .write_source(&id, &text)
@@ -303,6 +307,26 @@ mod commands {
         tinkerpad_core::dump::examples()
     }
 
+    /// The tabs open when the app last ran. Empty if there's no usable file.
+    #[tauri::command(async)]
+    pub fn load_session(state: State<'_, AppState>) -> crate::session::Session {
+        crate::session::load(&state.session_path)
+    }
+
+    /// Remember the open tabs for the next launch.
+    #[tauri::command(async)]
+    pub fn save_session(
+        state: State<'_, AppState>,
+        session: crate::session::Session,
+    ) -> Result<(), CommandError> {
+        crate::session::save(&state.session_path, &session).map_err(|e| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::Io,
+                format!("Couldn't save the open tabs: {e}"),
+            )
+        })
+    }
+
     /// Which in-app self-test scenarios to run, from `TINKERPAD_SELFTEST`
     /// (comma-separated). `None` in normal use. See `ui/src/selftest.ts`.
     #[tauri::command]
@@ -310,6 +334,29 @@ mod commands {
         std::env::var("TINKERPAD_SELFTEST")
             .ok()
             .filter(|s| !s.is_empty())
+    }
+
+    /// Self-tests only: change a playground's main file the way another program
+    /// would, bypassing the library, so the file watcher reports it.
+    #[tauri::command(async)]
+    pub fn selftest_touch_source(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+        text: String,
+    ) -> Result<(), CommandError> {
+        use tinkerpad_core::ErrorCode;
+        if selftest_scenario().is_none() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidInput,
+                "only available while self-testing",
+            ));
+        }
+        let playground = state
+            .library
+            .get(&id)
+            .ok_or_else(|| CommandError::new(ErrorCode::NotFound, format!("no playground {id}")))?;
+        std::fs::write(&playground.main_file, text)
+            .map_err(|e| CommandError::new(ErrorCode::Io, e.to_string()))
     }
 
     /// One self-test result line, printed so scripts and CI can read it.
@@ -370,6 +417,7 @@ pub fn run() {
             app.manage(AppState {
                 events: bus,
                 runs,
+                session_path: session::path(&data_dir),
                 data_dir,
                 toolchains,
                 plugins: RwLock::new(registry),
@@ -398,8 +446,11 @@ pub fn run() {
             commands::read_source,
             commands::write_source,
             commands::dump_examples,
+            commands::load_session,
+            commands::save_session,
             commands::selftest_scenario,
             commands::selftest_report,
+            commands::selftest_touch_source,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TinkerPad");
