@@ -1,0 +1,46 @@
+api = 1
+
+# TypeScript and JavaScript on Node. See README.md.
+
+[language]
+id = "typescript"
+name = "TypeScript"
+extension = "ts"
+highlighter = "typescript"
+
+[toolchain]
+# --experimental-transform-types arrived in Node 22.7.
+probe = [{ command = "node", args = ["--version"], min_version = "22.7" }]
+install_hint = "Install Node.js 22.7 or newer (the current LTS is best): https://nodejs.org"
+
+[[kind]]
+id = "statements"
+name = "TypeScript Statements"
+template = "statements.ts"
+default = true
+
+[[kind]]
+id = "program"
+name = "TypeScript Program"
+template = "program.ts"
+
+[scaffold]
+# `"type": "module"` makes main.ts an ES module without Node guessing (and
+# warning about it when some folder above has a package.json). Dependencies
+# land in this file once 01-14 wires up `[deps]`.
+files = [{ path = "package.json", template = "package.json" }]
+
+[run]
+# --experimental-transform-types: strip types, and also compile `enum` and
+#   `namespace`. Line numbers are preserved, so stack traces point at main.ts.
+# --require register.cjs: makes `import { dump } from "tinkerpad"` resolve to
+#   dump/tinkerpad.js. (NODE_PATH doesn't apply to ES modules, and --import
+#   can't take a Windows path.)
+command = "{toolchain}"
+args = [
+  "--experimental-transform-types",
+  "--disable-warning=ExperimentalWarning",
+  "--require",
+  "{plugin_dir}/dump/register.cjs",
+  "{main}",
+]

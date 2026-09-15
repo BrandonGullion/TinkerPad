@@ -1,7 +1,6 @@
 //! Creating playgrounds of every kind of the test plugins through the real
 //! library, then checking the files on disk and the locked regions derived from
-//! them. (No plugins are bundled yet; 01-09 to 01-11 add them, and their kinds
-//! should be added here.)
+//! them. Bundled plugins are covered by `bundled.rs`.
 
 use std::path::{Path, PathBuf};
 

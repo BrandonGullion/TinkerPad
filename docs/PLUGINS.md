@@ -397,8 +397,15 @@ The template for each kind already imports the helper, so a new playground can c
 
 ### TypeScript / JavaScript (Phase 1)
 
-- **Run:** `node --experimental-transform-types main.ts`. Node 24 strips types
-  natively; the flag adds `enum` and `namespace` support.
+- **Run:** `node --experimental-transform-types --disable-warning=ExperimentalWarning
+  --require {plugin_dir}/dump/register.cjs main.ts`, which needs Node 22.7 or later.
+  - The transform flag adds `enum`, `namespace`, and parameter properties to
+    Node's type stripping. Line numbers still match the file, so stack traces and
+    future breakpoints land correctly.
+  - `register.cjs` adds a resolve hook so `import { dump } from "tinkerpad"`
+    finds `dump/`. `NODE_PATH` doesn't apply to ES modules, and `--import`
+    rejects Windows paths.
+  - Each playground gets a `package.json` with `"type": "module"`.
 - **Kinds:** `statements` (an ES module, default), `program` (template with a
   `main()` call).
 - **LSP:** `typescript-language-server --stdio`, workspace `library_root`, with a
