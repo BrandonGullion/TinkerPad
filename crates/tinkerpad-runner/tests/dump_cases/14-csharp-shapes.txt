@@ -1,0 +1,41 @@
+# Captured from the C# plugin's dump library running
+# crates/tinkerpad-runner/tests/plugins/csharp/shapes.cs.
+# Regenerate: TINKERPAD_UPDATE_FIXTURES=1 cargo test -p tinkerpad-runner --test csharp_plugin
+in table:\n
+in \e]1337;TinkerPad={"v":1,"kind":"table","columns":[{"name":"Name","type":"string"},{"name":"Born","type":"int"},{"name":"Tags","type":"string[]"}],"rows":[["Ada",1815,{"v":1,"kind":"tree","value":["math"],"type":"string[]"}],["Grace",1906,null]],"truncated":false,"title":"people"}\atable with a nested table:\n
+in \e]1337;TinkerPad={"v":1,"kind":"table","columns":[{"name":"Team","type":"string"},{"name":"Members","type":"anonymous[]"}],"rows":[["core",{"v":1,"kind":"table","columns":[{"name":"Name","type":"string"}],"rows":[["Ada"],["Alan"]],"truncated":false}]],"truncated":false}\atree:\n
+in \e]1337;TinkerPad={"v":1,"kind":"tree","value":{"Name":"TinkerPad","Level":"High","Point":{"Item1":1,"Item2":2},"List":[1,"two",null]},"type":"anonymous","title":"config"}\avalues:\n
+in \e]1337;TinkerPad={"v":1,"kind":"value","value":42,"type":"int"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"text","type":"string"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":true,"type":"bool"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":null,"type":"string"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":3.5,"type":"decimal"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"NaN","type":"double"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"18446744073709551615","type":"ulong"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"c","type":"char"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"Low","type":"Level"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"2026-09-15T00:00:00.0000000Z","type":"DateTime"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"2026-09-15","type":"DateOnly"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"01:30:00","type":"TimeSpan"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"00000000-0000-0000-0000-000000000000","type":"Guid"}\a\e]1337;TinkerPad={"v":1,"kind":"value","value":"List<int>","type":"Type"}\adictionaries and sets:\n
+in \e]1337;TinkerPad={"v":1,"kind":"tree","value":{"a":1,"b":2},"type":"Dictionary<string, int>"}\a\e]1337;TinkerPad={"v":1,"kind":"tree","value":[{"key":{"Name":"Key","Born":1,"Tags":null},"value":"object key"}],"type":"Dictionary<Person, string>"}\a\e]1337;TinkerPad={"v":1,"kind":"tree","value":["x","y"],"type":"HashSet<string>"}\acycle, depth, and errors:\n
+in \e]1337;TinkerPad={"v":1,"kind":"tree","value":{"Name":"loop","Next":"[circular]"},"type":"Node"}\a\e]1337;TinkerPad={"v":1,"kind":"tree","value":{"L1":{"L2":{"L3":{"L4":{"L5":"[anonymous]"}}}}},"type":"anonymous"}\a\e]1337;TinkerPad={"v":1,"kind":"tree","value":{"Ok":1,"Bad":"[error: nope]"},"type":"Throws"}\a\e]1337;TinkerPad={"v":1,"kind":"tree","value":[1,2,3],"type":"int[]"}\achained: 3\n
+out text table:\n
+out rich {"v":1,"kind":"table","columns":[{"name":"Name","type":"string"},{"name":"Born","type":"int"},{"name":"Tags","type":"string[]"}],"rows":[["Ada",1815,{"v":1,"kind":"tree","value":["math"],"type":"string[]"}],["Grace",1906,null]],"truncated":false,"title":"people"}
+out text table with a nested table:\n
+out rich {"v":1,"kind":"table","columns":[{"name":"Team","type":"string"},{"name":"Members","type":"anonymous[]"}],"rows":[["core",{"v":1,"kind":"table","columns":[{"name":"Name","type":"string"}],"rows":[["Ada"],["Alan"]],"truncated":false}]],"truncated":false}
+out text tree:\n
+out rich {"v":1,"kind":"tree","value":{"Name":"TinkerPad","Level":"High","Point":{"Item1":1,"Item2":2},"List":[1,"two",null]},"type":"anonymous","title":"config"}
+out text values:\n
+out rich {"v":1,"kind":"value","value":42,"type":"int"}
+out rich {"v":1,"kind":"value","value":"text","type":"string"}
+out rich {"v":1,"kind":"value","value":true,"type":"bool"}
+out rich {"v":1,"kind":"value","value":null,"type":"string"}
+out rich {"v":1,"kind":"value","value":3.5,"type":"decimal"}
+out rich {"v":1,"kind":"value","value":"NaN","type":"double"}
+out rich {"v":1,"kind":"value","value":"18446744073709551615","type":"ulong"}
+out rich {"v":1,"kind":"value","value":"c","type":"char"}
+out rich {"v":1,"kind":"value","value":"Low","type":"Level"}
+out rich {"v":1,"kind":"value","value":"2026-09-15T00:00:00.0000000Z","type":"DateTime"}
+out rich {"v":1,"kind":"value","value":"2026-09-15","type":"DateOnly"}
+out rich {"v":1,"kind":"value","value":"01:30:00","type":"TimeSpan"}
+out rich {"v":1,"kind":"value","value":"00000000-0000-0000-0000-000000000000","type":"Guid"}
+out rich {"v":1,"kind":"value","value":"List<int>","type":"Type"}
+out text dictionaries and sets:\n
+out rich {"v":1,"kind":"tree","value":{"a":1,"b":2},"type":"Dictionary<string, int>"}
+out rich {"v":1,"kind":"tree","value":[{"key":{"Name":"Key","Born":1,"Tags":null},"value":"object key"}],"type":"Dictionary<Person, string>"}
+out rich {"v":1,"kind":"tree","value":["x","y"],"type":"HashSet<string>"}
+out text cycle, depth, and errors:\n
+out rich {"v":1,"kind":"tree","value":{"Name":"loop","Next":"[circular]"},"type":"Node"}
+out rich {"v":1,"kind":"tree","value":{"L1":{"L2":{"L3":{"L4":{"L5":"[anonymous]"}}}}},"type":"anonymous"}
+out rich {"v":1,"kind":"tree","value":{"Ok":1,"Bad":"[error: nope]"},"type":"Throws"}
+out rich {"v":1,"kind":"tree","value":[1,2,3],"type":"int[]"}
+out text chained: 3\n

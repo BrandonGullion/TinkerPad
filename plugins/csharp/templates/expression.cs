@@ -1,0 +1,1 @@
+Enumerable.Range(1, 5).Select(n => new { Number = n, Square = n * n })

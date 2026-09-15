@@ -101,3 +101,67 @@ fn typescript_kinds_scaffold_an_es_module_playground() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn csharp_kinds_scaffold_with_the_dump_library_wired_in() {
+    let root = std::env::temp_dir().join(format!("tinkerpad-bundled-cs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let lib = Library::open(&root).unwrap();
+    let plugin =
+        Plugin::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/csharp")).unwrap();
+
+    assert_eq!(plugin.id, "csharp");
+    assert_eq!(plugin.main_path, Path::new("main.cs"));
+    let kinds: Vec<&str> = plugin.kinds.iter().map(|k| k.id.as_str()).collect();
+    assert_eq!(kinds, ["statements", "program", "expression"]);
+    assert!(plugin.kinds[0].default);
+    assert!(plugin.output.is_some(), "compile errors need [output]");
+    assert!(plugin.deps.is_some(), "#:package needs [deps]");
+    let run = plugin.run.as_ref().unwrap();
+    assert!(
+        run.env
+            .iter()
+            .any(|(k, v)| k == "TINKERPAD_CSHARP_DUMP" && v.contains("{plugin_dir}")),
+        "{:?}",
+        run.env
+    );
+
+    for kind in &plugin.kinds {
+        let name = format!("CS {}", kind.id);
+        let files = scaffold::playground_files(&plugin, kind, &name, "2026-09-15").unwrap();
+        let p = lib
+            .create(NewPlayground {
+                name: name.clone(),
+                language: plugin.id.clone(),
+                kind: KindId::new(kind.id.clone()),
+                main_path: plugin.main_path.clone(),
+                files,
+            })
+            .unwrap();
+        let main = std::fs::read_to_string(&p.main_file).unwrap();
+        let props = std::fs::read_to_string(p.dir.join("Directory.Build.props")).unwrap();
+        assert!(props.contains("$(TINKERPAD_CSHARP_DUMP)"), "{props}");
+        assert!(props.contains("<PublishAot>false</PublishAot>"), "{props}");
+
+        match kind.id.as_str() {
+            "expression" => {
+                assert_eq!(
+                    scaffold::locked(&main, kind),
+                    scaffold::Locked::Regions {
+                        head: "TinkerPad.Dump.Show(\n".len(),
+                        tail: "\n);\n".len()
+                    }
+                );
+            }
+            other => {
+                assert!(
+                    main.contains(&format!("{name}, created 2026-09-15")),
+                    "{main}"
+                );
+                assert!(main.contains("using TinkerPad;"), "{other}: {main}");
+                assert_eq!(scaffold::locked(&main, kind), scaffold::Locked::None);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
