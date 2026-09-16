@@ -9,7 +9,7 @@
 import { invoke } from "./ipc";
 import type { RunState } from "./layout";
 import type { OutputPane } from "./output";
-import type { Envelope, RunEvent } from "./protocol";
+import type { Annotation, Envelope, RunEvent } from "./protocol";
 
 export type RunOutcome =
   | { kind: "exited"; code: number | null; durationMs: number }
@@ -34,6 +34,10 @@ export interface RunHost {
   runStateChanged(playground: string, state: RunState): void;
   /** Tell the user something briefly (no playground open, for example). */
   flashNote(text: string): void;
+  /** The output pointed at a position; mark it in the tab if it belongs there. */
+  annotation(playground: string, annotation: Annotation): void;
+  /** Go to an annotation the user clicked in the output. */
+  revealAnnotation(playground: string, annotation: Annotation): void;
 }
 
 interface PlaygroundRun {
@@ -184,6 +188,12 @@ export class RunController {
       case "warning":
         output?.append("info", `⚠ ${event.message}\n`);
         break;
+      case "annotation": {
+        const { kind: _kind, ...annotation } = event;
+        output?.markAnnotation(annotation, () => this.host.revealAnnotation(playground, annotation));
+        this.host.annotation(playground, annotation);
+        break;
+      }
       case "exited":
         this.finish(playground, record, { kind: "exited", code: event.code, durationMs: event.durationMs });
         break;

@@ -21,7 +21,7 @@ use tinkerpad_process::KillHandle;
 use tinkerpad_runner::spec::scratch_dir;
 use tinkerpad_runner::{OutputDecoder, RunContext, RunEvent, SpecError, run, run_spec};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::events::EventBus;
 use crate::toolchains::Toolchains;
@@ -155,13 +155,15 @@ impl Runs {
         };
 
         info!(run = id, pid = handle.pid, playground = %playground_id, plugin = %plugin.id, "run started");
+        let output_spec = plugin.output.clone();
         let kill = handle.canceller();
         let events = self.events.clone();
         let forwarder = tauri::async_runtime::spawn(async move {
-            // Text, dumped values, and warnings, decoded from the output bytes.
-            let mut decoder = OutputDecoder::new();
+            // Text, dumped values, warnings, and positions found by the
+            // plugin's `[output]` pattern, decoded from the output bytes.
+            let mut decoder = OutputDecoder::with_output(output_spec);
             let mut out = Vec::new();
-            let (mut dumps, mut malformed) = (0u32, 0u32);
+            let (mut dumps, mut malformed, mut annotations) = (0u32, 0u32, 0u32);
             while let Some(event) = handle.recv().await {
                 match event {
                     RunEvent::Started { .. } => out.push(UiRunEvent::Started),
@@ -184,6 +186,10 @@ impl Runs {
                 for ui in out.drain(..) {
                     match &ui {
                         UiRunEvent::Rich { .. } => dumps += 1,
+                        UiRunEvent::Annotation(a) => {
+                            annotations += 1;
+                            debug!(run = id, line = a.line, file = ?a.file, "annotation");
+                        }
                         UiRunEvent::Warning { message } => {
                             malformed += 1;
                             warn!(run = id, %message, "run output warning");
@@ -193,7 +199,7 @@ impl Runs {
                     events.publish(scope.clone(), CoreEvent::Run(ui));
                 }
             }
-            info!(run = id, dumps, malformed, "run finished");
+            info!(run = id, dumps, malformed, annotations, "run finished");
         });
 
         *active = Some(Active {

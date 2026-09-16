@@ -16,6 +16,7 @@
 mod common;
 
 use common::{Scratch, check_fixture, manifest_dir, run_playground, template_text, toolchain};
+use tinkerpad_core::Level;
 use tinkerpad_core::dump::RichNode;
 
 const PLUGIN: &str = "csharp";
@@ -135,28 +136,35 @@ async fn compile_errors_match_the_output_regex() {
     let out = run_playground(&tc, &s.0, "statements", Some(source)).await;
     assert_ne!(out.code, Some(0));
 
-    let regex = &tc.plugin.output.as_ref().expect("[output]").error_regex;
+    // The error reaches the UI as an annotation, right after the line it was
+    // found in.
     let text = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n") + &out.stderr;
-    let matches: Vec<_> = text
-        .lines()
-        .filter_map(|line| regex.captures(line))
-        .map(|c| {
-            (
-                c["file"].to_owned(),
-                c["line"].parse::<u32>().unwrap(),
-                c["col"].parse::<u32>().unwrap(),
-                c["severity"].to_owned(),
-                c["message"].to_owned(),
-            )
-        })
-        .collect();
-    let error = matches
-        .iter()
-        .find(|m| m.3 == "error")
-        .unwrap_or_else(|| panic!("no error matched in:\n{text}"));
-    assert!(error.0.ends_with("main.cs"), "{error:?}");
-    assert_eq!((error.1, error.2), (3, 39), "{error:?}");
-    assert_eq!(error.4, "CS1002: ; expected");
+    let error = out
+        .annotations()
+        .into_iter()
+        .find(|a| a.severity == Level::Error)
+        .unwrap_or_else(|| panic!("no error annotation in:\n{text}\n{:?}", out.events));
+    assert!(
+        error
+            .file
+            .as_deref()
+            .is_some_and(|f| f.ends_with("main.cs")),
+        "{error:?}"
+    );
+    assert_eq!((error.line, error.col), (3, Some(39)), "{error:?}");
+    assert_eq!(error.message, "CS1002: ; expected");
+    assert!(error.text.contains("error CS1002"), "{error:?}");
+}
+
+#[tokio::test]
+async fn ordinary_output_is_not_annotated() {
+    let s = Scratch::new(PLUGIN, "no-errors");
+    let Some(tc) = toolchain(PLUGIN, &s.0).await else {
+        return;
+    };
+    let out = run_playground(&tc, &s.0, "program", None).await;
+    assert_eq!(out.code, Some(0));
+    assert!(out.annotations().is_empty(), "{:?}", out.annotations());
 }
 
 #[tokio::test]

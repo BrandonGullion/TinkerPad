@@ -9,11 +9,14 @@
 import { handleDumpKey } from "./dump/nav";
 import { renderRich } from "./dump/render";
 import { disposeTables } from "./dump/table";
-import type { RichValue } from "./protocol";
+import type { Annotation, RichValue } from "./protocol";
 
 export type Stream = "stdout" | "stderr" | "info";
 
-type Pending = { stream: Stream; text: string } | { rich: RichValue };
+type Pending =
+  | { stream: Stream; text: string }
+  | { rich: RichValue }
+  | { annotation: Annotation; onClick: () => void };
 
 const MAX_LINES = 20_000;
 const BOTTOM_SLACK_PX = 4;
@@ -86,6 +89,15 @@ export class OutputPane {
     this.schedule();
   }
 
+  /**
+   * Make the line an annotation was found in clickable. Called right after the
+   * text it was found in, so the line is the end of the latest output.
+   */
+  markAnnotation(annotation: Annotation, onClick: () => void): void {
+    this.pending.push({ annotation, onClick });
+    this.schedule();
+  }
+
   clear(): void {
     cancelAnimationFrame(this.frame);
     this.frame = 0;
@@ -146,6 +158,12 @@ export class OutputPane {
     };
 
     for (const item of batch) {
+      if ("annotation" in item) {
+        emit();
+        runStream = null;
+        if (last) markLine(last, item.annotation, item.onClick);
+        continue;
+      }
       if ("rich" in item) {
         emit();
         runStream = null;
@@ -213,6 +231,36 @@ export class OutputPane {
   private scrollToBottom(): void {
     this.element.scrollTop = this.element.scrollHeight;
   }
+}
+
+/**
+ * Turn the last occurrence of the annotation's line inside `span` into a
+ * clickable link. The line has just been appended, so it's at the end.
+ */
+function markLine(span: HTMLElement, annotation: Annotation, onClick: () => void): void {
+  const needle = (annotation.text.split("\n").pop() ?? "").trimEnd();
+  const text = span.textContent ?? "";
+  const at = needle ? text.lastIndexOf(needle) : -1;
+  if (at < 0) return;
+
+  const link = document.createElement("span");
+  link.className = `out-annotation out-annotation-${annotation.severity}`;
+  link.textContent = needle;
+  link.dataset.nav = "";
+  link.tabIndex = -1;
+  link.setAttribute("role", "link");
+  link.title = annotation.file
+    ? `${annotation.file}:${annotation.line}${annotation.col ? `:${annotation.col}` : ""} — click to go there`
+    : `Line ${annotation.line} — click to go there`;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    onClick();
+  });
+  span.replaceChildren(
+    document.createTextNode(text.slice(0, at)),
+    link,
+    document.createTextNode(text.slice(at + needle.length)),
+  );
 }
 
 function countNewlines(s: string): number {

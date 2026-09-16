@@ -1209,6 +1209,142 @@ async function rustScenario(ctx: SelftestContext, check: Check) {
   await runUntilVisible(ctx, ".dump-kind-table", "Rust screenshot run", LONG);
 }
 
+/** Clickable positions from a run's output, and the marks in the editor (01-13). */
+async function annotationsScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs, runs } = ctx;
+  const view = editor.view;
+  const pane = () => ctx.output.element;
+  const squiggles = () => [...document.querySelectorAll(".cm-annotation")].map((e) => e.textContent);
+  const links = () => [...pane().querySelectorAll(".out-annotation")].map((e) => e.textContent ?? "");
+  const note = () => document.querySelector(".status-note")?.textContent ?? "";
+
+  const state = await settledToolchain("typescript");
+  await check("Node is ready for the TypeScript plugin", state?.kind === "ready", JSON.stringify(state ?? null));
+  if (state?.kind !== "ready") return;
+
+  const playground = await invoke<Playground>("create_playground", { name: "Annotations Test", language: "typescript" });
+  await openPlayground(editor, ctx.status, playground.id);
+  const source = [
+    "function boom(): never {",
+    '  throw new TypeError("nope");',
+    "}",
+    "",
+    'console.log("before");',
+    "boom();",
+    "",
+  ].join("\n");
+  let end = runs.waitForEnd();
+  runCode(ctx, source);
+  await withTimeout(end, 30_000, "throwing program");
+  await ctx.output.flushed();
+  await frame();
+
+  await check(
+    "the line an error was found on becomes clickable",
+    links().length === 1 && links()[0]!.includes("at boom") && links()[0]!.includes("main.ts:2:9"),
+    JSON.stringify(links()),
+  );
+  await check(
+    "the error is marked in the editor at its line and column",
+    squiggles().length === 1 && squiggles()[0] === 'new TypeError("nope");',
+    JSON.stringify(squiggles()),
+  );
+  const marked = document.querySelector<HTMLElement>(".cm-annotation");
+  const decoration = marked ? getComputedStyle(marked).textDecoration : "";
+  await check(
+    "the mark is a squiggle in the error colour, with the message on hover",
+    (marked?.title ?? "").includes("TypeError: nope") &&
+      decoration.includes("wavy") &&
+      decoration.includes("underline"),
+    JSON.stringify({ title: marked?.title, decoration }),
+  );
+
+  // Clicking the output line goes to the position.
+  view.dispatch({ selection: { anchor: 0 } });
+  pane().querySelector<HTMLElement>(".out-annotation")!.click();
+  await frame();
+  const clicked = view.state.doc.lineAt(view.state.selection.main.head);
+  await check(
+    "clicking the line moves the cursor there",
+    clicked.number === 2 && view.state.selection.main.head - clicked.from === 8,
+    JSON.stringify({ line: clicked.number, col: view.state.selection.main.head - clicked.from + 1 }),
+  );
+
+  // F8 cycles; a second annotation is added the way a second error would be.
+  tabs.annotation(playground.id, {
+    file: playground.mainFile,
+    line: 5,
+    col: 1,
+    message: "second problem",
+    severity: "warning",
+    text: "second problem",
+  });
+  await frame();
+  view.dispatch({ selection: { anchor: 0 } });
+  pressKey("F8");
+  const first = view.state.doc.lineAt(view.state.selection.main.head).number;
+  pressKey("F8");
+  const second = view.state.doc.lineAt(view.state.selection.main.head).number;
+  pressKey("F8", { shift: true });
+  const back = view.state.doc.lineAt(view.state.selection.main.head).number;
+  await check(
+    "F8 and Shift+F8 walk the annotations",
+    [first, second, back].join() === "2,5,2" && squiggles().length === 2,
+    JSON.stringify({ first, second, back, squiggles: squiggles() }),
+  );
+  await check(
+    "a warning is marked differently from an error",
+    document.querySelectorAll(".cm-annotation-warning").length === 1,
+    `${document.querySelectorAll(".cm-annotation-warning").length}`,
+  );
+
+  // An annotation in another file is clickable but opens nothing.
+  tabs.revealAnnotation(playground.id, {
+    file: "node:internal/modules/esm/loader",
+    line: 661,
+    col: 26,
+    message: "elsewhere",
+    severity: "error",
+    text: "at async onImport (node:internal/modules/esm/loader:661:26)",
+  });
+  await frame();
+  await check(
+    "an annotation in another file says so instead of jumping",
+    note().includes("isn't part of this playground") &&
+      view.state.doc.lineAt(view.state.selection.main.head).number === 2,
+    note(),
+  );
+
+  // The next run clears them.
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("all good");\n');
+  await withTimeout(end, 30_000, "clean program");
+  await ctx.output.flushed();
+  await check(
+    "the next run clears the marks and the links",
+    squiggles().length === 0 && links().length === 0,
+    JSON.stringify({ squiggles: squiggles(), links: links() }),
+  );
+
+  // A position inside locked lines is marked on the first editable line.
+  const locked = await openTestPlayground(ctx, "Annotations Locked", "expression");
+  tabs.annotation(locked.id, {
+    file: locked.mainFile,
+    line: 1,
+    col: 1,
+    message: "inside the wrapper",
+    severity: "error",
+    text: "inside the wrapper",
+  });
+  await frame();
+  const lockedMark = document.querySelector<HTMLElement>(".cm-annotation");
+  await check(
+    "a position inside locked lines is marked on the first editable line, with a note",
+    lockedMark?.textContent === "1 + 1" && (lockedMark.title ?? "").includes("locked lines"),
+    JSON.stringify({ text: lockedMark?.textContent, title: lockedMark?.title }),
+  );
+}
+
 /** A key press through the app's real document listeners. */
 function pressKey(k: string, mods: { mod?: boolean; shift?: boolean; ctrl?: boolean } = {}, target?: EventTarget): boolean {
   const e = new KeyboardEvent("keydown", {
@@ -1553,6 +1689,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   csharp: csharpScenario,
   rust: rustScenario,
   tabs: tabsScenario,
+  annotations: annotationsScenario,
   "session-prepare": sessionPrepareScenario,
   "session-restore": sessionRestoreScenario,
   plugins: pluginsScenario,

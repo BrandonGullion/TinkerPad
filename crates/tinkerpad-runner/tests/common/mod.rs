@@ -113,6 +113,17 @@ impl Output {
             .collect()
     }
 
+    /// Positions the plugin's `[output]` pattern found in the output.
+    pub fn annotations(&self) -> Vec<&tinkerpad_core::Annotation> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                UiEvent::Annotation(a) => Some(a),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// `(rows, truncated)` of the last table dumped.
     pub fn last_table(&self) -> Option<(usize, bool)> {
         self.dumps().iter().rev().find_map(|v| match &v.node {
@@ -215,7 +226,7 @@ pub async fn run_scaffolded(
     let spec = run_spec(&tc.plugin, playground, &ctx).unwrap();
 
     let mut handle = run(spec).unwrap();
-    let mut decoder = OutputDecoder::new();
+    let mut decoder = OutputDecoder::with_output(tc.plugin.output.clone());
     let mut events = Vec::new();
     let mut out = Output {
         events: Vec::new(),

@@ -14,6 +14,6 @@ pub mod playground;
 
 pub use dump::{RichNode, RichValue};
 pub use error::{CommandError, ErrorCode};
-pub use events::{CoreEvent, Envelope, Level, RunEvent, Scope, ToolchainState};
+pub use events::{Annotation, CoreEvent, Envelope, Level, RunEvent, Scope, ToolchainState};
 pub use language::LanguageId;
 pub use playground::{BrokenPlayground, KindId, Playground, PlaygroundId, PlaygroundSummary};

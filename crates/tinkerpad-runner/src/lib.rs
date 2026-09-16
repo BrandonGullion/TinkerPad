@@ -10,12 +10,14 @@
 //!
 //! See `docs/ARCHITECTURE.md` §5 and work items 00-06, 01-06, 01-07, 03-02, 03-03.
 
+pub mod annotate;
 pub mod dump;
 mod output;
 mod run;
 pub mod spec;
 mod utf8;
 
+pub use annotate::Annotator;
 pub use dump::{DumpParser, Dumped};
 pub use output::OutputDecoder;
 pub use run::{RunError, RunEvent, RunHandle, RunSpec, run};
