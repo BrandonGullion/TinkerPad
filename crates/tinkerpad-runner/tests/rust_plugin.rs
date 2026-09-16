@@ -24,6 +24,7 @@ use common::{
     Scratch, check_fixture, manifest_dir, run_scaffolded, scaffold_playground, template_text,
     toolchain,
 };
+use tinkerpad_core::Level;
 use tinkerpad_core::dump::RichNode;
 
 const PLUGIN: &str = "rust";
@@ -203,19 +204,35 @@ async fn compile_errors_match_the_output_regex() {
         output.multiline,
         "rustc puts the location on the line after the message"
     );
-    let text = out.stderr.clone();
-    let error = output
-        .error_regex
-        .captures_iter(&text)
-        .find(|c| &c["severity"] == "error")
-        .unwrap_or_else(|| panic!("no error matched in:\n{text}"));
-    assert_eq!(&error["message"], "mismatched types", "{text}");
+    let error = out
+        .annotations()
+        .into_iter()
+        .find(|a| a.severity == Level::Error)
+        .unwrap_or_else(|| panic!("no error annotation in:\n{}", out.stderr));
+    assert_eq!(error.message, "mismatched types", "{error:?}");
     assert!(
-        error["file"].replace('\\', "/").ends_with("src/main.rs"),
-        "{}",
-        &error["file"]
+        error
+            .file
+            .as_deref()
+            .is_some_and(|f| f.replace('\\', "/").ends_with("src/main.rs")),
+        "{error:?}"
     );
-    assert_eq!((&error["line"], &error["col"]), ("3", "21"), "{text}");
+    assert_eq!((error.line, error.col), (3, Some(21)), "{error:?}");
+    assert!(
+        error.text.starts_with("error[E0308]") && error.text.contains("-->"),
+        "both lines are kept: {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_output_is_not_annotated() {
+    let s = Scratch::new(PLUGIN, "no-errors");
+    let Some(tc) = toolchain(PLUGIN, &s.0).await else {
+        return;
+    };
+    let out = run_new(&tc, &s, "clean-test", "program", None).await;
+    assert_eq!(out.code, Some(0));
+    assert!(out.annotations().is_empty(), "{:?}", out.annotations());
 }
 
 #[tokio::test]

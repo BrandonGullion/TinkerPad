@@ -17,6 +17,8 @@ export type RunEvent =
   | { kind: "rich"; value: RichValue }
   /** Something about the output worth knowing, e.g. an unreadable dump. */
   | { kind: "warning"; message: string }
+  /** A position found in the output by the plugin's `[output]` pattern. */
+  | ({ kind: "annotation" } & Annotation)
   | { kind: "exited"; code: number | null; durationMs: number }
   | { kind: "cancelled"; durationMs: number }
   | { kind: "failed"; message: string };
@@ -28,6 +30,19 @@ export type CoreEvent =
   | { type: "toolchain"; language: string; state: ToolchainState }
   | { type: "libraryChanged" }
   | { type: "sourceChangedOnDisk"; playground: string };
+
+/** A place in a file that a run's output pointed at. */
+export interface Annotation {
+  /** As the tool wrote it: absolute, relative, or a `file://` URL. */
+  file: string | null;
+  /** One-based. */
+  line: number;
+  col: number | null;
+  message: string;
+  severity: Level;
+  /** The output line (or lines) the pattern matched. */
+  text: string;
+}
 
 /** Any JSON value, as found inside a dump. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };

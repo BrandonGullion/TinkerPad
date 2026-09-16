@@ -78,6 +78,11 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
     tabs.startRename();
     return true;
   }
+  // F8 walks the last run's errors and warnings (01-13).
+  if (e.key === "F8" && !mod) {
+    tabs.cycleAnnotation(e.shiftKey ? -1 : 1);
+    return true;
+  }
   if (!mod || e.altKey) return false;
   switch (key) {
     case "n":

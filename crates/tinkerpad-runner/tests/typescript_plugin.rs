@@ -133,6 +133,39 @@ async fn transform_types_keeps_line_numbers() {
         "{}",
         out.stderr
     );
+
+    // The first stack frame reaches the UI as an annotation.
+    let error = out
+        .annotations()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no annotation in:\n{}", out.stderr));
+    assert_eq!(error.message, "Error: on line 8", "{error:?}");
+    assert!(
+        error
+            .file
+            .as_deref()
+            .is_some_and(|f| f.replace('\\', "/").ends_with("main.ts")),
+        "{error:?}"
+    );
+    assert_eq!((error.line, error.col), (8, Some(7)), "{error:?}");
+    assert_eq!(
+        out.annotations().len(),
+        1,
+        "later frames have no message line, so they don't match: {:?}",
+        out.annotations()
+    );
+}
+
+#[tokio::test]
+async fn ordinary_output_is_not_annotated() {
+    let s = Scratch::new(PLUGIN, "no-errors");
+    let Some(tc) = toolchain(PLUGIN, &s.0).await else {
+        return;
+    };
+    let out = run_playground(&tc, &s.0, "program", None).await;
+    assert_eq!(out.code, Some(0));
+    assert!(out.annotations().is_empty(), "{:?}", out.annotations());
 }
 
 #[tokio::test]

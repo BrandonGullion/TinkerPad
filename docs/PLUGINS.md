@@ -184,7 +184,25 @@ one you're on, so a mistake that only affects macOS still fails on Windows.
 | `[lsp].workspace` | Defaults to `playground_dir`. |
 | `[deps]` with `kind = "command"` | Needs `add = ["cargo", "add", "{name}@{version}"]`. |
 | `[deps]` with `kind = "inline-directive"` | Needs `directive = "#:package {name}@{version}"`. |
-| `[output].error_regex_multiline` | `true` to match across up to three lines (work item 01-13). |
+| `[output].error_regex_multiline` | `true` to match across up to three lines. |
+
+**`[output]` in detail.** Every completed line of stdout and stderr is matched
+against `error_regex`. A match becomes a position the app can use.
+
+- Groups: `line` and `message` are required; `file`, `col`, and `severity` are
+  optional. Any other group is ignored, with a warning. `severity` counts as a
+  warning when it reads `warning` or `warn`, and as an error otherwise.
+- With `error_regex_multiline = true` the pattern is matched against the last
+  three lines joined with `\n`, and only a match reaching the newest line counts,
+  so one error is reported once. Write such a pattern with `(?m)` and `^`…`$`
+  anchors. rustc needs this: the message is on one line and the location on the
+  next.
+- The matched line becomes clickable in the output pane. It is marked in the
+  editor only when `file` is missing or points at the playground's own main
+  file; `file` may be absolute, relative to the playground, or a `file://` URL.
+- A position inside a kind's locked prelude is marked on the first editable line
+  instead, and says where it really was.
+- Marks are cleared when the next run starts.
 
 **Other rules**
 - Exactly one `[[kind]]` has `default = true`.

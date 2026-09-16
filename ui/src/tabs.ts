@@ -11,6 +11,8 @@
 import type { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
+import { annotationsExtension, annotationsOf, type EditorAnnotation, setAnnotations } from "./annotations";
+
 import type { Editor } from "./editor";
 import { invoke } from "./ipc";
 import type { RunState, StatusBar } from "./layout";
@@ -18,7 +20,15 @@ import { findLocked, lockedLinesExtension } from "./locked";
 import { OutputPane } from "./output";
 import { pick } from "./picker";
 import { LOCKED_HINT, MISMATCH_NOTE, type OpenedPlayground } from "./playground";
-import type { Listing, Playground, PlaygroundSummary, PluginsStatus, PluginSummary, Session } from "./protocol";
+import type {
+  Annotation,
+  Listing,
+  Playground,
+  PlaygroundSummary,
+  PluginsStatus,
+  PluginSummary,
+  Session,
+} from "./protocol";
 import type { RunController, RunHost } from "./run";
 import { toast } from "./toast";
 
@@ -129,6 +139,7 @@ export class TabManager implements RunHost {
     const tab = this.find(playground);
     if (!tab) return;
     // The run command writes `code` to disk itself.
+    this.setAnnotations(tab, []);
     clearTimeout(tab.saveTimer);
     tab.saveTimer = 0;
     tab.savedText = code;
@@ -144,6 +155,82 @@ export class TabManager implements RunHost {
 
   flashNote(text: string): void {
     this.ui.status.flashNote(text);
+  }
+
+  /** A run's output pointed at a position: mark it if it's this tab's file. */
+  annotation(playground: string, annotation: Annotation): void {
+    const tab = this.find(playground);
+    const summary = this.listing.get(playground);
+    if (!tab || !summary || !sameFile(annotation.file, summary)) return;
+
+    // A position inside the locked prelude can't be marked there, so mark the
+    // first editable line and say where it really was.
+    const lockedLines = tab.opened.lock === "locked" ? countLines(tab.opened.prelude) : 0;
+    const inLocked = annotation.line <= lockedLines;
+    const marked: EditorAnnotation = {
+      line: inLocked ? lockedLines + 1 : annotation.line,
+      col: inLocked ? null : annotation.col,
+      message: annotation.message,
+      severity: annotation.severity === "warning" ? "warning" : "error",
+      note: inLocked ? `Reported on line ${annotation.line}, inside this kind's locked lines.` : undefined,
+    };
+    this.setAnnotations(tab, [...annotationsOf(this.stateOf(tab)), marked]);
+  }
+
+  /** The user clicked an annotation in the output pane. */
+  revealAnnotation(playground: string, annotation: Annotation): void {
+    const tab = this.find(playground);
+    const summary = this.listing.get(playground);
+    if (!tab || !summary) return;
+    this.activate(tab);
+    if (!sameFile(annotation.file, summary)) {
+      this.ui.status.flashNote(`${annotation.file} isn't part of this playground, so there's nothing to open.`);
+      return;
+    }
+    this.goTo(annotation.line, annotation.col);
+  }
+
+  /** Move to the next (`1`) or previous (`-1`) annotation in the active tab. */
+  cycleAnnotation(delta: number): void {
+    const tab = this.active;
+    if (!tab) return;
+    const list = annotationsOf(this.ui.editor.view.state);
+    if (list.length === 0) {
+      this.ui.status.flashNote("No errors or warnings from the last run.");
+      return;
+    }
+    const view = this.ui.editor.view;
+    const current = view.state.doc.lineAt(view.state.selection.main.head).number;
+    const next =
+      delta > 0
+        ? (list.find((a) => a.line > current) ?? list[0])
+        : ([...list].reverse().find((a) => a.line < current) ?? list.at(-1));
+    if (next) this.goTo(next.line, next.col, next.message);
+  }
+
+  /** Put the cursor on a line of the active tab and scroll it into view. */
+  goTo(line: number, col: number | null, note?: string): void {
+    const view = this.ui.editor.view;
+    const target = view.state.doc.line(Math.min(Math.max(line, 1), view.state.doc.lines));
+    const at = col ? Math.min(target.from + col - 1, target.to) : target.from;
+    view.dispatch({
+      selection: { anchor: at },
+      effects: EditorView.scrollIntoView(at, { y: "center" }),
+      scrollIntoView: true,
+    });
+    view.focus();
+    if (note) this.ui.status.flashNote(note);
+  }
+
+  /** The editor state a tab's annotations live in. */
+  private stateOf(tab: Tab): EditorState {
+    return tab === this.active ? this.ui.editor.view.state : tab.state;
+  }
+
+  private setAnnotations(tab: Tab, list: EditorAnnotation[]): void {
+    const effects = setAnnotations.of(list);
+    if (tab === this.active) this.ui.editor.view.dispatch({ effects });
+    else tab.state = tab.state.update({ effects }).state;
   }
 
   // ---- library -------------------------------------------------------------
@@ -241,6 +328,7 @@ export class TabManager implements RunHost {
       opened.lock === "locked" ? findLocked(opened.text, opened.prelude ?? "", opened.postlude ?? "") : null;
     tab.state = this.ui.editor.createState(opened.text, [
       lockedLinesExtension(ranges, () => this.ui.status.flashNote(LOCKED_HINT)),
+      annotationsExtension(),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) this.edited(tab);
       }),
@@ -730,6 +818,36 @@ export class TabManager implements RunHost {
     bar.hidden = false;
   }
 }
+
+/** Lines in a kind's prelude, which are locked at the top of the file. */
+function countLines(prelude: string | null): number {
+  return prelude ? prelude.split("\n").length - 1 : 0;
+}
+
+/**
+ * Whether an annotation's file is the playground's main file. A pattern with
+ * no `file` group (or an empty one) means "here". Tools write paths as
+ * absolute, relative to the playground, or as `file://` URLs.
+ */
+export function sameFile(file: string | null, playground: { mainFile: string; dir: string }): boolean {
+  if (!file?.trim()) return true;
+  let text = file.trim();
+  if (text.startsWith("file:")) {
+    try {
+      text = decodeURIComponent(text.replace(/^file:\/\/\/?/, ""));
+    } catch {
+      text = text.replace(/^file:\/\/\/?/, "");
+    }
+  }
+  const slashes = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const path = slashes(text);
+  const dir = slashes(playground.dir);
+  const absolute = /^([a-zA-Z]:\/|\/)/.test(path) ? path : `${dir}/${path.replace(/^\.\//, "")}`;
+  const same = (a: string, b: string) => (isWindows ? a.toLowerCase() === b.toLowerCase() : a === b);
+  return same(absolute, slashes(playground.mainFile));
+}
+
+const isWindows = navigator.platform.toLowerCase().includes("win");
 
 /** A short language badge: `C#`, or the extension (`TS`, `RS`). */
 function languageCode(plugin: PluginSummary | undefined, language: string | undefined): string {

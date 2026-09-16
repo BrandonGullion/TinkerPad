@@ -331,6 +331,7 @@ Tabs (`ui/src/tabs.ts`, work item 01-12):
   | `Mod+W` or middle-click | Close tab. |
   | `Ctrl+Tab`, `Ctrl+Shift+Tab` | Cycle tabs (Ctrl on every platform). |
   | `F2` or double-click | Rename. |
+  | `F8`, `Shift+F8` | Go to the next or previous error or warning from the last run (01-13). |
 
 - Names, languages, and kinds always come from the library listing, never from
   a copy kept by the tab.

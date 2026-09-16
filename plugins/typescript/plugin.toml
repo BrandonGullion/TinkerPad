@@ -30,6 +30,14 @@ template = "program.ts"
 # land in this file once 01-14 wires up `[deps]`.
 files = [{ path = "package.json", template = "package.json" }]
 
+[output]
+# Node prints the error, then the stack. The first frame has the position:
+#     TypeError: x is not a function
+#         at file:///C:/play/main.ts:8:7
+# Paths appear as file:// URLs for ES modules and as plain paths otherwise.
+error_regex = '(?m)^(?<message>[A-Za-z]*(?:Error|Warning)(?: \[[A-Za-z_]+\])?:.*)\n\s*at (?:[^()\n]*\()?(?:file:///)?(?<file>[^()\n]+?):(?<line>\d+):(?<col>\d+)\)?$'
+error_regex_multiline = true
+
 [run]
 # --experimental-transform-types: strip types, and also compile `enum` and
 #   `namespace`. Line numbers are preserved, so stack traces point at main.ts.

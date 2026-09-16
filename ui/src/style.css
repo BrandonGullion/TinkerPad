@@ -543,3 +543,22 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Clickable positions found in a run's output (01-13) */
+
+.out-annotation {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.out-annotation:hover,
+.out-annotation:focus {
+  text-decoration-style: solid;
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.out-annotation-warning {
+  color: var(--warning);
+}

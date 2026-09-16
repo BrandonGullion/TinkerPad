@@ -112,6 +112,10 @@ pub enum RunEvent {
     Warning {
         message: String,
     },
+    /// A compiler or runtime message with a position, found in the output by
+    /// the plugin's `[output].error_regex`. The line it came from has just
+    /// been sent as `stdout` or `stderr`.
+    Annotation(Annotation),
     /// The process ended on its own.
     #[serde(rename_all = "camelCase")]
     Exited {
@@ -127,6 +131,24 @@ pub enum RunEvent {
     Failed {
         message: String,
     },
+}
+
+/// A position in a file that a run's output pointed at.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Annotation {
+    /// The file as the tool wrote it: absolute, relative, or a `file://` URL.
+    /// `None` when the pattern has no `file` group.
+    pub file: Option<String>,
+    /// One-based, as tools report it.
+    pub line: u32,
+    /// One-based column, if the pattern captured one.
+    pub col: Option<u32>,
+    pub message: String,
+    /// `Error` unless the pattern captured `severity` as a warning.
+    pub severity: Level,
+    /// The output line (or lines) the pattern matched.
+    pub text: String,
 }
 
 /// The wire format for one event.
