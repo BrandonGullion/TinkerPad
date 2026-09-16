@@ -55,6 +55,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [02-07 Workspace strategies and registration](phase-2-lsp/02-07-workspace-strategies.md) · M · 2 open criteria
 - [ ] [02-08 Server status strip](phase-2-lsp/02-08-status-strip.md) · S
 - [ ] [02-09 Go to definition](phase-2-lsp/02-09-go-to-definition.md) · S
+- [ ] [02-10 A deleted playground leaves its language server](phase-2-lsp/02-10-deleted-playground-detach.md) · S
 
 ## Phase 3 — Plugin helpers and warm runners
 
@@ -76,6 +77,8 @@ time passes, or by a later item); the item file says why each one is open.
 - [ ] [04-05 Stdin and interactive programs](phase-4-polish/04-05-stdin.md) · M
 - [ ] [04-06 Installer and updates](phase-4-polish/04-06-installer.md) · M
 - [ ] [04-07 Go and PowerShell plugins](phase-4-polish/04-07-go-and-powershell.md) · M
+- [ ] [04-08 Getting a language's tools](phase-4-polish/04-08-getting-a-languages-tools.md) · M
+- [ ] [04-09 Deleting a playground something else has open](phase-4-polish/04-09-deleting-a-playground-in-use.md) · S
 
 ## Phase 5 — Community
 
