@@ -119,6 +119,10 @@ pub enum ServerState {
         /// What the server called itself in `initialize`, if it said.
         name: Option<String>,
         version: Option<String>,
+        /// Resident memory, sampled every few seconds. `None` until the first
+        /// sample, or where the process can't be read. rust-analyzer's is the
+        /// number worth watching (work item 02-06).
+        rss_bytes: Option<u64>,
     },
     /// It exited without being asked to, and is being started again (02-05).
     Crashed {

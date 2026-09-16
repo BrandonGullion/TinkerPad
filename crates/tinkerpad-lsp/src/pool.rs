@@ -148,7 +148,13 @@ impl LspPool {
             // share it as usual and their requests wait. One the pool gave up
             // on gets another go, because opening a tab is someone asking for
             // it again.
-            if matches!(server.state(), ServerState::Stopped { .. }) {
+            // A server that stopped (idle, or given up on) or is in the
+            // middle of stopping starts again: someone is asking for it.
+            // `restart` waits for the old process before starting another.
+            if matches!(
+                server.state(),
+                ServerState::Stopped { .. } | ServerState::Stopping
+            ) {
                 info!(language = %key.language, "starting a server that had stopped");
                 server.restart();
             } else {

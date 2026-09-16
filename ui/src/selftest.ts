@@ -431,6 +431,16 @@ const frames = async (n: number) => {
   for (let i = 0; i < n; i++) await frame();
 };
 
+/** Wait until an async `ok()` holds, up to `ms`. */
+async function untilAsync(ok: () => Promise<boolean>, ms = 3000): Promise<boolean> {
+  const end = performance.now() + ms;
+  while (!(await ok())) {
+    if (performance.now() > end) return false;
+    await frame();
+  }
+  return true;
+}
+
 /** Wait until `ok()` holds, checking every frame, up to `ms`. */
 async function until(ok: () => boolean, ms = 3000): Promise<boolean> {
   const end = performance.now() + ms;
@@ -2163,6 +2173,59 @@ function countDiagnostics(view: EditorView): number {
   return count;
 }
 
+/** What the pool has running, from the app's own view of it. */
+interface ServerStatus {
+  language: string;
+  root: string;
+  state: { kind: string; pid?: number; rssBytes?: number | null; reason?: string | null };
+}
+
+/**
+ * Pinned language servers start at launch, before any tab is open (02-06).
+ *
+ * The scenario is run with TINKERPAD_LSP_PREWARM naming the test plugin's
+ * server and a language that doesn't exist, so it also covers the "logs and
+ * carries on" case.
+ */
+async function prewarmScenario(ctx: SelftestContext, check: Check) {
+  const servers = async (): Promise<ServerStatus[]> => invoke<ServerStatus[]>("server_status");
+
+  // Nothing is open, and the tab strip is empty: anything running was started
+  // by pre-warm alone.
+  for (const t of [...ctx.tabs.tabs]) await ctx.tabs.close(t);
+
+  let warmed: ServerStatus | undefined;
+  const ready = await untilAsync(async () => {
+    warmed = (await servers()).find((s) => s.language === "node-check");
+    return warmed?.state.kind === "ready";
+  }, 30_000);
+  await check(
+    "a pinned language server is up with no playground open",
+    ready && ctx.tabs.tabs.length === 0,
+    JSON.stringify(warmed ?? null),
+  );
+  await check(
+    "and it is a real process, rooted at the library",
+    (warmed?.state.pid ?? 0) > 0 && warmed?.root !== "",
+    JSON.stringify({ pid: warmed?.state.pid, root: warmed?.root }),
+  );
+
+  const all = await servers();
+  await check(
+    "a pinned language that does not exist is skipped, not fatal",
+    all.every((s) => s.language !== "not-a-language"),
+    JSON.stringify(all.map((s) => s.language)),
+  );
+
+  // Memory is sampled for the status strip (02-08).
+  let sampled: number | null | undefined;
+  const measured = await untilAsync(async () => {
+    sampled = (await servers()).find((s) => s.language === "node-check")?.state.rssBytes;
+    return typeof sampled === "number" && sampled > 0;
+  }, 30_000);
+  await check("its memory is sampled", measured, `${Math.round((sampled ?? 0) / 1024)} KiB`);
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -2192,6 +2255,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "library-trash": libraryTrashScenario,
   locked: lockedScenario,
   lsp: lspScenario,
+  prewarm: prewarmScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
 };

@@ -12,6 +12,7 @@ pub mod events;
 mod library;
 mod logging;
 mod lsp;
+mod lsp_settings;
 mod packages;
 mod playgrounds;
 mod plugins;
@@ -54,6 +55,8 @@ pub struct AppState {
     /// The editor's side of those servers: one channel per tab, URIs and
     /// request ids translated in both directions (02-03).
     proxy: Arc<tinkerpad_lsp::Proxy>,
+    /// `[lsp]` from settings.toml: pre-warmed languages and idle overrides.
+    lsp_settings: lsp_settings::LspSettings,
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
     library: Arc<Library>,
@@ -71,8 +74,10 @@ mod commands {
 
     /// The UI calls this once its script has loaded. The reply carries the
     /// time since process start, which is the launch-to-interactive number.
-    #[tauri::command]
-    pub fn ping(state: State<'_, AppState>) -> Result<(), CommandError> {
+    // Async so it runs on the app's runtime: pre-warming spawns processes at
+    // the end of it, and that needs a tokio context (02-06).
+    #[tauri::command(async)]
+    pub async fn ping(state: State<'_, AppState>) -> Result<(), CommandError> {
         let ready_ms = STARTED
             .get()
             .map(|s| s.elapsed().as_millis() as u64)
@@ -89,6 +94,10 @@ mod commands {
                 .events
                 .publish(Scope::App, CoreEvent::Toast { level, message });
         }
+        // The window is up, so pinned language servers may start now (02-06).
+        // Once only, however many times the UI reloads.
+        static PREWARMED: std::sync::Once = std::sync::Once::new();
+        PREWARMED.call_once(|| crate::lsp::prewarm(&state));
         Ok(())
     }
 
@@ -346,6 +355,12 @@ mod commands {
         Ok(())
     }
 
+    /// Every language server the pool holds, with its state and memory.
+    #[tauri::command]
+    pub fn server_status(state: State<'_, AppState>) -> Vec<crate::lsp::ServerStatus> {
+        crate::lsp::status(&state)
+    }
+
     /// Restart a language's server, as the status strip's button will
     /// (02-08). Returns false if no server is running for it.
     #[tauri::command(async)]
@@ -505,6 +520,9 @@ pub fn run() {
             let runs = Runs::new(bus.clone(), data_dir.join("scratch"), toolchains.clone());
             let lsp = lsp::pool(bus.clone());
             let proxy = lsp::proxy(bus.clone());
+            let lsp_settings = lsp_settings::LspSettings::load(
+                &std::fs::read_to_string(settings::path(&data_dir)).unwrap_or_default(),
+            );
             app.manage(AppState {
                 events: bus,
                 runs,
@@ -513,6 +531,7 @@ pub fn run() {
                 toolchains,
                 lsp,
                 proxy,
+                lsp_settings,
                 plugins: RwLock::new(registry),
                 library: playgrounds,
                 _library_watcher: Mutex::new(library_watcher),
@@ -543,6 +562,7 @@ pub fn run() {
             commands::lsp_send,
             commands::lsp_close,
             commands::restart_server,
+            commands::server_status,
             commands::dump_examples,
             commands::load_session,
             commands::save_session,
