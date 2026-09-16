@@ -13,6 +13,7 @@
 //! | `test/stderr` | writes `params.text` to stderr, replies `null` |
 //! | `test/halt` | writes half a frame and closes stdout, leaving the reader mid-message |
 //! | `test/crash` | exits 101 without warning, as a crashing server does |
+//! | `test/seen` | replies with the root it was given and the configuration it was told |
 //! | `test/docs` | replies with the documents it has been told about, by URI |
 //! | `test/wait` | replies after `params.ms`, so a request can be in flight |
 //! | `test/publish` | sends `publishDiagnostics` for `params.uri` |
@@ -38,6 +39,10 @@ fn main() {
     }
     let mut input = BufReader::new(std::io::stdin());
     let mut shutdown = false;
+    // What the client told this server about its workspace, for test/seen.
+    let mut root = Value::Null;
+    let mut folders = Value::Null;
+    let mut configuration = Value::Null;
     // uri -> the last version we were told about.
     let mut docs: BTreeMap<String, i64> = BTreeMap::new();
 
@@ -55,6 +60,11 @@ fn main() {
 
         match method.as_str() {
             "initialize" => {
+                root = params["rootUri"].clone();
+                folders = params["workspaceFolders"].clone();
+                if !params["initializationOptions"].is_null() {
+                    configuration = params["initializationOptions"].clone();
+                }
                 if let Ok(ms) = std::env::var("TINKERPAD_FAKELSP_INIT_DELAY_MS")
                     && let Ok(ms) = ms.parse::<u64>()
                 {
@@ -119,6 +129,18 @@ fn main() {
                 let bytes = params["bytes"].as_u64().unwrap_or(0) as usize;
                 reply(id, json!({ "text": "x".repeat(bytes) }));
             }
+            "workspace/didChangeConfiguration" => {
+                configuration = params["settings"].clone();
+            }
+            "test/seen" => reply(
+                id,
+                json!({
+                    "pid": std::process::id(),
+                    "rootUri": root,
+                    "workspaceFolders": folders,
+                    "configuration": configuration,
+                }),
+            ),
             "test/crash" => {
                 // No reply, no shutdown: exactly what a panicking server does.
                 eprintln!("fakelsp: crashing on request");

@@ -1,0 +1,17 @@
+{
+  "//": "Written by TinkerPad the first time its TypeScript language server starts, and never overwritten. It is what makes loose .ts files in this folder type-check sensibly. Edit it freely.",
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["*/*.ts", "*/*.js"]
+}

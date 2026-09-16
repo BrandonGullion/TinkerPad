@@ -66,6 +66,14 @@ pub struct AppState {
     startup_notices: Mutex<Vec<(Level, String)>>,
 }
 
+impl AppState {
+    /// The per-plugin scratch folders: build output, and the shared
+    /// language-server workspaces (02-07).
+    fn scratch_root(&self) -> PathBuf {
+        self.data_dir.join("scratch")
+    }
+}
+
 mod commands {
     use tauri::State;
     use tinkerpad_core::CommandError;
@@ -440,6 +448,25 @@ mod commands {
             .filter(|s| !s.is_empty())
     }
 
+    /// What is in a folder. Self-tests only, so a scenario can check that a
+    /// file the app was supposed to write is there.
+    #[tauri::command]
+    pub fn selftest_list_dir(dir: String) -> Result<Vec<String>, CommandError> {
+        use tinkerpad_core::ErrorCode;
+        if selftest_scenario().is_none() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidInput,
+                "only available while self-testing",
+            ));
+        }
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| CommandError::new(ErrorCode::Io, format!("could not read {dir}: {e}")))?;
+        Ok(entries
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect())
+    }
+
     /// Self-tests only: change a playground's main file the way another program
     /// would, bypassing the library, so the file watcher reports it.
     #[tauri::command(async)]
@@ -568,6 +595,7 @@ pub fn run() {
             commands::save_session,
             commands::selftest_scenario,
             commands::selftest_report,
+            commands::selftest_list_dir,
             commands::selftest_touch_source,
         ])
         .build(tauri::generate_context!())

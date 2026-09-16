@@ -37,6 +37,16 @@ files = [{ path = "package.json", template = "package.json" }]
 command = "typescript-language-server"
 args = ["--stdio"]
 workspace = "library_root"
+# Written into the library the first time the server starts, and never again:
+# without it, loose .ts files are checked as JavaScript with no DOM or Node
+# types. Yours to edit afterwards.
+# The server also needs a TypeScript to analyse with, and looks for one in the
+# workspace: `npm install` once in your library folder is what provides it. See
+# README.md.
+workspace_files = [
+  { path = "tsconfig.json", template = "tsconfig.json" },
+  { path = "package.json", template = "library-package.json" },
+]
 
 [deps]
 # Installs into the playground's own node_modules, next to its package.json.

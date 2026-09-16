@@ -105,3 +105,23 @@ An unchanged rerun still recompiles your crate, because TinkerPad saves
 build and it takes under 0.1 s. These times assume `serde`'s source is already
 downloaded; on a machine that has never fetched it, the first build downloads it
 too.
+
+## The language server
+
+Completions, hover, and live errors come from rust-analyzer, which ships with
+rustup:
+
+```sh
+rustup component add rust-analyzer
+```
+
+One rust-analyzer serves every Rust playground. It is rooted at a folder of
+TinkerPad's own (`<app-data>/scratch/rust`) rather than at any playground, and
+each open playground adds its `Cargo.toml` to the server's `linkedProjects`
+setting; opening another one adds it without a restart, and closing a tab takes
+it out again. That is what `[lsp.register]` in the manifest does.
+
+`checkOnSave` is off: a background `cargo check` would compete with the run
+button for the shared target folder, and the errors it would report are the ones
+you get by running. Syntax and type errors still appear as you type, from
+rust-analyzer itself.

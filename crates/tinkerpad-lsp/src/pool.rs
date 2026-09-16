@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde_json::Value;
 use tinkerpad_core::{CoreEvent, LanguageId, Level, ServerState};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -45,6 +46,9 @@ impl ServerKey {
 pub struct Attachment {
     server: Arc<ServerHandle>,
     uri: String,
+    /// Whether this playground was added to the server's registered setting,
+    /// and so has to be taken out again (work item 02-07).
+    registered: bool,
 }
 
 impl Attachment {
@@ -68,9 +72,16 @@ impl Drop for Attachment {
         // Drop can't await, and the close should not hold up closing a tab.
         let server = self.server.clone();
         let uri = std::mem::take(&mut self.uri);
+        // Taken out of the registered list here and now, so a tab opening
+        // straight after this one closes sees the list as it will be; the
+        // server is told from the task below.
+        let forgotten = self.registered && server.forget_registration(&uri);
         tokio::spawn(async move {
             if let Err(e) = server.did_close(&uri).await {
                 debug!(error = %e, uri, "didClose was not delivered");
+            }
+            if forgotten {
+                server.push_registrations().await;
             }
         });
     }
@@ -114,6 +125,7 @@ impl LspPool {
         let attachment = Attachment {
             server: server.clone(),
             uri: uri.to_owned(),
+            registered: false,
         };
         server.did_open(uri, &config.language, text).await?;
         Ok(attachment)
@@ -127,9 +139,51 @@ impl LspPool {
     /// diagnostics. The core watches those messages go past (see
     /// [`ServerHandle::sync_from_editor`]) rather than numbering them itself.
     pub fn attach_editor(&self, config: &ServerConfig, uri: &str) -> Attachment {
+        self.attach_registered(config, uri, None)
+    }
+
+    /// [`attach_editor`](Self::attach_editor), plus what this playground adds
+    /// to the server's registered setting — the path to its `Cargo.toml`, for
+    /// rust-analyzer's `linkedProjects` (work item 02-07).
+    ///
+    /// The setting is pushed as soon as the server is ready, before the editor
+    /// opens the document, so the server knows which project the file belongs
+    /// to when it arrives.
+    pub fn attach_registered(
+        &self,
+        config: &ServerConfig,
+        uri: &str,
+        registration: Option<Value>,
+    ) -> Attachment {
+        let registered = registration.is_some() && config.register_setting.is_some();
+        let value = registration.filter(|_| registered);
+
+        // A server starting for the first time is told about this playground
+        // before it starts, so its handshake carries it: one that reads its
+        // projects once would otherwise find none (02-07). An already-running
+        // server is told the usual way, and asked to reload.
+        let (server, fresh) = self.server_or_new(config, |server| {
+            if let Some(value) = value.clone() {
+                server.note_registration(uri, value);
+            }
+        });
+        if let Some(value) = value
+            && !fresh
+        {
+            // A running server with nothing registered has nothing loaded, and
+            // one that found no projects when it started does not reliably
+            // pick them up from a configuration change (rust-analyzer does
+            // not). Starting it again is cheap when it is doing nothing, and
+            // its handshake then carries the project.
+            if server.note_registration(uri, value) {
+                let server = server.clone();
+                tokio::spawn(async move { server.push_registrations().await });
+            }
+        }
         Attachment {
-            server: self.server_for(config),
+            server,
             uri: uri.to_owned(),
+            registered,
         }
     }
 
@@ -139,18 +193,21 @@ impl LspPool {
         path_to_uri(path)
     }
 
-    /// The server for `config`, started if it isn't already.
-    pub fn server_for(&self, config: &ServerConfig) -> Arc<ServerHandle> {
+    /// The server for `config`, started if it isn't already, and whether this
+    /// call is what started it. `before_start` runs on a new server before it
+    /// is connected, which is the only moment its handshake can be influenced.
+    fn server_or_new(
+        &self,
+        config: &ServerConfig,
+        before_start: impl FnOnce(&Arc<ServerHandle>),
+    ) -> (Arc<ServerHandle>, bool) {
         let key = ServerKey::of(config);
         let mut servers = self.servers.lock().expect("servers lock");
         if let Some(server) = servers.get(&key) {
             // A crashed server is already on its way back (02-05), so tabs
-            // share it as usual and their requests wait. One the pool gave up
-            // on gets another go, because opening a tab is someone asking for
-            // it again.
-            // A server that stopped (idle, or given up on) or is in the
-            // middle of stopping starts again: someone is asking for it.
-            // `restart` waits for the old process before starting another.
+            // share it as usual and their requests wait. One that stopped —
+            // idle, or given up on — starts again, because opening a tab is
+            // someone asking for it.
             if matches!(
                 server.state(),
                 ServerState::Stopped { .. } | ServerState::Stopping
@@ -160,13 +217,20 @@ impl LspPool {
             } else {
                 debug!(language = %key.language, "sharing the running server");
             }
-            return server.clone();
+            return (server.clone(), false);
         }
         info!(language = %key.language, root = ?key.root, "starting language server");
-        let server = ServerHandle::start(config);
+        let server = ServerHandle::prepare(config);
+        before_start(&server);
+        server.begin();
         servers.insert(key, server.clone());
         self.publish(&server);
-        server
+        (server, true)
+    }
+
+    /// The server for `config`, started if it isn't already.
+    pub fn server_for(&self, config: &ServerConfig) -> Arc<ServerHandle> {
+        self.server_or_new(config, |_| {}).0
     }
 
     /// The server for a language and root, if one is running.

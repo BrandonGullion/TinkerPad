@@ -182,6 +182,8 @@ one you're on, so a mistake that only affects macOS still fails on Windows.
 | `[helper].args`, `[helper].env` | As for `[run]`. |
 | `[lsp].args`, `[lsp].env` | As for `[run]`. |
 | `[lsp].workspace` | Defaults to `playground_dir`. |
+| `[lsp].workspace_files` | `[{ path = "tsconfig.json", template = "tsconfig.json" }]`: files the server's *workspace* needs, written there the first time it starts and never overwritten. Same shape as `[scaffold].files`, but relative to the workspace root rather than a playground. |
+| `[lsp.register].reload` | A request to send after the registered setting changes, for a server that reads it once: `"rust-analyzer/reloadWorkspace"`. |
 | `[deps]` with `kind = "command"` | Needs `add = ["cargo", "add", "{name}@{version}"]`. |
 | `[deps]` with `kind = "inline-directive"` | Needs `directive = "#:package {name}@{version}"`. |
 | `[output].error_regex_multiline` | `true` to match across up to three lines. |

@@ -46,16 +46,29 @@ env = { CARGO_TERM_COLOR = "never" }
 
 [lsp]
 # rust-analyzer ships with rustup ("rustup component add rust-analyzer").
-# One server per playground folder for now; 02-07 gives every Rust playground a
-# shared server through a scratch workspace and linkedProjects.
+# One server for every Rust playground, rooted at a folder of TinkerPad's own
+# rather than any playground. The playgrounds are named through [lsp.register]
+# below, so opening another one adds it without a restart.
 command = "rust-analyzer"
-workspace = "playground_dir"
+workspace = "scratch_workspace"
+
+[lsp.register]
+# Each open playground adds its crate to the server's linkedProjects, which is
+# how rust-analyzer serves several unrelated crates from one process.
+setting = "rust-analyzer.linkedProjects"
+value = "{dir}/Cargo.toml"
+# rust-analyzer reads its projects when told to, not on every config change.
+reload = "rust-analyzer/reloadWorkspace"
 
 [lsp.init_options]
 # A playground is a scratch crate. Build scripts and proc macros are worth the
 # wait for useful completions; a background check is not, since it would fight
 # the run button over the shared target folder.
-cargo = { buildScripts = { enable = true } }
+#
+# targetDir keeps rust-analyzer out of that folder entirely: without it, the
+# server and the run button take turns holding cargo's lock, and a server that
+# loses the race reports "failed to fetch workspace" and serves nothing.
+cargo = { buildScripts = { enable = true }, targetDir = "analyzer-target" }
 checkOnSave = false
 procMacro = { enable = true }
 
