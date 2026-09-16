@@ -150,22 +150,33 @@ commands. Keep both surfaces small and boring.
 ### 4.1 Pool
 
 ```rust
-struct ServerKey { language: LanguageId, workspace_root: PathBuf }
+struct ServerKey { language: String, root: Option<PathBuf> }
 
 struct LspPool {
-    servers: HashMap<ServerKey, Arc<ServerHandle>>,
-    policy: IdlePolicy,              // Never | After(Duration) | MemoryAbove(bytes)
+    servers: Mutex<HashMap<ServerKey, Arc<ServerHandle>>>,
+    events: Option<mpsc::UnboundedSender<CoreEvent>>,   // state changes for the UI
 }
 
 struct ServerHandle {
-    state: watch::Sender<ServerState>,
-    child: Supervised<Child>,        // from tinkerpad-process
-    outbound: mpsc::Sender<RawMessage>,
-    pending: Mutex<HashMap<RequestId, oneshot::Sender<Response>>>,
-    open_docs: Mutex<HashMap<Url, DocState>>,   // for replay after restart
-    last_activity: AtomicInstant,
+    state: watch::Sender<ServerState>,   // Stopped | Starting | Ready | Crashed | Stopping
+    sender: Option<Sender>,              // into the transport's writer
+    kill: Option<KillHandle>,
+    pending: Mutex<HashMap<i64, oneshot::Sender<RawMessage>>>,
+    open_docs: Mutex<HashMap<String, DocState>>,   // uri -> version + text, for replay
+    from_server: broadcast::Sender<RawMessage>,    // notifications, for the proxy
 }
 ```
+
+The pool is told what to start by a `ServerConfig` — language, root, a
+`SpawnSpec`, `initializationOptions` — which the app builds from the plugin's
+`[lsp]` section. `tinkerpad-lsp` never reads `plugin.toml` itself, so the
+dependency direction in the root `Cargo.toml` holds.
+
+`LspPool::attach(config, uri, text)` starts the server if needed, waits for the
+handshake, sends `didOpen`, and returns an `Attachment`. Dropping it sends
+`didClose`; that is the only thing closing a tab does to a server. The core owns
+each document's version counter, because LSP requires versions to increase per
+document and the editor's own numbering can't be trusted across a reload.
 
 Rules:
 
@@ -183,7 +194,8 @@ Rules:
   (1s, 2s, 4s, cap 30s, give up after 5), respawn, `initialize`, replay `didOpen` for
   every doc in `open_docs`. UI shows a toast; diagnostics come back on their own.
 - **Clean shutdown.** `shutdown` request → `exit` notification → wait 2s → kill.
-  Done concurrently for all servers on app exit.
+  Done concurrently for all servers on app exit, under a 3s budget for the lot:
+  quitting is never held up by a wedged server.
 
 ### 4.2 Proxy: why the core sits in the middle
 

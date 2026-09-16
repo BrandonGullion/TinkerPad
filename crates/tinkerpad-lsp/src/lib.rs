@@ -9,8 +9,14 @@
 
 pub mod framing;
 pub mod jsonrpc;
+mod pool;
+mod server;
 mod transport;
 
 pub use framing::{Decoder, FrameError, encode, encode_into};
 pub use jsonrpc::{MessageKind, ParseError, RawMessage};
+pub use pool::{Attachment, LspPool, SHUTDOWN_BUDGET, ServerKey};
+pub use server::{
+    DocState, RequestError, START_TIMEOUT, STOP_GRACE, ServerConfig, ServerHandle, path_to_uri,
+};
 pub use transport::{Closed, Sender, Transport, TransportError, TransportEvent};

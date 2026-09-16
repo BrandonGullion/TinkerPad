@@ -12,12 +12,17 @@
 //! | `test/big` | replies with a string of `params.bytes` characters |
 //! | `test/stderr` | writes `params.text` to stderr, replies `null` |
 //! | `test/halt` | writes half a frame and closes stdout, leaving the reader mid-message |
+//! | `test/docs` | replies with the documents it has been told about, by URI |
+//! | `textDocument/did*` | tracked, so `test/docs` can answer |
 //! | `shutdown` | replies `null` |
 //! | `exit` | exits, 0 after `shutdown` and 1 otherwise, as LSP says |
 //!
 //! `TINKERPAD_FAKELSP_GREETING` is written to stderr at startup, so a test can
 //! watch for a server announcing itself before it is spoken to.
+//! `TINKERPAD_FAKELSP_INIT_DELAY_MS` holds up the `initialize` reply, which is
+//! what a real server does while it loads a workspace.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 
 use serde_json::{Value, json};
@@ -28,6 +33,8 @@ fn main() {
     }
     let mut input = BufReader::new(std::io::stdin());
     let mut shutdown = false;
+    // uri -> the last version we were told about.
+    let mut docs: BTreeMap<String, i64> = BTreeMap::new();
 
     while let Some(body) = read_message(&mut input) {
         let message: Value = match serde_json::from_slice(&body) {
@@ -42,11 +49,53 @@ fn main() {
         let id = message.get("id").cloned();
 
         match method.as_str() {
-            "initialize" => reply(
+            "initialize" => {
+                if let Ok(ms) = std::env::var("TINKERPAD_FAKELSP_INIT_DELAY_MS")
+                    && let Ok(ms) = ms.parse::<u64>()
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                }
+                reply(
+                    id,
+                    json!({
+                        "capabilities": { "textDocumentSync": 1, "hoverProvider": true },
+                        "serverInfo": { "name": "fakelsp", "version": "1", "pid": std::process::id() },
+                    }),
+                );
+            }
+            "textDocument/didOpen" => {
+                let doc = &params["textDocument"];
+                let uri = doc["uri"].as_str().unwrap_or_default().to_owned();
+                let version = doc["version"].as_i64().unwrap_or(0);
+                if docs.insert(uri.clone(), version).is_some() {
+                    eprintln!("fakelsp: {uri} was opened twice");
+                }
+            }
+            "textDocument/didChange" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let version = params["textDocument"]["version"].as_i64().unwrap_or(0);
+                match docs.get_mut(uri) {
+                    Some(seen) => {
+                        if version <= *seen {
+                            eprintln!("fakelsp: {uri} version went {seen} -> {version}");
+                        }
+                        *seen = version;
+                    }
+                    None => eprintln!("fakelsp: change to unopened {uri}"),
+                }
+            }
+            "textDocument/didClose" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                docs.remove(uri);
+            }
+            "test/docs" => reply(
                 id,
                 json!({
-                    "capabilities": { "textDocumentSync": 1, "hoverProvider": true },
-                    "serverInfo": { "name": "fakelsp", "version": "1", "pid": std::process::id() },
+                    "pid": std::process::id(),
+                    "docs": docs
+                        .iter()
+                        .map(|(uri, version)| json!({ "uri": uri, "version": version }))
+                        .collect::<Vec<_>>(),
                 }),
             ),
             "test/echo" => reply(id, params),

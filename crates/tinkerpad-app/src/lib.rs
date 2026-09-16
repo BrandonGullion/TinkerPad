@@ -11,6 +11,7 @@
 pub mod events;
 mod library;
 mod logging;
+mod lsp;
 mod packages;
 mod playgrounds;
 mod plugins;
@@ -47,6 +48,9 @@ pub struct AppState {
     /// Where the open tabs are remembered (`session.rs`).
     session_path: PathBuf,
     toolchains: Arc<Toolchains>,
+    /// Language servers, kept alive across tabs (work item 02-02). Empty until
+    /// the editor client attaches to one (02-04).
+    lsp: Arc<tinkerpad_lsp::LspPool>,
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
     library: Arc<Library>,
@@ -434,12 +438,14 @@ pub fn run() {
             let library_watcher = library::watch(&playgrounds, bus.clone());
 
             let runs = Runs::new(bus.clone(), data_dir.join("scratch"), toolchains.clone());
+            let lsp = lsp::pool(bus.clone());
             app.manage(AppState {
                 events: bus,
                 runs,
                 session_path: session::path(&data_dir),
                 data_dir,
                 toolchains,
+                lsp,
                 plugins: RwLock::new(registry),
                 library: playgrounds,
                 _library_watcher: Mutex::new(library_watcher),
@@ -473,6 +479,15 @@ pub fn run() {
             commands::selftest_report,
             commands::selftest_touch_source,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running TinkerPad");
+        .build(tauri::generate_context!())
+        .expect("error while building TinkerPad")
+        .run(|app, event| {
+            // Quitting: every language server gets `shutdown` then `exit`, all
+            // at once, and is killed if it doesn't go. The pool caps the whole
+            // thing at three seconds, so quitting is never held up (02-02).
+            if matches!(event, tauri::RunEvent::Exit) {
+                let pool = app.state::<AppState>().lsp.clone();
+                tauri::async_runtime::block_on(pool.shutdown());
+            }
+        });
 }
