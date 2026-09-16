@@ -6,3 +6,11 @@
 //! the server to rewrite URIs and own request ids.
 //!
 //! See `docs/ARCHITECTURE.md` §4 and work items 02-01 through 02-07.
+
+pub mod framing;
+pub mod jsonrpc;
+mod transport;
+
+pub use framing::{Decoder, FrameError, encode, encode_into};
+pub use jsonrpc::{MessageKind, ParseError, RawMessage};
+pub use transport::{Closed, Sender, Transport, TransportError, TransportEvent};
