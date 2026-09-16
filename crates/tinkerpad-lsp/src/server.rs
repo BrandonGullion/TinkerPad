@@ -231,6 +231,29 @@ impl ServerHandle {
     /// Make a request and wait for its answer. If the server is still
     /// starting, the request waits for the handshake ([`START_TIMEOUT`]).
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, RequestError> {
+        let (_, answer) = self.begin_request(method, params).await?;
+        let response = answer.await.map_err(|_| self.disconnected())?;
+        if let Some(error) = response.error_object() {
+            return Err(RequestError::Failed {
+                method: method.to_owned(),
+                code: error["code"].as_i64().unwrap_or(0),
+                message: error["message"].as_str().unwrap_or("no message").to_owned(),
+            });
+        }
+        Ok(response.result().cloned().unwrap_or(Value::Null))
+    }
+
+    /// Send a request and hand back its id along with the answer to come.
+    ///
+    /// The id is the core's, not the editor's: the proxy maps between them, so
+    /// a server restart can never leave the editor holding an id that means
+    /// something else (`docs/ARCHITECTURE.md` §4.2). It is also what
+    /// [`cancel_request`](Self::cancel_request) needs.
+    pub async fn begin_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<(i64, oneshot::Receiver<RawMessage>), RequestError> {
         self.wait_ready().await?;
         let sender = self.sender.as_ref().ok_or_else(|| self.not_running())?;
 
@@ -246,16 +269,25 @@ impl ServerHandle {
             self.pending.lock().expect("pending lock").remove(&id);
             return Err(self.disconnected());
         }
+        Ok((id, rx))
+    }
 
-        let response = rx.await.map_err(|_| self.disconnected())?;
-        if let Some(error) = response.error_object() {
-            return Err(RequestError::Failed {
-                method: method.to_owned(),
-                code: error["code"].as_i64().unwrap_or(0),
-                message: error["message"].as_str().unwrap_or("no message").to_owned(),
-            });
-        }
-        Ok(response.result().cloned().unwrap_or(Value::Null))
+    /// Tell the server to stop working on a request, and forget it. Sent when
+    /// the tab that asked goes away; a server is free to answer anyway, and
+    /// the answer is then dropped.
+    pub async fn cancel_request(&self, id: i64) {
+        self.pending.lock().expect("pending lock").remove(&id);
+        let _ = self
+            .notify_now("$/cancelRequest", json!({ "id": id }))
+            .await;
+    }
+
+    /// Send a message the caller has already built, after the handshake.
+    /// The proxy uses this to pass a notification through untouched.
+    pub async fn send(&self, message: RawMessage) -> Result<(), RequestError> {
+        self.wait_ready().await?;
+        let sender = self.sender.as_ref().ok_or_else(|| self.not_running())?;
+        sender.send(message).await.map_err(|_| self.disconnected())
     }
 
     /// Send a notification, which has no answer.

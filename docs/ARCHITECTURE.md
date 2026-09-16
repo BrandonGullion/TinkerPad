@@ -212,8 +212,31 @@ because the core in the middle buys three things:
 
 What the proxy deliberately does *not* do is rewrite positions. Playground kinds
 that need wrapper code store it in the file as locked lines (see `PLUGINS.md` §3), so
-the server sees exactly what the editor shows. The proxy has a table of methods that
-carry URIs and passes everything else through byte-for-byte.
+the server sees exactly what the editor shows.
+
+**How rewriting works.** A message is walked for the keys that hold URIs
+(`uri`, `targetUri`, `newUri`, `oldUri`, `documentUri`, `externalUri`, and the
+keys of a `WorkspaceEdit.changes` object); everything else passes through
+byte-for-byte. Walking by key rather than by a path per method means a server
+extension nobody here has heard of still gets its URIs translated.
+`uri::REWRITTEN_METHODS` lists the methods known to carry one, and every entry
+is covered by a round-trip test. A file URI that isn't an open playground —
+a dependency a go-to-definition landed in — is left as a `file:///` URI, which
+is how 02-09 opens it read-only.
+
+**Ids.** The editor numbers its requests per tab, so two tabs both send id 1.
+The core allocates an id of its own per request and keeps
+`core_id → (tab, editor_id, method, started)`; the answer goes back to the tab
+that asked, under the id it used. A tab that closes cancels what it was waiting
+for (`$/cancelRequest`) and drops its entries, so a late answer goes nowhere.
+A request to a server that isn't running is answered with an error rather than
+left hanging.
+
+**Questions the server asks us** — `workspace/configuration`,
+`client/registerCapability`, `window/workDoneProgress/create` — are answered by
+the core, not passed to the editor: they are about the session, which the core
+owns. `window/showMessage` becomes a toast, `window/logMessage` a log line, and
+`textDocument/publishDiagnostics` goes to the one tab that shows that document.
 
 ### 4.3 Transport
 
