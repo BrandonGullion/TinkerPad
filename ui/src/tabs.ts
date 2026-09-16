@@ -8,7 +8,7 @@
 // The core is the source of truth for playground metadata: names, languages,
 // and kinds are read from the library listing, never kept per tab.
 
-import type { EditorState } from "@codemirror/state";
+import { Compartment, type EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import { annotationsExtension, annotationsOf, type EditorAnnotation, setAnnotations } from "./annotations";
@@ -16,7 +16,10 @@ import { annotationsExtension, annotationsOf, type EditorAnnotation, setAnnotati
 import type { Editor } from "./editor";
 import { invoke } from "./ipc";
 import type { RunState, StatusBar } from "./layout";
+import { forEachDiagnostic } from "@codemirror/lint";
+
 import { findLocked, lockedLinesExtension } from "./locked";
+import type { LspSession } from "./lsp";
 import { OutputPane } from "./output";
 import { pick, prompt } from "./picker";
 import { LOCKED_HINT, MISMATCH_NOTE, type OpenedPlayground } from "./playground";
@@ -71,6 +74,13 @@ export interface Tab {
   opened: Pick<OpenedPlayground, "prelude" | "postlude" | "lock">;
   saveTimer: number;
   saving: Promise<void> | null;
+  /// Holds the highlighter and the language server's extensions, which arrive
+  /// after the tab is already open and usable.
+  language: Compartment;
+  /// The tab's language server connection, once it is up (02-04).
+  lsp: LspSession | null;
+  /// Set while the connection is being made, so closing the tab can wait.
+  connecting: Promise<void> | null;
 }
 
 export class TabManager implements RunHost {
@@ -196,9 +206,9 @@ export class TabManager implements RunHost {
   cycleAnnotation(delta: number): void {
     const tab = this.active;
     if (!tab) return;
-    const list = annotationsOf(this.ui.editor.view.state);
+    const list = this.marks();
     if (list.length === 0) {
-      this.ui.status.flashNote("No errors or warnings from the last run.");
+      this.ui.status.flashNote("No errors or warnings to go to.");
       return;
     }
     const view = this.ui.editor.view;
@@ -208,6 +218,32 @@ export class TabManager implements RunHost {
         ? (list.find((a) => a.line > current) ?? list[0])
         : ([...list].reverse().find((a) => a.line < current) ?? list.at(-1));
     if (next) this.goTo(next.line, next.col, next.message);
+  }
+
+  /**
+   * Everything worth walking with `F8` in the active tab: what the last run
+   * reported (01-13) and what the language server is reporting now (02-04),
+   * in document order. Both mark the same kind of thing, so one key walks
+   * both rather than the user having to remember which is which.
+   */
+  private marks(): EditorAnnotation[] {
+    const state = this.ui.editor.view.state;
+    const marks: EditorAnnotation[] = [...annotationsOf(state)];
+    forEachDiagnostic(state, (diagnostic, from) => {
+      const line = state.doc.lineAt(from);
+      marks.push({
+        line: line.number,
+        col: from - line.from + 1,
+        message: diagnostic.message,
+        severity: diagnostic.severity === "error" ? "error" : "warning",
+      });
+    });
+    // A line can carry both a run error and a live diagnostic; one stop each
+    // would mean pressing F8 twice to get anywhere.
+    const seen = new Set<number>();
+    return marks
+      .sort((a, b) => a.line - b.line || (a.col ?? 0) - (b.col ?? 0))
+      .filter((mark) => !seen.has(mark.line) && seen.add(mark.line));
   }
 
   /** Put the cursor on a line of the active tab and scroll it into view. */
@@ -303,8 +339,12 @@ export class TabManager implements RunHost {
       opened: { prelude: null, postlude: null, lock: "none" },
       saveTimer: 0,
       saving: null,
+      language: new Compartment(),
+      lsp: null,
+      connecting: null,
     };
     this.load(tab, opened);
+    void this.connectLanguage(tab);
     this.buildTabElement(tab);
     this.tabs.push(tab);
     this.ui.tabStrip.replaceChildren(...this.tabs.map((t) => t.element), this.newButton);
@@ -331,6 +371,7 @@ export class TabManager implements RunHost {
     tab.state = this.ui.editor.createState(opened.text, [
       lockedLinesExtension(ranges, () => this.ui.status.flashNote(LOCKED_HINT)),
       annotationsExtension(),
+      tab.language.of([]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) this.edited(tab);
       }),
@@ -339,6 +380,54 @@ export class TabManager implements RunHost {
     tab.dirty = false;
     tab.opened = { prelude: opened.prelude, postlude: opened.postlude, lock: opened.lock };
     tab.note = opened.lock === "mismatch" || (opened.lock === "locked" && !ranges) ? MISMATCH_NOTE : null;
+  }
+
+  /**
+   * Load the tab's highlighter and connect it to its language server, then
+   * reconfigure the tab with what came back.
+   *
+   * This runs after the tab is open on purpose: a cold rust-analyzer takes
+   * seconds to answer its handshake, and a tab must never wait for one. The
+   * editor works throughout; the language features appear when they appear.
+   */
+  private async connectLanguage(tab: Tab): Promise<void> {
+    const summary = this.listing.get(tab.id);
+    const plugin = summary && this.plugin(summary.language);
+    if (!summary) return;
+    // The LSP client is a chunk of its own: a window that only ever shows
+    // plain-text playgrounds never downloads it.
+    const work = import("./lsp")
+      .then(({ languageExtensions }) =>
+        languageExtensions(
+          tab.id,
+          plugin?.highlighter ?? null,
+          plugin?.lsp ?? false,
+        ),
+      )
+      .then(({ extensions, session }) => {
+        // The tab may have been closed while the server was starting.
+        if (!this.tabs.includes(tab)) {
+          void session?.close();
+          return;
+        }
+        tab.lsp = session;
+        this.reconfigure(tab, extensions);
+      })
+      .catch((error: unknown) => {
+        console.warn("language support failed to load", error);
+      })
+      .finally(() => {
+        tab.connecting = null;
+      });
+    tab.connecting = work;
+    await work;
+  }
+
+  /** Put an extension into the tab's language compartment, wherever it lives. */
+  private reconfigure(tab: Tab, extensions: Extension): void {
+    const effects = tab.language.reconfigure(extensions);
+    if (tab === this.active) this.ui.editor.view.dispatch({ effects });
+    else tab.state = tab.state.update({ effects }).state;
   }
 
   activate(tab: Tab): void {
@@ -397,6 +486,8 @@ export class TabManager implements RunHost {
     this.tabs.splice(index, 1);
     tab.element.remove();
     tab.output.clear();
+    // Closing the document leaves the server running for the next tab (02-02).
+    void this.disconnectLanguage(tab);
     if (this.active === tab) {
       this.active = null;
       const next = this.tabs[index] ?? this.tabs[index - 1];
@@ -404,6 +495,14 @@ export class TabManager implements RunHost {
       else this.showEmpty();
     }
     this.saveSessionSoon();
+  }
+
+  /** Close a tab's language server connection, once it has finished opening. */
+  private async disconnectLanguage(tab: Tab): Promise<void> {
+    if (tab.connecting) await tab.connecting.catch(() => {});
+    const session = tab.lsp;
+    tab.lsp = null;
+    await session?.close();
   }
 
   async closeActive(): Promise<void> {

@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use tinkerpad_core::{CoreEvent, Level};
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
@@ -207,6 +207,50 @@ impl Proxy {
         };
         let method = message.method().unwrap_or_default().to_owned();
         trace!(playground, %method, bytes = message.to_vec().len(), "editor → server");
+
+        // The editor runs a client of its own, which wants a handshake and
+        // wants to sync its document. Neither goes to the server as-is: the
+        // core did the handshake once for every tab sharing this server, and
+        // it owns document versions (02-04).
+        match method.as_str() {
+            "initialize" => {
+                if let Some(id) = editor_id {
+                    // Waiting here is the point: the handshake may still be
+                    // running, and an editor that hears "no capabilities" acts
+                    // on that for as long as the tab is open.
+                    let answer = match server.ready().await {
+                        Ok(capabilities) => RawMessage::response(
+                            id,
+                            json!({
+                                "capabilities": capabilities,
+                                "serverInfo": { "name": server.language() },
+                            }),
+                        ),
+                        Err(e) => RawMessage::error(id, METHOD_NOT_FOUND, &e.to_string()),
+                    };
+                    self.to_editor(playground, answer);
+                }
+                return;
+            }
+            // The core already sent these, or will when the tab closes.
+            "initialized" | "shutdown" | "exit" => {
+                if let Some(id) = editor_id {
+                    self.to_editor(playground, RawMessage::response(id, Value::Null));
+                }
+                return;
+            }
+            "textDocument/didOpen" | "textDocument/didChange" | "textDocument/didClose" => {
+                let Some(renumbered) = server.sync_from_editor(&message) else {
+                    return;
+                };
+                self.inner.lock().expect("proxy lock").stats.to_server += 1;
+                if let Err(e) = server.send(renumbered).await {
+                    debug!(playground, %method, error = %e, "document sync not delivered");
+                }
+                return;
+            }
+            _ => {}
+        }
 
         match editor_id {
             // A request: the core gives it an id of its own and remembers who

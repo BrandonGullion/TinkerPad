@@ -60,7 +60,6 @@ impl EditorSink for ChannelSink {
 pub async fn open(
     state: &AppState,
     playground: &Playground,
-    text: String,
     channel: Channel<serde_json::Value>,
 ) -> Result<String, CommandError> {
     let plugin = state
@@ -78,12 +77,10 @@ pub async fn open(
 
     let resolver = state.toolchains.resolver();
     let config = config(&plugin, playground, &resolver, state.library.root())?;
+    // The editor's own client opens the document; the pool only has to have
+    // the server running (02-04).
     let uri = tinkerpad_lsp::path_to_uri(&playground.main_file);
-    let attachment = state
-        .lsp
-        .attach(&config, &uri, &text)
-        .await
-        .map_err(|e| CommandError::new(ErrorCode::Internal, e.to_string()))?;
+    let attachment = state.lsp.attach_editor(&config, &uri);
 
     Ok(state.proxy.open_tab(
         playground.id.as_str(),

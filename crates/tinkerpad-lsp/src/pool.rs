@@ -119,6 +119,20 @@ impl LspPool {
         Ok(attachment)
     }
 
+    /// Attach a tab whose editor runs an LSP client of its own (02-04).
+    ///
+    /// The server is started if needed, but the document is not opened here:
+    /// the editor's client sends `didOpen` itself, with its own version
+    /// numbering, which is the numbering the server echoes back in
+    /// diagnostics. The core watches those messages go past (see
+    /// [`ServerHandle::sync_from_editor`]) rather than numbering them itself.
+    pub fn attach_editor(&self, config: &ServerConfig, uri: &str) -> Attachment {
+        Attachment {
+            server: self.server_for(config),
+            uri: uri.to_owned(),
+        }
+    }
+
     /// The URI form of a path, so callers can build a document URI the same
     /// way the pool builds a root one.
     pub fn uri_for(path: &std::path::Path) -> String {

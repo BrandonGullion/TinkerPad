@@ -114,6 +114,9 @@ jobs:
           dotnet-version: 10.0.x
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The Rust plugin's language server, for the `lsp` scenario (02-04).
+          components: rust-analyzer
 
       - uses: Swatinem/rust-cache@v2
 
@@ -134,7 +137,7 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages,lsp
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -154,6 +157,7 @@ jobs:
           grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
           grep -q "selftest: PASS the directive goes on the first line" launch.log
+          grep -q "selftest: PASS the tab is usable straight away" launch.log
 
       - name: Session restore across two launches (Linux)
         if: runner.os == 'Linux'
@@ -170,7 +174,7 @@ jobs:
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages,lsp
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -190,6 +194,7 @@ jobs:
           grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
           grep -q "selftest: PASS the directive goes on the first line" launch.log
+          grep -q "selftest: PASS the tab is usable straight away" launch.log
 
       - name: Session restore across two launches (macOS)
         if: runner.os == 'macOS'

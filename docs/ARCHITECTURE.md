@@ -388,14 +388,33 @@ Tabs (`ui/src/tabs.ts`, work item 01-12):
   | `Mod+W` or middle-click | Close tab. |
   | `Ctrl+Tab`, `Ctrl+Shift+Tab` | Cycle tabs (Ctrl on every platform). |
   | `F2` or double-click | Rename. |
-  | `F8`, `Shift+F8` | Go to the next or previous error or warning from the last run (01-13). |
+  | `F8`, `Shift+F8` | Go to the next or previous error or warning — from the last run (01-13) or from the language server (02-04). |
+  | `Mod+K Mod+I` | Hover documentation at the cursor (02-04). |
+  | `Tab`, `Enter` | Accept the highlighted completion. |
 
 - Names, languages, and kinds always come from the library listing, never from
   a copy kept by the tab.
 
-CodeMirror's LSP client plugin is pointed at a transport object that forwards
-messages over a Tauri `Channel` to the core proxy. One transport per language, shared
-by tabs, matching the pool on the Rust side.
+Language support (`ui/src/lsp.ts`, `ui/src/highlight.ts`, work item 02-04):
+
+- **A client per tab, a server per language.** `@codemirror/lsp-client` talks over
+  a `Transport` that forwards messages through a Tauri `Channel` to the core's
+  proxy (02-03), which multiplexes every tab onto the one pooled server (02-02).
+  Each tab's client does its own handshake; the core answers it from the
+  handshake it already did, so a second tab in a language costs nothing.
+- **Document sync belongs to the editor**, version numbering included: a server
+  echoes those versions back with its diagnostics, and a client that sees a
+  version it didn't send drops them. The core watches the sync messages go past
+  and keeps the latest text for the replay in 02-05.
+- **Nothing blocks the tab.** Opening a playground never waits for a server:
+  the editor is usable in milliseconds and the language features appear when
+  the handshake finishes, which for a cold rust-analyzer is seconds later.
+- **Highlighters load per language.** `[language].highlighter` names a
+  CodeMirror language package (`PLUGINS.md` §9); each is a dynamic import, so
+  a grammar is downloaded the first time a playground uses it and never
+  otherwise. The LSP client itself is a chunk of its own too.
+- **Diagnostics** are drawn by `@codemirror/lint` (squiggle, gutter marker,
+  hover text) and walked by the same `F8` that walks a run's annotations.
 
 ## 8. Threading and state
 

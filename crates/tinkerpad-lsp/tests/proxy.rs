@@ -423,3 +423,135 @@ fn a_playground_uri_is_built_from_its_id() {
         "file:///library/one/main.rs"
     );
 }
+
+/// The editor runs an LSP client of its own (02-04). Its handshake is answered
+/// from what the core already learned, and its document sync passes through
+/// untouched — including its version numbers, which the server echoes back in
+/// diagnostics, and which the client checks before showing them.
+#[tokio::test]
+async fn the_editors_own_client_opens_the_document_and_the_core_follows() {
+    let pool = LspPool::default();
+    let proxy = Proxy::new(None);
+    let config = ServerConfig::new("fake", SpawnSpec::new(FAKE));
+    let attachment = pool.attach_editor(&config, &file_uri("one"));
+    let server = attachment.server().clone();
+    let editor = Editor::default();
+    let uri = proxy.open_tab(
+        "one",
+        &main_file("one"),
+        attachment,
+        Arc::new(editor.clone()),
+    );
+
+    // `initialize` is answered here, from the handshake the core already did.
+    proxy
+        .from_editor(
+            "one",
+            RawMessage::request(1, "initialize", json!({ "capabilities": {} })),
+        )
+        .await;
+    let response = editor.response_to(json!(1)).await;
+    let result = response.result().unwrap();
+    assert_eq!(result["capabilities"]["hoverProvider"], json!(true));
+    assert_eq!(result["serverInfo"]["name"], json!("fake"));
+    assert!(
+        server.open_docs().is_empty(),
+        "attaching does not open the document; the editor does",
+    );
+
+    // The editor opens the document, at whatever version it counts from.
+    proxy
+        .from_editor(
+            "one",
+            RawMessage::notification(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": "fn main() {}",
+                    }
+                }),
+            ),
+        )
+        .await;
+    assert_eq!(
+        wait_for_version(&server, 7).await,
+        vec![(file_uri("one"), 7)],
+        "the server sees the editor's own numbering",
+    );
+
+    proxy
+        .from_editor(
+            "one",
+            RawMessage::notification(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": uri, "version": 8 },
+                    "contentChanges": [{ "text": "fn main() { println!(); }" }],
+                }),
+            ),
+        )
+        .await;
+    assert_eq!(
+        wait_for_version(&server, 8).await,
+        vec![(file_uri("one"), 8)]
+    );
+
+    let doc = &server.open_docs()[0];
+    assert_eq!(doc.version, 8, "the core follows along");
+    assert_eq!(
+        doc.text, "fn main() { println!(); }",
+        "and keeps the text for the replay in 02-05",
+    );
+    assert_eq!(doc.language_id, "rust");
+
+    // Closing the document from the editor is enough; the attachment's own
+    // close then has nothing left to do.
+    proxy
+        .from_editor(
+            "one",
+            RawMessage::notification(
+                "textDocument/didClose",
+                json!({ "textDocument": { "uri": uri } }),
+            ),
+        )
+        .await;
+    for _ in 0..100 {
+        if server.open_docs().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(server.open_docs().is_empty(), "the core forgot it too");
+
+    proxy.close_tab("one").await;
+    pool.shutdown().await;
+}
+
+/// The fake server's view of its documents, once `version` shows up.
+async fn wait_for_version(
+    server: &std::sync::Arc<tinkerpad_lsp::ServerHandle>,
+    version: i64,
+) -> Vec<(String, i64)> {
+    for _ in 0..500 {
+        let result: Value = server.request("test/docs", Value::Null).await.unwrap();
+        let docs: Vec<(String, i64)> = result["docs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|doc| {
+                (
+                    doc["uri"].as_str().unwrap().to_owned(),
+                    doc["version"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        if docs.iter().any(|(_, v)| *v == version) {
+            return docs;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("version {version} never arrived");
+}

@@ -6,7 +6,9 @@
 
 import { undo } from "@codemirror/commands";
 import { EditorSelection } from "@codemirror/state";
-import { runScopeHandlers } from "@codemirror/view";
+import { closeCompletion, currentCompletions, startCompletion } from "@codemirror/autocomplete";
+import { forEachDiagnostic } from "@codemirror/lint";
+import { type EditorView, runScopeHandlers } from "@codemirror/view";
 
 import { clipboard } from "./dump/copy";
 import { renderExamples } from "./dump/examples";
@@ -1909,6 +1911,225 @@ async function packagesLiveScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: failing.id });
 }
 
+/**
+ * The editor's language server client against a real rust-analyzer (02-04).
+ *
+ * Skipped with an INFO line when rust-analyzer isn't installed, so the rest of
+ * the self-test still runs on a machine without it.
+ */
+async function lspScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs } = ctx;
+  const view = editor.view;
+
+  const status = await invoke<PluginsStatus>("list_plugins");
+  const rust = status.plugins.find((p) => p.id === "rust");
+  await check(
+    "the Rust plugin declares a language server and a highlighter",
+    rust?.lsp === true && rust.highlighter === "rust",
+    JSON.stringify({ lsp: rust?.lsp, highlighter: rust?.highlighter }),
+  );
+  const toolchain = await settledToolchain("rust");
+  if (toolchain?.kind !== "ready") {
+    await report("INFO rust toolchain missing; skipping the language server checks");
+    return;
+  }
+
+  const playground = await invoke<Playground>("create_playground", {
+    name: "Lsp Test",
+    language: "rust",
+    kind: "program",
+  });
+  const source = [
+    "fn main() {",
+    '    let greeting = String::from("hello");',
+    "    println!(\"{greeting}\");",
+    "}",
+    "",
+  ].join("\n");
+  const openedAt = performance.now();
+  await openPlayground(editor, ctx.status, playground.id);
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: source } });
+  await check(
+    "the tab is usable straight away, without waiting for the server",
+    performance.now() - openedAt < 2000 && view.state.doc.toString() === source,
+    `${(performance.now() - openedAt).toFixed(0)} ms`,
+  );
+
+  // The grammar is a separate chunk, loaded when the first Rust tab opens.
+  // CodeMirror styles tokens with generated class names, so the test asks the
+  // same question a reader would: is any of this text coloured?
+  const highlighted = await until(
+    () => document.querySelector(".cm-content .cm-line span[class]") !== null,
+    20_000,
+  );
+  await check(
+    "the Rust grammar loads on demand and highlights the document",
+    highlighted,
+    document.querySelector(".cm-content")?.innerHTML.slice(0, 120) ?? "",
+  );
+
+  const tab = tabs.activeTab!;
+  const connected = await until(() => tab.lsp !== null, 120_000);
+  if (!connected) {
+    await report("INFO rust-analyzer did not connect; skipping the rest");
+    await tabs.close(tab);
+    await invoke("delete_playground", { id: playground.id });
+    return;
+  }
+  await check("the tab connects to rust-analyzer", tab.lsp !== null, tab.lsp?.uri ?? "");
+
+  // Completions. Type a dot after a String and ask for the popup, the way
+  // typing one does.
+  const dotAt = view.state.doc.line(3).from;
+  view.dispatch({
+    changes: { from: dotAt, insert: "    greeting.\n" },
+    selection: { anchor: dotAt + "    greeting.".length },
+  });
+  // A cold server answers with nothing while it is still indexing, so ask
+  // again until it has something, the way a person would keep typing.
+  const requestedAt = performance.now();
+  let completions: readonly { label: string }[] = [];
+  let gotCompletions = false;
+  for (let attempt = 0; attempt < 60 && !gotCompletions; attempt++) {
+    startCompletion(view);
+    gotCompletions = await until(() => {
+      completions = currentCompletions(view.state);
+      return completions.length > 0;
+    }, 2000);
+  }
+  const completionMs = performance.now() - requestedAt;
+  await check(
+    "typing `.` offers the methods rust-analyzer knows about",
+    gotCompletions && completions.some((c) => c.label.startsWith("len")),
+    JSON.stringify(completions.slice(0, 6).map((c) => c.label)),
+  );
+  await report(
+    `INFO first completion, from a cold server, took ${(completionMs / 1000).toFixed(1)} s`,
+  );
+
+  // Then the number the work item asks for: a warm server, typing a
+  // character, to the popup. CodeMirror starts the request itself, which is
+  // the path a person is on.
+  const samples: number[] = [];
+  for (let n = 0; n < 5; n++) {
+    closeCompletion(view);
+    await frame();
+    const at = performance.now();
+    view.dispatch({
+      changes: { from: view.state.selection.main.head, insert: "l" },
+      selection: { anchor: view.state.selection.main.head + 1 },
+      userEvent: "input.type",
+    });
+    if (await until(() => currentCompletions(view.state).length > 0, 30_000)) {
+      samples.push(performance.now() - at);
+    }
+    view.dispatch({
+      changes: { from: view.state.selection.main.head - 1, to: view.state.selection.main.head },
+    });
+  }
+  samples.sort((a, b) => a - b);
+  const median = samples[Math.floor(samples.length / 2)] ?? Number.POSITIVE_INFINITY;
+  await check(
+    "a warm server answers a keystroke quickly",
+    samples.length >= 3 && median < 1000,
+    JSON.stringify(samples.map((ms) => Math.round(ms))),
+  );
+  await report(
+    `INFO warm completion: median ${median.toFixed(0)} ms, best ${(samples[0] ?? 0).toFixed(0)} ms, ${samples.length} samples`,
+  );
+  closeCompletion(view);
+
+  // Tab takes the highlighted completion, the way Enter does.
+  const before = view.state.doc.toString();
+  startCompletion(view);
+  const offered = await until(() => currentCompletions(view.state).length > 0, 30_000);
+  const taken = offered && runScopeHandlers(view, key("Tab"), "editor");
+  await frame();
+  await check(
+    "Tab accepts the highlighted completion",
+    taken && view.state.doc.toString() !== before,
+    view.state.doc.line(3).text.trim(),
+  );
+  closeCompletion(view);
+
+  // Hover from the keyboard: Mod+K Mod+I, as in VS Code.
+  const stringAt = view.state.doc.toString().indexOf("String::from");
+  view.dispatch({ selection: { anchor: stringAt + 2 } });
+  runScopeHandlers(view, key("k", { mod: true }), "editor");
+  runScopeHandlers(view, key("i", { mod: true }), "editor");
+  const hovered = await until(
+    () => (document.querySelector(".cm-lsp-hover")?.textContent ?? "").length > 0,
+    30_000,
+  );
+  await check(
+    "Mod+K Mod+I shows what the server knows about the symbol",
+    hovered,
+    (document.querySelector(".cm-lsp-hover")?.textContent ?? "").slice(0, 80),
+  );
+  runScopeHandlers(view, key("Escape"), "editor");
+  await frame();
+  await check(
+    "Escape dismisses it",
+    document.querySelector(".cm-lsp-hover") === null,
+  );
+
+  // Diagnostics: a syntax error is reported by the server and walkable with F8.
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: "fn main() {\n    let x: i32 =\n}\n" },
+  });
+  const marked = await until(() => countDiagnostics(view) > 0, 60_000);
+  await check(
+    "a broken file gets diagnostics from the server",
+    marked,
+    `${countDiagnostics(view)} diagnostics`,
+  );
+  const squiggles = document.querySelectorAll(".cm-lintRange, .cm-lint-marker").length;
+  await check("they are drawn in the editor and its gutter", squiggles > 0, `${squiggles} marks`);
+
+  view.dispatch({ selection: { anchor: 0 } });
+  ctx.handleGlobalKey(key("F8"));
+  await frame();
+  const line = view.state.doc.lineAt(view.state.selection.main.head).number;
+  await check("F8 walks the server's diagnostics too", line > 1, `line ${line}`);
+
+  // Closing the tab closes the document; the server stays up for the next one
+  // (02-02), so a second tab connects without another cold start.
+  await tabs.close(tab);
+  const second = await invoke<Playground>("create_playground", {
+    name: "Lsp Second",
+    language: "rust",
+    kind: "program",
+  });
+  const secondAt = performance.now();
+  await openPlayground(editor, ctx.status, second.id);
+  const secondTab = tabs.activeTab!;
+  const reconnected = await until(() => secondTab.lsp !== null, 60_000);
+  const reconnectMs = performance.now() - secondAt;
+  await check("a second Rust tab connects to the server already running", reconnected, `${reconnectMs.toFixed(0)} ms`);
+  await report(`INFO second tab connected in ${reconnectMs.toFixed(0)} ms`);
+
+  await tabs.close(secondTab);
+  for (const id of [second.id, playground.id]) {
+    // rust-analyzer keeps the playground folder open (its workspace is that
+    // folder until 02-07), and Windows won't delete a folder in use. The
+    // scenario is about the editor, so a failure here is reported, not fatal.
+    try {
+      await invoke("delete_playground", { id });
+    } catch (e) {
+      await report(`INFO could not delete ${id} while its server is running: ${String(e)}`);
+    }
+  }
+}
+
+/** How many diagnostics the editor is showing. */
+function countDiagnostics(view: EditorView): number {
+  let count = 0;
+  forEachDiagnostic(view.state, () => {
+    count++;
+  });
+  return count;
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -1937,6 +2158,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   library: libraryScenario,
   "library-trash": libraryTrashScenario,
   locked: lockedScenario,
+  lsp: lspScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
 };

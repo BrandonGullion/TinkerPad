@@ -5,7 +5,12 @@
 // this module owns the view and accepts states; it never recreates the view.
 
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, indentOnInput } from "@codemirror/language";
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  indentOnInput,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { EditorState, type Extension, Prec } from "@codemirror/state";
 import {
   drawSelection,
@@ -74,6 +79,9 @@ export class Editor {
       history(),
       indentOnInput(),
       bracketMatching(),
+      // Colours the tokens a language grammar produces. Plain text without a
+      // grammar looks the same as before (02-04).
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
       theme,
     ];

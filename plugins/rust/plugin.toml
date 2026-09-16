@@ -44,6 +44,21 @@ cwd = "{dir}"
 # The output pane shows plain text.
 env = { CARGO_TERM_COLOR = "never" }
 
+[lsp]
+# rust-analyzer ships with rustup ("rustup component add rust-analyzer").
+# One server per playground folder for now; 02-07 gives every Rust playground a
+# shared server through a scratch workspace and linkedProjects.
+command = "rust-analyzer"
+workspace = "playground_dir"
+
+[lsp.init_options]
+# A playground is a scratch crate. Build scripts and proc macros are worth the
+# wait for useful completions; a background check is not, since it would fight
+# the run button over the shared target folder.
+cargo = { buildScripts = { enable = true } }
+checkOnSave = false
+procMacro = { enable = true }
+
 [deps]
 kind = "command"
 add = ["cargo", "add", "{name}@{version}"]
