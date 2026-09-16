@@ -302,10 +302,38 @@ with a marker so a `dump(hugeList)` doesn't freeze the UI).
 
 ## 7. UI shell (ui/)
 
-Keep it small: a tab strip, one CodeMirror instance per tab (kept mounted for
-scroll/undo state), a resizable output pane, a language picker on new tab, a status
-strip (server states, run timer), a command palette for everything else. No settings
-pages until Phase 4; settings are a TOML file until then.
+Keep it small: a tab strip over one CodeMirror view, a resizable output pane, a
+language picker on new tab, a status strip (server states, run timer), and a command
+palette for everything else. No settings pages until Phase 4; settings are a TOML
+file until then.
+
+Tabs (`ui/src/tabs.ts`, work item 01-12):
+
+- **One editor view for every tab.** Switching tabs swaps `EditorState` objects,
+  which carry each tab's document, undo history, and selection. Scroll positions
+  are saved and restored alongside them.
+- **Per tab:** an output pane, a run state, a dirty flag, and a pending autosave.
+  A run's events reach its tab's pane even while another tab is active.
+- **Saving:** 500 ms after the last edit, and always before a run. The core skips
+  writes of identical text, so a file's modification time only changes with its
+  content.
+- **Changes on disk:** a clean tab reloads; a dirty one shows Reload and Keep mine.
+- **The session:** open tabs, the active tab, scroll positions, and the last used
+  language are kept in `<app-data>/session.json` and reopened at launch.
+  `TINKERPAD_SESSION` overrides the file's location.
+- **Shortcuts:**
+
+  | Keys | Action |
+  |---|---|
+  | `Mod+N` | New playground in the last used language, with no questions. |
+  | `Mod+Shift+N` | New playground: pick a language, then a kind. |
+  | `Mod+O` | Quick open. |
+  | `Mod+W` or middle-click | Close tab. |
+  | `Ctrl+Tab`, `Ctrl+Shift+Tab` | Cycle tabs (Ctrl on every platform). |
+  | `F2` or double-click | Rename. |
+
+- Names, languages, and kinds always come from the library listing, never from
+  a copy kept by the tab.
 
 CodeMirror's LSP client plugin is pointed at a transport object that forwards
 messages over a Tauri `Channel` to the core proxy. One transport per language, shared

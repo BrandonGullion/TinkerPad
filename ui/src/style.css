@@ -35,6 +35,11 @@ body {
   flex-direction: column;
 }
 
+/* `hidden` always hides, even on elements whose class sets `display`. */
+[hidden] {
+  display: none !important;
+}
+
 /* Workspace: editor, splitter, bottom panel. Rows are set from layout.ts. */
 
 .workspace {
@@ -44,9 +49,272 @@ body {
   grid-template-rows: 62% 5px 1fr;
 }
 
+.editor-pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .editor-host {
+  flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.editor-host.empty .cm-editor {
+  display: none !important;
+}
+
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Tabs */
+
+.tab-strip {
+  display: flex;
+  align-items: stretch;
+  min-height: 32px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 0 6px 0 10px;
+  border-right: 1px solid var(--border);
+  border-top: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--fg);
+  background: var(--panel-2);
+}
+
+.tab.active {
+  color: var(--fg);
+  background: var(--bg);
+  border-top-color: var(--accent);
+}
+
+.tab-lang {
+  font: 600 10px/1 var(--font-ui);
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-rename {
+  width: 14ch;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+}
+
+.tab-dirty {
+  color: var(--fg);
+  font-size: 10px;
+}
+
+.tab-running {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tab-pulse 1s ease-in-out infinite;
+}
+
+@keyframes tab-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.tab-close,
+.tab-new {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 16px/1 var(--font-ui);
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tab-close {
+  visibility: hidden;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+  visibility: visible;
+}
+
+/* While a dirty tab isn't hovered, the dot stands in for the close button. */
+.tab.dirty:not(:hover) .tab-close {
+  display: none;
+}
+
+.tab-close:hover,
+.tab-new:hover {
+  color: var(--fg);
+  background: var(--panel-2);
+}
+
+.tab-new {
+  padding: 0 10px;
+  font-size: 18px;
+}
+
+.conflict-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--warning) 15%, var(--panel));
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+
+.conflict-bar span {
+  flex: 1;
+}
+
+.conflict-bar button {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.conflict-bar button:hover {
+  border-color: var(--accent);
+}
+
+/* Picker (new playground, quick open) */
+
+.picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 0.25);
+}
+
+.picker {
+  width: min(520px, calc(100vw - 32px));
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  overflow: hidden;
+}
+
+.picker-title {
+  padding: 8px 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.picker-input {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 6px 12px 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+
+.picker-input:focus {
+  border-color: var(--accent);
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.picker-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.picker-item[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.picker-label {
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.picker-detail {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-empty {
+  padding: 4px 12px 10px;
+  color: var(--muted);
+}
+
+.output-host {
+  display: flex;
+}
+
+.output-host > .output {
+  flex: 1;
+  min-width: 0;
 }
 
 .splitter {

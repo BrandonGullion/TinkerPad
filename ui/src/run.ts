@@ -1,8 +1,13 @@
-// Starting and cancelling runs, and routing their events to the output pane
-// and status bar.
+// Starting and cancelling runs, and routing their events to the tab they
+// belong to.
+//
+// Each playground has its own run, output, and state; runs in different tabs
+// overlap. The core scopes events by run id, so this keeps a run id → playground
+// map, and buffers events for ids it hasn't learned yet (they can arrive before
+// the `run` command returns).
 
 import { invoke } from "./ipc";
-import type { StatusBar } from "./layout";
+import type { RunState } from "./layout";
 import type { OutputPane } from "./output";
 import type { Envelope, RunEvent } from "./protocol";
 
@@ -17,26 +22,52 @@ const CLEAR_OUTPUT_ON_RUN = true;
 
 export const NO_PLAYGROUND_NOTE = "Open a playground to run it.";
 
+/** What runs need from the tabs. */
+export interface RunHost {
+  /** The playground whose tab is active, if any. */
+  activePlayground(): string | null;
+  /** The output pane of a playground's tab, if it's open. */
+  outputFor(playground: string): OutputPane | null;
+  /** A run is about to save `code` as the playground's source. */
+  beforeRun(playground: string, code: string): void;
+  /** A playground's run state changed. */
+  runStateChanged(playground: string, state: RunState): void;
+  /** Tell the user something briefly (no playground open, for example). */
+  flashNote(text: string): void;
+}
+
+interface PlaygroundRun {
+  /** Id of the run whose events are shown. `null` while starting or idle. */
+  current: number | null;
+  /** Identifies the latest start, so a superseded start can tell. */
+  token: number;
+  state: RunState;
+}
+
 export class RunController {
-  /** Id of the run whose events we display. `null` while a start is pending. */
-  private current: number | null = null;
-  /** Events for runs whose id we haven't learned yet (they can arrive before
-   * the `run` command returns). */
-  private early = new Map<number, RunEvent[]>();
-  private pending = false;
+  private readonly runs = new Map<string, PlaygroundRun>();
+  private readonly runPlayground = new Map<number, string>();
+  private readonly early = new Map<number, RunEvent[]>();
+  private startsInFlight = 0;
+  private latestToken = 0;
+  private waiters: ((o: RunOutcome) => void)[] = [];
   private clickedAt = 0;
   private firstOutputAt: number | null = null;
-  private waiters: ((o: RunOutcome) => void)[] = [];
-  /** The playground of the latest run. */
-  private playground: string | null = null;
 
-  constructor(
-    private readonly output: OutputPane,
-    private readonly status: StatusBar,
-  ) {}
+  constructor(private readonly host: RunHost) {}
 
+  /** Whether the active tab's playground is running or starting. */
   get running(): boolean {
-    return this.pending || this.current !== null;
+    const active = this.host.activePlayground();
+    return active !== null && this.isRunning(active);
+  }
+
+  isRunning(playground: string): boolean {
+    return this.stateOf(playground).kind === "running";
+  }
+
+  stateOf(playground: string): RunState {
+    return this.runs.get(playground)?.state ?? { kind: "idle" };
   }
 
   /** Milliseconds from Run to the first output of the latest run, if any. */
@@ -50,43 +81,55 @@ export class RunController {
    */
   async run(playground: string | null, code: string): Promise<void> {
     if (!playground) {
-      this.status.flashNote(NO_PLAYGROUND_NOTE);
+      this.host.flashNote(NO_PLAYGROUND_NOTE);
       return;
     }
+    const record = this.record(playground);
+    const token = ++this.latestToken;
+    record.token = token;
+    record.current = null;
     this.clickedAt = performance.now();
     this.firstOutputAt = null;
-    this.current = null;
-    this.pending = true;
-    this.playground = playground;
-    if (CLEAR_OUTPUT_ON_RUN) this.output.clear();
-    this.status.setRun({ kind: "running", since: this.clickedAt });
+    if (CLEAR_OUTPUT_ON_RUN) this.host.outputFor(playground)?.clear();
+    this.host.beforeRun(playground, code);
+    this.setState(playground, record, { kind: "running", since: this.clickedAt });
 
+    this.startsInFlight++;
     let id: number;
     try {
       id = await invoke<number>("run", { playground, text: code });
     } catch (e) {
-      this.pending = false;
+      this.startsInFlight--;
+      if (this.startsInFlight === 0) this.early.clear();
       const message = (e as { message?: string }).message ?? String(e);
-      this.finish({ kind: "failed", message });
+      if (record.token === token) this.finish(playground, record, { kind: "failed", message });
       return;
     }
-    this.pending = false;
-    this.current = id;
-
-    // Replay anything that arrived early for this run; drop the rest (they
-    // belong to runs that were superseded).
+    this.startsInFlight--;
+    this.runPlayground.set(id, playground);
     const early = this.early.get(id) ?? [];
-    this.early.clear();
-    for (const event of early) this.apply(event);
+    this.early.delete(id);
+    if (this.startsInFlight === 0) this.early.clear();
+    // A newer start for the same playground replaces this one; its events
+    // are dropped.
+    if (record.token !== token) return;
+    record.current = id;
+    for (const event of early) this.apply(playground, record, event);
   }
 
-  async cancel(): Promise<void> {
-    if (this.running && this.playground) await invoke("cancel", { playground: this.playground });
+  /** Cancel a playground's run (the active tab's by default). */
+  async cancel(playground: string | null = this.host.activePlayground()): Promise<void> {
+    if (playground && this.isRunning(playground)) await invoke("cancel", { playground });
   }
 
-  /** Resolves when the current (or next) run ends. */
+  /** Resolves when the latest run started with `run` ends. */
   waitForEnd(): Promise<RunOutcome> {
     return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  /** A playground's tab closed: forget its run. */
+  forget(playground: string): void {
+    this.runs.delete(playground);
   }
 
   handle(env: Envelope): void {
@@ -95,59 +138,81 @@ export class RunController {
     const { type: _type, ...event } = env.event;
     const runEvent = event as RunEvent;
 
-    if (this.pending) {
-      const list = this.early.get(id) ?? [];
-      list.push(runEvent);
-      this.early.set(id, list);
+    const playground = this.runPlayground.get(id);
+    if (playground === undefined) {
+      if (this.startsInFlight > 0) {
+        const list = this.early.get(id) ?? [];
+        list.push(runEvent);
+        this.early.set(id, list);
+      }
       return;
     }
-    if (id !== this.current) return;
-    this.apply(runEvent);
+    const record = this.runs.get(playground);
+    if (!record || record.current !== id) return;
+    this.apply(playground, record, runEvent);
   }
 
-  private apply(event: RunEvent): void {
+  private record(playground: string): PlaygroundRun {
+    let record = this.runs.get(playground);
+    if (!record) {
+      record = { current: null, token: 0, state: { kind: "idle" } };
+      this.runs.set(playground, record);
+    }
+    return record;
+  }
+
+  private setState(playground: string, record: PlaygroundRun, state: RunState): void {
+    record.state = state;
+    this.host.runStateChanged(playground, state);
+  }
+
+  private apply(playground: string, record: PlaygroundRun, event: RunEvent): void {
+    const output = this.host.outputFor(playground);
+    const latest = record.token === this.latestToken;
     switch (event.kind) {
       case "started":
         break;
       case "stdout":
       case "stderr":
-        this.firstOutputAt ??= performance.now();
-        this.output.append(event.kind, event.text);
+        if (latest) this.firstOutputAt ??= performance.now();
+        output?.append(event.kind, event.text);
         break;
       case "rich":
-        this.firstOutputAt ??= performance.now();
-        this.output.appendRich(event.value);
+        if (latest) this.firstOutputAt ??= performance.now();
+        output?.appendRich(event.value);
         break;
       case "warning":
-        this.output.append("info", `⚠ ${event.message}\n`);
+        output?.append("info", `⚠ ${event.message}\n`);
         break;
       case "exited":
-        this.finish({ kind: "exited", code: event.code, durationMs: event.durationMs });
+        this.finish(playground, record, { kind: "exited", code: event.code, durationMs: event.durationMs });
         break;
       case "cancelled":
-        this.finish({ kind: "cancelled", durationMs: event.durationMs });
+        this.finish(playground, record, { kind: "cancelled", durationMs: event.durationMs });
         break;
       case "failed":
-        this.finish({ kind: "failed", message: event.message });
+        this.finish(playground, record, { kind: "failed", message: event.message });
         break;
     }
   }
 
-  private finish(outcome: RunOutcome): void {
-    this.current = null;
+  private finish(playground: string, record: PlaygroundRun, outcome: RunOutcome): void {
+    record.current = null;
+    const output = this.host.outputFor(playground);
     switch (outcome.kind) {
       case "exited":
-        this.status.setRun({ kind: "done", code: outcome.code, ms: outcome.durationMs });
+        this.setState(playground, record, { kind: "done", code: outcome.code, ms: outcome.durationMs });
         break;
       case "cancelled":
-        this.output.append("info", "\n[cancelled]\n");
-        this.status.setRun({ kind: "cancelled", ms: outcome.durationMs });
+        output?.append("info", "\n[cancelled]\n");
+        this.setState(playground, record, { kind: "cancelled", ms: outcome.durationMs });
         break;
       case "failed":
-        this.output.append("stderr", `${outcome.message}\n`);
-        this.status.setRun({ kind: "failed" });
+        output?.append("stderr", `${outcome.message}\n`);
+        this.setState(playground, record, { kind: "failed" });
         break;
     }
+    if (record.token !== this.latestToken) return;
     const waiters = this.waiters;
     this.waiters = [];
     for (const w of waiters) w(outcome);
