@@ -57,6 +57,13 @@ pub enum CoreEvent {
         language: crate::LanguageId,
         state: ToolchainState,
     },
+    /// A language server changed state (work item 02-02).
+    Server {
+        language: crate::LanguageId,
+        /// The workspace root it serves, as a path, or empty when it needs none.
+        root: String,
+        state: ServerState,
+    },
     /// Playgrounds were added, removed, renamed, or their metadata changed on
     /// disk. The UI should list them again.
     LibraryChanged,
@@ -90,6 +97,61 @@ pub enum ToolchainState {
     },
 }
 
+/// Whether a language's server is up. One server serves every playground of
+/// its language in the same workspace (work item 02-02).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ServerState {
+    /// Not running: never started, asked to stop, or unable to start.
+    Stopped {
+        /// Why, when it was not a plain "nobody has needed it yet".
+        reason: Option<String>,
+        /// The plugin's `install_hint`, when the server binary is missing.
+        hint: Option<String>,
+    },
+    /// Spawned; the `initialize` handshake hasn't finished. Requests made now
+    /// are held until it does.
+    Starting,
+    /// Handshake done, requests flowing.
+    #[serde(rename_all = "camelCase")]
+    Ready {
+        pid: u32,
+        /// What the server called itself in `initialize`, if it said.
+        name: Option<String>,
+        version: Option<String>,
+    },
+    /// It exited without being asked to. Restart is work item 02-05.
+    Crashed { reason: String },
+    /// `shutdown` has been sent and the exit is being waited for.
+    Stopping,
+}
+
+impl ServerState {
+    /// Not running, with nothing to explain.
+    pub fn stopped() -> Self {
+        Self::Stopped {
+            reason: None,
+            hint: None,
+        }
+    }
+
+    /// Not running because something went wrong.
+    pub fn failed(reason: impl Into<String>, hint: Option<String>) -> Self {
+        Self::Stopped {
+            reason: Some(reason.into()),
+            hint,
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready { .. })
+    }
+
+    /// Whether this state can still become `Ready` by waiting.
+    pub fn is_settling(&self) -> bool {
+        matches!(self, Self::Starting)
+    }
+}
 /// What happened during one run. The scope carries the run id.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
