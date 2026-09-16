@@ -12,6 +12,7 @@
 //! | `test/big` | replies with a string of `params.bytes` characters |
 //! | `test/stderr` | writes `params.text` to stderr, replies `null` |
 //! | `test/halt` | writes half a frame and closes stdout, leaving the reader mid-message |
+//! | `test/crash` | exits 101 without warning, as a crashing server does |
 //! | `test/docs` | replies with the documents it has been told about, by URI |
 //! | `test/wait` | replies after `params.ms`, so a request can be in flight |
 //! | `test/publish` | sends `publishDiagnostics` for `params.uri` |
@@ -117,6 +118,11 @@ fn main() {
             "test/big" => {
                 let bytes = params["bytes"].as_u64().unwrap_or(0) as usize;
                 reply(id, json!({ "text": "x".repeat(bytes) }));
+            }
+            "test/crash" => {
+                // No reply, no shutdown: exactly what a panicking server does.
+                eprintln!("fakelsp: crashing on request");
+                std::process::exit(101);
             }
             "test/wait" => {
                 let ms = params["ms"].as_u64().unwrap_or(0);

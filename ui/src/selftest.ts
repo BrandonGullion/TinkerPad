@@ -2092,6 +2092,39 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   const line = view.state.doc.lineAt(view.state.selection.main.head).number;
   await check("F8 walks the server's diagnostics too", line > 1, `line ${line}`);
 
+  // A restart under a live tab: the documents are opened again by the core
+  // (02-05), so the editor carries on without touching anything itself.
+  const restarted = await invoke<boolean>("restart_server", {
+    language: "rust",
+    root: tabs.summary(tab.id)?.dir ?? null,
+  });
+  await check("a language server can be restarted", restarted);
+  // Keep typing until the answers come back, the way a person would.
+  let working = false;
+  const givingUpAt = performance.now() + 120_000;
+  while (!working && performance.now() < givingUpAt) {
+    closeCompletion(view);
+    view.dispatch({
+      changes: { from: view.state.selection.main.head, insert: "l" },
+      selection: { anchor: view.state.selection.main.head + 1 },
+      userEvent: "input.type",
+    });
+    working = await until(() => currentCompletions(view.state).length > 0, 2000);
+    view.dispatch({
+      changes: { from: view.state.selection.main.head - 1, to: view.state.selection.main.head },
+    });
+  }
+  await check(
+    "completions come back after the server restarts, with no reopening by the editor",
+    working,
+  );
+  await check(
+    "and the user is not shown an error banner for the requests it lost",
+    document.querySelector(".cm-lsp-message-error") === null,
+    document.querySelector(".cm-lsp-message-error")?.textContent ?? "",
+  );
+  closeCompletion(view);
+
   // Closing the tab closes the document; the server stays up for the next one
   // (02-02), so a second tab connects without another cold start.
   await tabs.close(tab);

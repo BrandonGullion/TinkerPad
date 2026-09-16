@@ -23,7 +23,7 @@ use tracing::{debug, trace, warn};
 
 use crate::jsonrpc::RawMessage;
 use crate::pool::Attachment;
-use crate::server::ServerHandle;
+use crate::server::{SERVER_RESTARTED, ServerHandle};
 use crate::uri::UriMap;
 
 /// JSON-RPC's "no such method", for a server request the core won't answer.
@@ -341,13 +341,14 @@ impl Proxy {
                     inner.uris.to_editor(&mut response);
                     replace_id(response, pending.editor_id)
                 }
-                // The server stopped before answering. The editor gets an
-                // error rather than a request that never completes.
+                // The server went away before answering. The editor gets an
+                // error rather than a request that never completes, with the
+                // code that says "transient": ask again (02-05).
                 None => RawMessage::error(
                     pending.editor_id,
-                    METHOD_NOT_FOUND,
+                    SERVER_RESTARTED,
                     &format!(
-                        "the language server stopped before answering {}",
+                        "the language server restarted before answering {}",
                         pending.method
                     ),
                 ),
