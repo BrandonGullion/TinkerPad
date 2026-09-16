@@ -5,9 +5,16 @@
 
 ## What
 
-A plugin can say how to *get* the tools it needs, not only how to find them, and
-TinkerPad offers to do it: "rust-analyzer isn't installed. Install it?" with one
-button, in the place that already says the tool is missing.
+TinkerPad already *checks* what a language needs: the toolchain probes (01-03)
+run at launch and report each language as ready or missing with a hint. This item
+is the other half — a plugin says how to **get** what is missing, and TinkerPad
+offers to run it: "rust-analyzer isn't installed. Install it?", one button, in
+the place that already says so.
+
+TinkerPad does not own, vendor, or wrap any of these tools. It runs the command
+their own maintainers tell you to run, or fetches the release they publish, and
+then gets out of the way — the same tool, in the same place, that you would have
+installed by hand.
 
 Two kinds, because two kinds cover everything worth covering:
 
@@ -37,14 +44,16 @@ TinkerPad changes, and removing the folder undoes it.
 
 ## Why
 
-Right now a language works if you already happen to have its server. The plugin
-knows the exact command; the user has to read a README and run it in a terminal
-they may not have open. That is a bad first five minutes for a tool whose pitch
-is "open it and start typing", and it gets worse with every language added.
+Right now a language works only if you already happen to have its server. The
+plugin knows the exact command; the user has to find a README and run it in a
+terminal they may not have open. That is a bad first five minutes for an app
+whose pitch is "open it and start typing", and it gets worse with every language
+added.
 
-Bundling the servers instead was considered and rejected: it triples the download
-for tools most people won't use, pins versions that go stale, and takes on
-licence obligations that aren't ours to take.
+The detection half already works, which is what makes this cheap: the app knows
+precisely which tool is missing, for which language, and the plugin already
+carries the text telling you how to install it. Turning that text into a button
+is a small step with a large effect.
 
 ## Expectations
 
@@ -76,6 +85,14 @@ licence obligations that aren't ours to take.
 - [ ] The three bundled plugins declare what they need: rustup for rust-analyzer,
       npm for typescript-language-server plus the workspace's TypeScript, and
       whatever 03-05 settles on for C#.
+- [ ] Somewhere to see it all: a list of what each language needs, whether it is
+      there, where it was found, and a button per missing one. The status strip
+      (02-08) is the natural home; a language with everything it needs should say
+      so as plainly as one without.
+- [ ] The same from a terminal, for setting up a machine or a CI runner without
+      opening the window: `tinkerpad tools list` and `tinkerpad tools install
+      <language>`, sharing the code the button uses. (The CLI itself is 05-01;
+      this is one more subcommand in it.)
 - [ ] Tests: a fake plugin whose `acquire` command writes a stub binary, and a
       `download` against a local file server with a good and a bad checksum.
       Nothing in the test suite reaches the network.
@@ -85,6 +102,12 @@ licence obligations that aren't ours to take.
 Updating tools that are already installed (a later item, alongside 04-06's app
 updates). Installing *plugins* — that is 05-02. Elevation: anything needing
 administrator rights is a hint, not an offer.
+
+**Shipping the servers inside TinkerPad** is a different idea and not this one:
+it would triple the download for tools most people won't use, pin versions that
+go stale, and take on licence obligations that aren't ours. Installing the same
+thing the user would have installed themselves keeps the tool theirs — upgradable
+with their package manager, shared with their editor, and removable without us.
 
 ## Gotchas
 
