@@ -186,10 +186,21 @@ Rules:
 - **Shared.** Every playground of that language attaches to the same server. Opening
   a second tab is a `textDocument/didOpen`, nothing more.
 - **Survives tab close.** Closing a tab sends `didClose`. The server stays up.
-- **Idle policy.** Configurable. Default: keep forever, except rust-analyzer which
-  defaults to "stop after 30 min idle" because of memory. The status strip shows RSS.
-- **Pre-warm.** Languages the user pins are spawned at app start on a background task,
-  so the first tab is already fast.
+- **Idle policy.** A server's clock starts when its last document closes and stops
+  when one opens. How long it may run down comes from the plugin's `idle_shutdown`,
+  overridable per language in settings (`[lsp.rust] idle_shutdown = "30m"`), and
+  `"never"` means never. The exception is a server that has never been given a
+  document at all — a pre-warmed language nobody opened — which is held to an hour
+  whatever the setting says. Reaching the limit is a clean `shutdown`/`exit` and a
+  `Stopped` state with nothing to explain and no toast: nobody asked, so nobody is
+  told. The next tab starts it again, transparently, on the same handle.
+- **Memory.** Resident memory is sampled every 10 s per server and carried in the
+  `Ready` state for the status strip (02-08).
+- **Pre-warm.** `[lsp] prewarm = ["typescript"]` in settings starts those servers
+  once the UI reports it is up — never before, so the window is never held up by one;
+  measured at 399 ms to the window without pre-warm and 400 ms with. A language whose
+  server lives in each playground's folder can't be pre-warmed (there is no playground
+  yet) and is logged and skipped, as is a language id with no plugin.
 - **Crash restart.** An exit nobody asked for marks the server `Crashed { restarts }`
   and starts it again after 1s, 2s, 4s, 8s, 16s, then 30s. Six crashes in a row (in
   ten minutes; a longer gap starts the count over) and the pool stops trying, leaving

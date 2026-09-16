@@ -53,6 +53,18 @@ pub const RESTART_WINDOW: Duration = Duration::from_secs(600);
 /// editor treats it as transient and asks again on the next keystroke.
 pub const SERVER_RESTARTED: i64 = -32000;
 
+/// How long a server that has never been given a document may sit there. A
+/// pre-warmed language nobody opened shouldn't hold memory all day, whatever
+/// its plugin says about idling (work item 02-06).
+pub const IDLE_UNUSED: Duration = Duration::from_secs(3600);
+
+/// How often the idle clock and the memory sample are taken. Timers here are
+/// minutes or hours, so this is as often as it needs to be.
+const WATCH_TICK: Duration = Duration::from_secs(5);
+
+/// How often resident memory is sampled for the status strip (02-08).
+const RSS_EVERY: Duration = Duration::from_secs(10);
+
 /// What the pool needs to start one server. Plain data: the app builds it from
 /// the plugin's `[lsp]` section, which keeps this crate free of the plugin
 /// format (see the dependency direction in the root `Cargo.toml`).
@@ -76,6 +88,15 @@ pub struct ServerConfig {
     /// from there. [`BACKOFF_START`] unless a caller (or a test) says
     /// otherwise.
     pub backoff: Duration,
+    /// How long the server may sit with no open documents before it is stopped.
+    /// `None` is the plugin's `idle_shutdown = "never"`.
+    pub idle_shutdown: Option<Duration>,
+    /// The limit for a server that has never had a document at all. See
+    /// [`IDLE_UNUSED`].
+    pub idle_unused: Duration,
+    /// How often the idle clock is checked and memory sampled. Shortened by
+    /// tests; there is nothing to be gained from a shorter one in the app.
+    pub watch_tick: Duration,
 }
 
 impl ServerConfig {
@@ -88,6 +109,9 @@ impl ServerConfig {
             install_hint: None,
             start_timeout: START_TIMEOUT,
             backoff: BACKOFF_START,
+            idle_shutdown: None,
+            idle_unused: IDLE_UNUSED,
+            watch_tick: WATCH_TICK,
         }
     }
 
@@ -116,6 +140,27 @@ impl ServerConfig {
     /// settle, which is a long time to sit through five times over.
     pub fn with_backoff(mut self, backoff: Duration) -> Self {
         self.backoff = backoff;
+        self
+    }
+
+    /// Stop the server when it has had no open documents this long. `None`
+    /// keeps it forever, which is what a plugin's `idle_shutdown = "never"`
+    /// asks for.
+    pub fn with_idle_shutdown(mut self, idle: Option<Duration>) -> Self {
+        self.idle_shutdown = idle;
+        self
+    }
+
+    /// The limit for a server nobody ever opened a document on.
+    pub fn with_idle_unused(mut self, idle: Duration) -> Self {
+        self.idle_unused = idle;
+        self
+    }
+
+    /// How often to check the idle clock. Tests shorten it; nothing else needs
+    /// to.
+    pub fn with_watch_tick(mut self, tick: Duration) -> Self {
+        self.watch_tick = tick;
         self
     }
 }
@@ -175,6 +220,12 @@ pub struct ServerHandle {
     state: watch::Sender<ServerState>,
     connection: Mutex<Option<Connection>>,
     restarts: Mutex<Restarts>,
+    /// When the last document was closed, or when the server started with none.
+    /// `None` while it has documents open (work item 02-06).
+    idle_since: Mutex<Option<std::time::Instant>>,
+    /// Whether a document was ever opened on this server. One that was
+    /// pre-warmed and never used is held to a shorter limit.
+    ever_opened: std::sync::atomic::AtomicBool,
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, oneshot::Sender<RawMessage>>>,
     open_docs: Mutex<HashMap<String, DocState>>,
@@ -203,6 +254,8 @@ impl ServerHandle {
             state: watch::Sender::new(state),
             connection: Mutex::default(),
             restarts: Mutex::default(),
+            idle_since: Mutex::new(Some(std::time::Instant::now())),
+            ever_opened: std::sync::atomic::AtomicBool::new(false),
             next_id: AtomicI64::new(1),
             pending: Mutex::default(),
             open_docs: Mutex::default(),
@@ -217,7 +270,45 @@ impl ServerHandle {
     pub fn start(config: &ServerConfig) -> std::sync::Arc<Self> {
         let server = std::sync::Arc::new(Self::with_state(config, ServerState::Starting));
         server.connect();
+        tokio::spawn(watch(server.clone()));
         server
+    }
+
+    /// Note that the set of open documents changed: the idle clock runs only
+    /// while there are none.
+    fn docs_changed(&self) {
+        let empty = self.open_docs.lock().expect("open_docs lock").is_empty();
+        let mut idle = self.idle_since.lock().expect("idle lock");
+        if empty {
+            *idle = Some(std::time::Instant::now());
+        } else {
+            *idle = None;
+            self.ever_opened
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// How long this server may sit with no documents, if at all.
+    fn idle_limit(&self) -> Option<Duration> {
+        let used = self.ever_opened.load(std::sync::atomic::Ordering::Relaxed);
+        match (self.config.idle_shutdown, used) {
+            // Never used: held to the shorter of the two, so a pre-warmed
+            // language nobody opened doesn't sit there all day.
+            (limit, false) => Some(
+                limit
+                    .unwrap_or(self.config.idle_unused)
+                    .min(self.config.idle_unused),
+            ),
+            (limit, true) => limit,
+        }
+    }
+
+    /// How long the server has had no documents, if it has none.
+    pub fn idle_for(&self) -> Option<Duration> {
+        self.idle_since
+            .lock()
+            .expect("idle lock")
+            .map(|since| since.elapsed())
     }
 
     /// Spawn the process and start talking to it. Used to start the server and
@@ -260,11 +351,15 @@ impl ServerHandle {
             .expect("connection lock")
             .as_ref()
             .map(|c| c.kill.clone());
+        self.set_state(if running.is_some() {
+            ServerState::Stopping
+        } else {
+            ServerState::Starting
+        });
         let server = self.clone();
         tokio::spawn(async move {
             if let Some(kill) = running {
                 let mut states = server.watch_state();
-                server.set_state(ServerState::Stopping);
                 kill.kill();
                 let _ = tokio::time::timeout(
                     STOP_GRACE,
@@ -493,6 +588,7 @@ impl ServerHandle {
             }
             _ => {}
         }
+        self.docs_changed();
         Some(message.clone())
     }
 
@@ -515,6 +611,25 @@ impl ServerHandle {
                 message: error["message"].as_str().unwrap_or("no message").to_owned(),
             });
         }
+        Ok(response.result().cloned().unwrap_or(Value::Null))
+    }
+
+    /// A request that doesn't wait for the server to be ready, for the one
+    /// caller that is talking to a server on its way down.
+    async fn request_now(&self, method: &str, params: Value) -> Result<Value, RequestError> {
+        let sender = self.sender().ok_or_else(|| self.not_running())?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().expect("pending lock").insert(id, tx);
+        if sender
+            .send(RawMessage::request(id, method, params))
+            .await
+            .is_err()
+        {
+            self.pending.lock().expect("pending lock").remove(&id);
+            return Err(self.disconnected());
+        }
+        let response = rx.await.map_err(|_| self.disconnected())?;
         Ok(response.result().cloned().unwrap_or(Value::Null))
     }
 
@@ -605,6 +720,7 @@ impl ServerHandle {
             docs.insert(uri.to_owned(), doc.clone());
             doc
         };
+        self.docs_changed();
         self.notify(
             "textDocument/didOpen",
             json!({
@@ -649,6 +765,7 @@ impl ServerHandle {
             .expect("open_docs lock")
             .remove(uri)
             .is_some();
+        self.docs_changed();
         if !known {
             return Ok(());
         }
@@ -671,7 +788,8 @@ impl ServerHandle {
         // A server that is wedged shouldn't hold up the app, so the polite
         // path gets a deadline of its own.
         let polite = async {
-            let _ = tokio::time::timeout(STOP_GRACE, self.request("shutdown", Value::Null)).await;
+            let _ =
+                tokio::time::timeout(STOP_GRACE, self.request_now("shutdown", Value::Null)).await;
             let _ = self.notify_now("exit", Value::Null).await;
             let _ = exited
                 .wait_for(|state| matches!(state, ServerState::Stopped { .. }))
@@ -701,19 +819,24 @@ impl ServerHandle {
         });
     }
 
-    /// Wait for the handshake to finish, if it is still running.
+    /// Wait until the server can be spoken to.
+    ///
+    /// A server that is starting, stopping on its way to a restart, or waiting
+    /// out a crash is all the same to a caller: it is coming back, so wait for
+    /// it rather than refusing. Only one that has stopped for good says no.
     async fn wait_ready(&self) -> Result<(), RequestError> {
         match self.state() {
             ServerState::Ready { .. } => return Ok(()),
-            ServerState::Starting => {}
-            // Stopping still accepts the `shutdown` request that started it.
-            ServerState::Stopping => return Ok(()),
-            ServerState::Stopped { .. } | ServerState::Crashed { .. } => {
-                return Err(self.not_running());
-            }
+            ServerState::Starting | ServerState::Stopping | ServerState::Crashed { .. } => {}
+            ServerState::Stopped { .. } => return Err(self.not_running()),
         }
         let mut states = self.state.subscribe();
-        let settled = states.wait_for(|state| !state.is_settling());
+        let settled = states.wait_for(|state| {
+            matches!(
+                state,
+                ServerState::Ready { .. } | ServerState::Stopped { .. }
+            )
+        });
         match tokio::time::timeout(self.start_timeout, settled).await {
             Ok(Ok(state)) if state.is_ready() => Ok(()),
             Ok(Ok(_)) => Err(self.not_running()),
@@ -803,12 +926,76 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
         pid: server.pid(),
         name: info["name"].as_str().map(str::to_owned),
         version: info["version"].as_str().map(str::to_owned),
+        rss_bytes: None,
     });
     info!(
         language = %server.language,
         ms = started.elapsed().as_millis() as u64,
         "language server ready"
     );
+}
+
+/// Watch one server for as long as it exists: stop it when it has been idle
+/// too long, and sample its memory for the status strip (02-08).
+///
+/// One task per server, not per process, so a restart doesn't lose the clock.
+async fn watch(server: std::sync::Arc<ServerHandle>) {
+    let tick = server.config.watch_tick;
+    let mut system = sysinfo::System::new();
+    let mut last_sample = std::time::Instant::now() - RSS_EVERY;
+
+    loop {
+        tokio::time::sleep(tick).await;
+        // Nobody holds this server any more: the pool dropped it, so there is
+        // nothing left to watch.
+        if std::sync::Arc::strong_count(&server) == 1 {
+            return;
+        }
+        if !server.state().is_ready() {
+            continue;
+        }
+
+        if let Some(limit) = server.idle_limit()
+            && let Some(idle) = server.idle_for()
+            && idle >= limit
+        {
+            info!(
+                language = %server.language(),
+                idle_s = idle.as_secs(),
+                "stopping an idle language server"
+            );
+            // A clean stop, and no toast: nobody asked for this, so nobody
+            // needs to be told. It comes back when a tab wants it.
+            server.stop().await;
+            continue;
+        }
+
+        if last_sample.elapsed() >= RSS_EVERY {
+            last_sample = std::time::Instant::now();
+            let rss = resident_memory(&mut system, server.pid());
+            if let ServerState::Ready {
+                pid, name, version, ..
+            } = server.state()
+            {
+                server.set_state(ServerState::Ready {
+                    pid,
+                    name,
+                    version,
+                    rss_bytes: rss,
+                });
+            }
+        }
+    }
+}
+
+/// Resident memory of one process, or none if it can't be read.
+fn resident_memory(system: &mut sysinfo::System, pid: u32) -> Option<u64> {
+    if pid == 0 {
+        return None;
+    }
+    let pid = sysinfo::Pid::from_u32(pid);
+    system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+    system.process(pid).map(|process| process.memory())
 }
 
 /// How long to wait before the nth restart: the base, doubling each time, up

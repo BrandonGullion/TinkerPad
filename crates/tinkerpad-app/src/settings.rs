@@ -1,7 +1,8 @@
 //! `settings.toml`: created on first launch, read when needed.
 //!
-//! Only `[toolchains]` (01-03) and `[library]` (01-04) are read so far. The full typed
-//! settings schema, hot reload, and a settings UI arrive in 04-02.
+//! Only `[toolchains]` (01-03), `[library]` (01-04), and `[lsp]` (02-06) are read
+//! so far. The full typed settings schema, hot reload, and a settings UI arrive
+//! in 04-02.
 
 use std::path::{Path, PathBuf};
 
@@ -27,6 +28,17 @@ const TEMPLATE: &str = r#"# TinkerPad settings.
 #
 # [library]
 # root = "D:/Code/TinkerPad"
+#
+# Language servers. Pinned languages start in the background once the window is
+# up, so the first tab of the day is as quick as the hundredth. A server stops
+# on its own once it has had no open files for a while; the plugin decides how
+# long, and you can override it per language with "never" or a duration.
+#
+# [lsp]
+# prewarm = ["typescript"]
+#
+# [lsp.rust]
+# idle_shutdown = "30m"
 "#;
 
 pub fn path(data_dir: &Path) -> PathBuf {

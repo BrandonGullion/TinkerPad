@@ -27,6 +27,15 @@ template = "expression.js"
 prelude = "console.log(\n"
 postlude = "\n);\n"
 
+[lsp]
+# A tiny server in server.js, so the self-tests have one on every machine
+# (and in CI) without installing anything. Rooted at the library, which means
+# it can be pre-warmed: there is nothing playground-specific about it.
+command = "node"
+args = ["{plugin_dir}/server.js"]
+workspace = "library_root"
+idle_shutdown = "never"
+
 [run]
 command = "{toolchain}"
 args = ["{main}"]

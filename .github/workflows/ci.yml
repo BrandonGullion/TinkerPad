@@ -137,9 +137,11 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages,lsp
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages,lsp,prewarm
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
+          # Pins the test plugin's server, so pre-warm is exercised (02-06).
+          TINKERPAD_LSP_PREWARM: node-check
         run: |
           set -o pipefail
           xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
@@ -158,6 +160,7 @@ jobs:
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
           grep -q "selftest: PASS the directive goes on the first line" launch.log
           grep -q "selftest: PASS the tab is usable straight away" launch.log
+          grep -q "selftest: PASS a pinned language server is up" launch.log
 
       - name: Session restore across two launches (Linux)
         if: runner.os == 'Linux'
@@ -174,9 +177,11 @@ jobs:
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages,lsp
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages,lsp,prewarm
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
+          # Pins the test plugin's server, so pre-warm is exercised (02-06).
+          TINKERPAD_LSP_PREWARM: node-check
         run: |
           set -o pipefail
           bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
@@ -195,6 +200,7 @@ jobs:
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
           grep -q "selftest: PASS the directive goes on the first line" launch.log
           grep -q "selftest: PASS the tab is usable straight away" launch.log
+          grep -q "selftest: PASS a pinned language server is up" launch.log
 
       - name: Session restore across two launches (macOS)
         if: runner.os == 'macOS'
