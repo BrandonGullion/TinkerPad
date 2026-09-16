@@ -132,3 +132,92 @@ export function pick(title: string, items: PickerItem[], placeholder = "Type to 
 function matches(query: string, text: string): boolean {
   return query.split(/\s+/).every((word) => text.includes(word));
 }
+
+/** One field of a [`prompt`] dialog. */
+export interface PromptField {
+  label: string;
+  placeholder?: string;
+  value?: string;
+  /** Enter with this field empty is allowed. */
+  optional?: boolean;
+}
+
+/**
+ * Ask for one or more short strings. Resolves with a value per field, or
+ * `null` if cancelled. Enter moves to the next field and submits on the last;
+ * a required field that's empty keeps focus instead of submitting.
+ */
+export function prompt(title: string, fields: PromptField[]): Promise<string[] | null> {
+  open?.close(null);
+  const previousFocus = document.activeElement as HTMLElement | null;
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "picker-backdrop";
+  const dialog = document.createElement("div");
+  dialog.className = "picker prompt";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-label", title);
+  const heading = document.createElement("div");
+  heading.className = "picker-title";
+  heading.textContent = title;
+  dialog.append(heading);
+
+  const inputs = fields.map((field) => {
+    const row = document.createElement("label");
+    row.className = "prompt-field";
+    const caption = document.createElement("span");
+    caption.className = "prompt-label";
+    caption.textContent = field.label;
+    const input = document.createElement("input");
+    input.className = "picker-input";
+    input.placeholder = field.placeholder ?? "";
+    input.value = field.value ?? "";
+    row.append(caption, input);
+    dialog.append(row);
+    return input;
+  });
+  backdrop.append(dialog);
+  document.body.append(backdrop);
+
+  let resolveResult: (value: string[] | null) => void = () => {};
+  const result = new Promise<string[] | null>((resolve) => (resolveResult = resolve));
+  const finish = (value: string[] | null) => {
+    if (open !== handle) return;
+    open = null;
+    backdrop.remove();
+    if (!value) previousFocus?.focus();
+    resolveResult(value);
+  };
+  const handle = { close: () => finish(null) };
+  open = handle;
+
+  const submit = (from: number) => {
+    // Enter moves on while a later required field is still empty, so the
+    // common "name, then optional version" case is one field for most people.
+    const blank = (i: number) => !fields[i]!.optional && !inputs[i]!.value.trim();
+    const next = inputs.findIndex((_, i) => i > from && blank(i));
+    const missing = next >= 0 ? next : inputs.findIndex((_, i) => blank(i));
+    if (missing >= 0) {
+      inputs[missing]!.focus();
+      return;
+    }
+    finish(inputs.map((input) => input.value.trim()));
+  };
+
+  inputs.forEach((input, i) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit(i);
+      else if (e.key === "Escape") finish(null);
+      else if (e.key === "Tab") return;
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  });
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) finish(null);
+  });
+
+  inputs[0]?.focus();
+  return result;
+}

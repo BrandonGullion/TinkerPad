@@ -186,6 +186,22 @@ one you're on, so a mistake that only affects macOS still fails on Windows.
 | `[deps]` with `kind = "inline-directive"` | Needs `directive = "#:package {name}@{version}"`. |
 | `[output].error_regex_multiline` | `true` to match across up to three lines. |
 
+**`[deps]` in detail.** "Add package" asks for a name and an optional version,
+then does what this section says. `{name}` and `{version}` are the only
+placeholders; when no version is given, `{version}` is empty and a trailing `@`
+is dropped, so `serde@{version}` becomes `serde`.
+
+- `kind = "command"`: `add` runs in the playground folder with the same `PATH` a
+  run gets, and its output streams into the output pane like a run's.
+- `kind = "inline-directive"`: `directive` goes at the top of the main file,
+  after any lines already starting with the same text up to `{name}`. A line for
+  the same package is replaced rather than repeated, and the file is saved at
+  once. Nothing is written if the core refuses the name.
+- A kind with a `prelude` can't take a directive: the file has to start with the
+  prelude for the lock to be recognised, so the top of the file is spoken for.
+  Directive languages should give people a kind without locked lines (C# has
+  `statements` and `program`).
+
 **`[output]` in detail.** Every completed line of stdout and stderr is matched
 against `error_regex`. A match becomes a position the app can use.
 

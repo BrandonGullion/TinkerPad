@@ -21,5 +21,5 @@ pub use annotate::Annotator;
 pub use dump::{DumpParser, Dumped};
 pub use output::OutputDecoder;
 pub use run::{RunError, RunEvent, RunHandle, RunSpec, run};
-pub use spec::{RunContext, SpecError, run_spec};
+pub use spec::{Package, RunContext, SpecError, deps_command, deps_directive, run_spec};
 pub use utf8::Utf8Stream;

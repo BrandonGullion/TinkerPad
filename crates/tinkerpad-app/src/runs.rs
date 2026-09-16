@@ -149,10 +149,53 @@ impl Runs {
             return fail(format!("Couldn't create {}: {e}", scratch.display()));
         }
 
-        let mut handle = match run(spec) {
-            Ok(handle) => handle,
-            Err(error) => return fail(error.to_string()),
-        };
+        match self.spawn(&mut active, id, playground_id, &plugin, spec) {
+            Ok(id) => Ok(id),
+            Err(message) => fail(message),
+        }
+    }
+
+    /// Run `spec` as this playground's current run, replacing any run it
+    /// already has, and stream its output as `run` events. Used for a run and
+    /// for `[deps]` commands such as `cargo add`.
+    pub async fn start_spec(
+        &self,
+        playground_id: &PlaygroundId,
+        plugin: Arc<Plugin>,
+        spec: tinkerpad_runner::RunSpec,
+    ) -> Result<u64, CommandError> {
+        let slot = self.slot(playground_id);
+        let mut active = slot.lock().await;
+        if let Some(prev) = active.take() {
+            prev.kill.kill();
+            let _ = prev.forwarder.await;
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        match self.spawn(&mut active, id, playground_id, &plugin, spec) {
+            Ok(id) => Ok(id),
+            Err(message) => {
+                warn!(run = id, playground = %playground_id, %message, "command failed to start");
+                self.events.publish(
+                    Scope::Run(id),
+                    CoreEvent::Run(UiRunEvent::Failed { message }),
+                );
+                Ok(id)
+            }
+        }
+    }
+
+    /// Spawn the process and forward its output. `active` is the playground's
+    /// (already cleared) run slot.
+    fn spawn(
+        &self,
+        active: &mut Option<Active>,
+        id: u64,
+        playground_id: &PlaygroundId,
+        plugin: &Plugin,
+        spec: tinkerpad_runner::RunSpec,
+    ) -> Result<u64, String> {
+        let scope = Scope::Run(id);
+        let mut handle = run(spec).map_err(|error| error.to_string())?;
 
         info!(run = id, pid = handle.pid, playground = %playground_id, plugin = %plugin.id, "run started");
         let output_spec = plugin.output.clone();

@@ -286,3 +286,159 @@ fn spec_is_plain_data_a_debugger_can_extend() {
         "child gets the discovered PATH"
     );
 }
+
+// `[deps]`: adding a package either runs a command or gives back a line to
+// insert (docs/PLUGINS.md §2).
+
+/// A `[deps]` section on top of a minimal `[run]`.
+fn deps_plugin(root: &Path, deps_section: &str) -> Plugin {
+    plugin(
+        root,
+        &format!("[run]\ncommand = {}\n\n{deps_section}", lit(ECHO)),
+    )
+}
+
+fn package<'a>(name: &'a str, version: &'a str) -> tinkerpad_runner::Package<'a> {
+    tinkerpad_runner::Package { name, version }
+}
+
+#[test]
+fn deps_command_runs_in_the_playground_folder() {
+    let scratch = Scratch::new("deps-command");
+    let plugin = deps_plugin(
+        &scratch.0,
+        &format!(
+            "[deps]\nkind = \"command\"\nadd = [{}, \"add\", \"{{name}}@{{version}}\"]",
+            lit(ECHO)
+        ),
+    );
+    let playground = playground(&scratch.0);
+    let resolver = resolver();
+    let ctx = RunContext {
+        resolver: &resolver,
+        scratch_root: &scratch.0,
+        toolchain_program: "",
+        toolchain_version: "",
+    };
+
+    let spec = tinkerpad_runner::deps_command(&plugin, &playground, &ctx, package("serde", "1.0"))
+        .unwrap()
+        .expect("a command plugin");
+    assert_eq!(spec.program, PathBuf::from(ECHO));
+    assert_eq!(spec.args, ["add", "serde@1.0"]);
+    assert_eq!(spec.cwd.as_deref(), Some(playground.dir.as_path()));
+
+    // No version: the trailing `@` would be a syntax error for cargo and npm.
+    let spec = tinkerpad_runner::deps_command(&plugin, &playground, &ctx, package("serde", ""))
+        .unwrap()
+        .unwrap();
+    assert_eq!(spec.args, ["add", "serde"]);
+
+    // This plugin adds packages by command, so there is no directive.
+    assert_eq!(
+        tinkerpad_runner::deps_directive(&plugin, package("serde", "1.0")).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn deps_directive_gives_a_line_and_the_prefix_that_identifies_it() {
+    let scratch = Scratch::new("deps-directive");
+    let plugin = deps_plugin(
+        &scratch.0,
+        "[deps]\nkind = \"inline-directive\"\ndirective = \"#:package {name}@{version}\"",
+    );
+
+    let (line, prefix) =
+        tinkerpad_runner::deps_directive(&plugin, package("Newtonsoft.Json", "13.0.3"))
+            .unwrap()
+            .expect("a directive plugin");
+    assert_eq!(line, "#:package Newtonsoft.Json@13.0.3");
+    // The prefix plus the name is what an existing line for this package
+    // starts with, so the UI can replace it instead of adding a second one.
+    assert_eq!(prefix, "#:package ");
+    assert!(line.starts_with(&format!("{prefix}Newtonsoft.Json")));
+
+    let (line, _) = tinkerpad_runner::deps_directive(&plugin, package("Newtonsoft.Json", ""))
+        .unwrap()
+        .unwrap();
+    assert_eq!(line, "#:package Newtonsoft.Json");
+
+    let playground = playground(&scratch.0);
+    let resolver = resolver();
+    let ctx = RunContext {
+        resolver: &resolver,
+        scratch_root: &scratch.0,
+        toolchain_program: "",
+        toolchain_version: "",
+    };
+    assert!(
+        tinkerpad_runner::deps_command(&plugin, &playground, &ctx, package("x", ""))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_plugin_without_deps_says_so() {
+    let scratch = Scratch::new("deps-none");
+    let plugin = deps_plugin(&scratch.0, "");
+    assert_eq!(
+        tinkerpad_runner::deps_directive(&plugin, package("serde", "")),
+        Err(SpecError::NoDeps {
+            plugin: "Echo".into()
+        })
+    );
+}
+
+#[test]
+fn every_bundled_plugin_can_add_a_package() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("plugins");
+    for (id, expected) in [
+        ("typescript", "npm install zod@4.0.0"),
+        ("rust", "cargo add serde@1.0.0"),
+        ("csharp", "#:package Newtonsoft.Json@13.0.3"),
+    ] {
+        let plugin = Plugin::load_for(root.join(id), Os::current()).unwrap();
+        let package = match id {
+            "typescript" => package("zod", "4.0.0"),
+            "rust" => package("serde", "1.0.0"),
+            _ => package("Newtonsoft.Json", "13.0.3"),
+        };
+        let got = match tinkerpad_runner::deps_directive(&plugin, package).unwrap() {
+            Some((line, _)) => line,
+            None => {
+                let scratch = Scratch::new(&format!("deps-{id}"));
+                let playground = playground(&scratch.0);
+                let resolver = resolver();
+                let ctx = RunContext {
+                    resolver: &resolver,
+                    scratch_root: &scratch.0,
+                    toolchain_program: "",
+                    toolchain_version: "",
+                };
+                // Resolution needs the real tool on PATH; skip if it isn't.
+                let Ok(Some(spec)) =
+                    tinkerpad_runner::deps_command(&plugin, &playground, &ctx, package)
+                else {
+                    continue;
+                };
+                let program = Path::new(&spec.program)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                std::iter::once(program)
+                    .chain(spec.args.iter().map(|a| a.to_string_lossy().into_owned()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }
+        };
+        assert_eq!(got, expected, "{id}");
+    }
+}

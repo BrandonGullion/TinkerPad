@@ -31,6 +31,19 @@ export type CoreEvent =
   | { type: "libraryChanged" }
   | { type: "sourceChangedOnDisk"; playground: string };
 
+/** A line a plugin's `[deps]` puts at the top of the main file. */
+export interface Directive {
+  /** The line itself, with the name and version filled in. */
+  line: string;
+  /** What comes before the name in it, e.g. `#:package `. */
+  prefix: string;
+}
+
+/** What `add_package` did: ran a command, or gave back a line to insert. */
+export type AddPackage =
+  | { kind: "command"; run: number; command: string }
+  | ({ kind: "directive" } & Directive);
+
 /** A place in a file that a run's output pointed at. */
 export interface Annotation {
   /** As the tool wrote it: absolute, relative, or a `file://` URL. */

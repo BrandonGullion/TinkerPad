@@ -26,9 +26,14 @@ template = "program.ts"
 
 [scaffold]
 # `"type": "module"` makes main.ts an ES module without Node guessing (and
-# warning about it when some folder above has a package.json). Dependencies
-# land in this file once 01-14 wires up `[deps]`.
+# warning about it when some folder above has a package.json). "Add package"
+# installs beside it, into the playground's own node_modules.
 files = [{ path = "package.json", template = "package.json" }]
+
+[deps]
+# Installs into the playground's own node_modules, next to its package.json.
+kind = "command"
+add = ["npm", "install", "{name}@{version}"]
 
 [output]
 # Node prints the error, then the stack. The first frame has the position:

@@ -3,6 +3,7 @@ import { Editor } from "./editor";
 import { invoke, ready, subscribe } from "./ipc";
 import { createLayout } from "./layout";
 import { BottomPanel } from "./panels";
+import { openCommandPalette } from "./commands";
 import { pickerOpen } from "./picker";
 import { setTabManager } from "./playground";
 import { RunController } from "./run";
@@ -87,6 +88,11 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
   switch (key) {
     case "n":
       void (e.shiftKey ? tabs.pickAndCreate() : tabs.newPlayground());
+      return true;
+    // The command palette holds everything without a key of its own (01-14).
+    case "p":
+      if (!e.shiftKey) return false;
+      void openCommandPalette(tabs, runs);
       return true;
     case "o":
       if (e.shiftKey) return false;

@@ -1669,6 +1669,246 @@ async function sessionRestoreScenario(ctx: SelftestContext, check: Check) {
   );
 }
 
+/** Fill the open prompt's fields and submit. */
+async function fillPrompt(values: string[]): Promise<boolean> {
+  if (!(await until(() => document.querySelector(".prompt .picker-input") !== null, 5000))) return false;
+  const inputs = [...document.querySelectorAll<HTMLInputElement>(".prompt .picker-input")];
+  values.forEach((value, i) => {
+    if (inputs[i]) inputs[i]!.value = value;
+  });
+  pressKey("Enter", {}, inputs[0]);
+  return inputs.length === values.length;
+}
+
+/** Open the palette with Mod+Shift+P and choose the command matching `filter`. */
+async function runCommand(filter: string): Promise<boolean> {
+  pressKey("p", { mod: true, shift: true });
+  return choosePicked(filter);
+}
+
+/** The command palette, the prompt, and inline directives (01-14). */
+async function packagesScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs } = ctx;
+  const view = editor.view;
+  const text = () => view.state.doc.toString();
+  const note = () => document.querySelector(".status-note")?.textContent ?? "";
+  const toastText = () =>
+    [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" | ");
+  const clearToasts = () => document.querySelectorAll(".toast").forEach((t) => t.remove());
+
+  // With nothing open there is nothing to add a package to.
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const opened = await runCommand("Add package");
+  await until(() => note() !== "", 3000);
+  await check(
+    "Mod+Shift+P lists Add package, which says there is nothing open",
+    opened && note().includes("Open a playground"),
+    JSON.stringify({ opened, note: note() }),
+  );
+  await check("the palette closes after choosing", document.querySelector(".picker") === null);
+
+  // C# adds packages by putting a directive at the top of the file.
+  const csharp = await invoke<Playground>("create_playground", {
+    name: "Packages Directive",
+    language: "csharp",
+    kind: "statements",
+  });
+  await openPlayground(editor, ctx.status, csharp.id);
+  const before = text();
+
+  let done = runCommand("Add package");
+  await check("choosing it prompts for a package", await fillPrompt(["Newtonsoft.Json", "13.0.3"]));
+  await done;
+  await until(() => text() !== before, 5000);
+  await check(
+    "the directive goes on the first line, and the rest of the file is untouched",
+    text() === `#:package Newtonsoft.Json@13.0.3\n${before}`,
+    JSON.stringify(text().slice(0, 80)),
+  );
+  await check(
+    "it is saved at once, so the next run compiles with it",
+    tabs.activeTab?.savedText === text() && tabs.activeTab?.dirty === false,
+    JSON.stringify({ dirty: tabs.activeTab?.dirty }),
+  );
+
+  // A second package goes after the first, not above it.
+  done = runCommand("Add package");
+  await fillPrompt(["Humanizer", ""]);
+  await done;
+  // The template mentions Humanizer in a comment, so wait for the line itself.
+  await until(() => text().split("\n")[1]?.startsWith("#:package Humanizer") === true, 5000);
+  await check(
+    "another package goes after the directives already there, with no version if none was given",
+    text() === `#:package Newtonsoft.Json@13.0.3\n#:package Humanizer\n${before}`,
+    JSON.stringify(text().split("\n").slice(0, 3)),
+  );
+
+  // The same package again replaces its line instead of adding a second.
+  done = runCommand("Add package");
+  await fillPrompt(["Newtonsoft.Json", "13.0.1"]);
+  await done;
+  await until(() => text().includes("13.0.1"), 5000);
+  await check(
+    "adding the same package again changes its line, and does not add a second",
+    text() === `#:package Newtonsoft.Json@13.0.1\n#:package Humanizer\n${before}`,
+    JSON.stringify(text().split("\n").slice(0, 3)),
+  );
+
+  // Nothing is applied when the core refuses the name.
+  const unchanged = text();
+  clearToasts();
+  done = runCommand("Add package");
+  await fillPrompt(["--global", ""]);
+  await done;
+  await until(() => toastText().includes("dash"), 5000);
+  await check(
+    "a name that would change the command is refused, and nothing is inserted",
+    text() === unchanged && toastText().includes("contain"),
+    JSON.stringify({ toast: toastText().slice(0, 120) }),
+  );
+
+  // A kind whose first lines are locked cannot take a directive, since the
+  // directive has to be the first thing in the file.
+  const expression = await invoke<Playground>("create_playground", {
+    name: "Packages Locked",
+    language: "csharp",
+    kind: "expression",
+  });
+  await openPlayground(editor, ctx.status, expression.id);
+  const locked = text();
+  clearToasts();
+  done = runCommand("Add package");
+  await fillPrompt(["Newtonsoft.Json", ""]);
+  await done;
+  await until(() => toastText().includes("locked"), 5000);
+  await check(
+    "a kind with locked lines refuses rather than writing a broken file",
+    text() === locked && toastText().includes("locked"),
+    JSON.stringify({ changed: text() !== locked, toast: toastText().slice(0, 120) }),
+  );
+
+  // A plugin with no [deps] section says so.
+  clearToasts();
+  const plain = await openTestPlayground(ctx, "Packages Unsupported");
+  const plainText = text();
+  done = runCommand("Add package");
+  await fillPrompt(["anything", ""]);
+  await done;
+  await until(() => toastText().includes("deps"), 5000);
+  await check(
+    "a plugin that does not say how to add packages reports that",
+    text() === plainText && toastText().includes("[deps]"),
+    JSON.stringify({ toast: toastText().slice(0, 120) }),
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  for (const id of [plain.id, expression.id, csharp.id]) {
+    await invoke("delete_playground", { id });
+  }
+}
+
+/**
+ * The real thing: add a package with each bundled plugin and use it in the
+ * next run. Needs the network, so it is not part of CI (work item 01-14).
+ */
+async function packagesLiveScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs, runs } = ctx;
+  const view = editor.view;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+
+  const cases = [
+    {
+      language: "typescript",
+      kind: "statements",
+      pkg: "zod",
+      version: "",
+      code: 'import { z } from "zod";\nconsole.log("zod says", z.string().parse("ok"));\n',
+      expect: "zod says ok",
+    },
+    {
+      language: "rust",
+      kind: "program",
+      pkg: "serde",
+      version: "1",
+      code: 'fn takes<T: serde::Serialize>(_v: T) {}\n\nfn main() {\n    takes(7);\n    println!("serde ok");\n}\n',
+      expect: "serde ok",
+    },
+    {
+      language: "csharp",
+      kind: "statements",
+      pkg: "Newtonsoft.Json",
+      version: "13.0.3",
+      code: "Console.WriteLine(Newtonsoft.Json.JsonConvert.SerializeObject(new { a = 1 }));\n",
+      expect: '{"a":1}',
+    },
+  ];
+
+  for (const c of cases) {
+    const state = await settledToolchain(c.language);
+    if (state?.kind !== "ready") {
+      await check(`${c.language} toolchain is ready`, false, JSON.stringify(state ?? null));
+      continue;
+    }
+    const playground = await invoke<Playground>("create_playground", {
+      name: `Packages ${c.pkg}`,
+      language: c.language,
+      kind: c.kind,
+    });
+    await openPlayground(editor, ctx.status, playground.id);
+    // The code goes in first: adding a package edits the file too.
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: c.code } });
+
+    const started = performance.now();
+    const end = runs.waitForEnd();
+    const done = runCommand("Add package");
+    await fillPrompt([c.pkg, c.version]);
+    await done;
+    // Either a command runs to the end (npm, cargo) or a directive appears in
+    // the file; which one depends on the plugin, so wait for whichever comes.
+    const how = await Promise.race([
+      end.then(() => "command" as const),
+      until(() => view.state.doc.toString() !== c.code, 300_000).then(() => "directive" as const),
+    ]);
+    await report(`INFO ${c.language}: ${c.pkg} added by ${how}`);
+    await report(`INFO ${c.language}: added ${c.pkg} in ${((performance.now() - started) / 1000).toFixed(1)} s`);
+
+    const runStarted = performance.now();
+    const runEnd = runs.waitForEnd();
+    void runs.run(playground.id, editor.text);
+    const outcome = await withTimeout(runEnd, 300_000, `running with ${c.pkg}`);
+    await ctx.output.flushed();
+    await check(
+      `${c.language}: the next run picks up ${c.pkg} with no extra step`,
+      outcome.kind === "exited" && outcome.code === 0 && outText().includes(c.expect),
+      JSON.stringify({ outcome, out: outText().slice(0, 200) }),
+    );
+    await report(`INFO ${c.language}: first run with ${c.pkg} took ${((performance.now() - runStarted) / 1000).toFixed(1)} s`);
+    await tabs.close(tabs.activeTab!);
+    await invoke("delete_playground", { id: playground.id });
+  }
+
+  // A package that does not exist: npm fails, and the user sees why.
+  const failing = await invoke<Playground>("create_playground", {
+    name: "Packages Missing",
+    language: "typescript",
+    kind: "statements",
+  });
+  await openPlayground(editor, ctx.status, failing.id);
+  const failed = runs.waitForEnd();
+  const chosen = runCommand("Add package");
+  await fillPrompt(["tinkerpad-no-such-package-9a7f2", ""]);
+  await chosen;
+  const outcome = await withTimeout(failed, 300_000, "adding a package that does not exist");
+  await ctx.output.flushed();
+  await check(
+    "a package that does not exist fails with the tool's own message in the pane",
+    outcome.kind === "exited" && outcome.code !== 0 && /404|not found/i.test(outText()),
+    JSON.stringify({ outcome, out: outText().slice(-200) }),
+  );
+  await tabs.close(tabs.activeTab!);
+  await invoke("delete_playground", { id: failing.id });
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -1697,6 +1937,8 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   library: libraryScenario,
   "library-trash": libraryTrashScenario,
   locked: lockedScenario,
+  packages: packagesScenario,
+  "packages-live": packagesLiveScenario,
 };
 
 async function pluginsScenario(_ctx: SelftestContext, check: Check) {
