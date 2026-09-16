@@ -209,6 +209,28 @@ Stdio, `Content-Length` framing. One tokio task reads stdout and dispatches
 (responses → `pending`, notifications/requests → editor channel). One task drains an
 `mpsc` into stdin. stderr goes to the log with the server name as a span.
 
+Three modules in `tinkerpad-lsp`, smallest first:
+
+- `framing`: the `Content-Length` codec, and nothing else. It turns bytes into
+  message bodies, tolerating headers in any order or case, a missing
+  `Content-Type`, `\n` line endings, bodies split across reads, and several
+  messages in one read. A header block it can't read is reported and skipped by
+  scanning for the next `Content-Length`, so a server that writes a panic
+  message into its stdout doesn't end the session. DAP frames the same way and
+  reuses this module unchanged (`DEBUGGING.md` D4).
+- `jsonrpc`: `RawMessage`, a `serde_json::Value` with the classification the
+  router needs — request, response, notification — plus `id` and `method`.
+  Messages stay as JSON here; only the proxy deserialises, and only the methods
+  it inspects.
+- `transport`: `Transport::spawn` over `tinkerpad-process`. One task reads
+  stdout and publishes `Message`, `Broken`, and a final `Exited` event; one
+  drains an `mpsc` into stdin; stderr goes to the log line by line under an
+  `lsp{server, pid}` span. Both queues are bounded, so a stalled server slows
+  its sender instead of growing a buffer.
+
+Tests run against `tinkerpad-fakelsp`, a stand-in server that speaks real
+framing and can be told to log, answer big messages, or cut its stdout in half.
+
 ### 4.4 Workspace strategies (plugin-declared)
 
 | Strategy | Meaning | Used by |

@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 tinkerpad-core.workspace = true
 tinkerpad-process.workspace = true
+bytes.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -17,3 +18,8 @@ tracing.workspace = true
 
 [lints]
 workspace = true
+
+# A stand-in language server for the transport tests. Not part of the app.
+[[bin]]
+name = "tinkerpad-fakelsp"
+path = "src/bin/fakelsp.rs"

@@ -3978,6 +3978,7 @@ dependencies = [
 name = "tinkerpad-lsp"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "serde_json",
  "thiserror 2.0.20",
  "tinkerpad-core",
