@@ -120,8 +120,13 @@ pub enum ServerState {
         name: Option<String>,
         version: Option<String>,
     },
-    /// It exited without being asked to. Restart is work item 02-05.
-    Crashed { reason: String },
+    /// It exited without being asked to, and is being started again (02-05).
+    Crashed {
+        reason: String,
+        /// How many crashes in a row this is. The wait before each restart
+        /// doubles, and after enough of them the pool stops trying.
+        restarts: u32,
+    },
     /// `shutdown` has been sent and the exit is being waited for.
     Stopping,
 }

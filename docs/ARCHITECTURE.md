@@ -190,9 +190,17 @@ Rules:
   defaults to "stop after 30 min idle" because of memory. The status strip shows RSS.
 - **Pre-warm.** Languages the user pins are spawned at app start on a background task,
   so the first tab is already fast.
-- **Crash restart.** On unexpected exit: mark `Crashed`, wait with exponential backoff
-  (1s, 2s, 4s, cap 30s, give up after 5), respawn, `initialize`, replay `didOpen` for
-  every doc in `open_docs`. UI shows a toast; diagnostics come back on their own.
+- **Crash restart.** An exit nobody asked for marks the server `Crashed { restarts }`
+  and starts it again after 1s, 2s, 4s, 8s, 16s, then 30s. Six crashes in a row (in
+  ten minutes; a longer gap starts the count over) and the pool stops trying, leaving
+  a `Stopped` state that says so — until someone opens a tab in that language or
+  presses Restart, either of which is a person asking for it again. The handle
+  survives all of this, so tabs, attachments and the proxy never learn that the
+  process changed. Requests in flight get a `-32000` error response, which the
+  editor treats as transient and retries on the next keystroke. After the handshake,
+  every open document is sent again as `didOpen` with the text and version the editor
+  last had — never the history of changes, since the text is the whole state a server
+  needs. A toast says what happened; diagnostics come back on their own.
 - **Clean shutdown.** `shutdown` request → `exit` notification → wait 2s → kill.
   Done concurrently for all servers on app exit, under a 3s budget for the lot:
   quitting is never held up by a wedged server.

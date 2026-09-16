@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tinkerpad_core::{CoreEvent, LanguageId, ServerState};
+use tinkerpad_core::{CoreEvent, LanguageId, Level, ServerState};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -144,15 +144,17 @@ impl LspPool {
         let key = ServerKey::of(config);
         let mut servers = self.servers.lock().expect("servers lock");
         if let Some(server) = servers.get(&key) {
-            // A crashed server is replaced here until 02-05 restarts it on its
-            // own; a stopped one is started again on demand.
-            if !matches!(
-                server.state(),
-                ServerState::Crashed { .. } | ServerState::Stopped { .. }
-            ) {
+            // A crashed server is already on its way back (02-05), so tabs
+            // share it as usual and their requests wait. One the pool gave up
+            // on gets another go, because opening a tab is someone asking for
+            // it again.
+            if matches!(server.state(), ServerState::Stopped { .. }) {
+                info!(language = %key.language, "starting a server that had stopped");
+                server.restart();
+            } else {
                 debug!(language = %key.language, "sharing the running server");
-                return server.clone();
             }
+            return server.clone();
         }
         info!(language = %key.language, root = ?key.root, "starting language server");
         let server = ServerHandle::start(config);
@@ -223,6 +225,18 @@ impl LspPool {
         );
     }
 
+    /// Restart one server now, whatever state it is in. The status strip's
+    /// Restart button (02-08).
+    pub fn restart(&self, language: &str, root: Option<&std::path::Path>) -> bool {
+        match self.get(language, root) {
+            Some(server) => {
+                server.restart();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Forward a server's state changes to the UI until it stops.
     fn publish(&self, server: &Arc<ServerHandle>) {
         let Some(events) = self.events.clone() else {
@@ -233,7 +247,26 @@ impl LspPool {
             let mut states = server.watch_state();
             loop {
                 let state = states.borrow_and_update().clone();
-                let stopped = matches!(state, ServerState::Stopped { .. });
+                // A server that has given up stays stopped until someone asks
+                // for it again, so that is where this ends.
+                let stopped = matches!(
+                    state,
+                    ServerState::Stopped {
+                        reason: Some(_),
+                        ..
+                    }
+                );
+                // A crash is worth interrupting someone for; the state alone
+                // only shows in the status strip.
+                if let ServerState::Crashed { restarts, .. } = &state {
+                    let _ = events.send(CoreEvent::Toast {
+                        level: Level::Warning,
+                        message: format!(
+                            "{} crashed, restarting… (attempt {restarts})",
+                            server.language()
+                        ),
+                    });
+                }
                 let event = CoreEvent::Server {
                     language: LanguageId::new(server.language()),
                     root: server

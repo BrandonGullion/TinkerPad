@@ -346,6 +346,19 @@ mod commands {
         Ok(())
     }
 
+    /// Restart a language's server, as the status strip's button will
+    /// (02-08). Returns false if no server is running for it.
+    #[tauri::command(async)]
+    pub async fn restart_server(
+        state: State<'_, AppState>,
+        language: String,
+        root: Option<String>,
+    ) -> Result<bool, CommandError> {
+        Ok(state
+            .lsp
+            .restart(&language, root.as_deref().map(std::path::Path::new)))
+    }
+
     /// The tab closed: cancel what it was waiting for and close its document.
     /// The server stays up for the next tab.
     #[tauri::command(async)]
@@ -529,6 +542,7 @@ pub fn run() {
             commands::lsp_open,
             commands::lsp_send,
             commands::lsp_close,
+            commands::restart_server,
             commands::dump_examples,
             commands::load_session,
             commands::save_session,

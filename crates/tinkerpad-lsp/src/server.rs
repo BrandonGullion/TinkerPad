@@ -37,6 +37,22 @@ pub const STOP_GRACE: Duration = Duration::from_secs(2);
 /// How many server-initiated messages are held for a subscriber that is slow.
 const BROADCAST: usize = 1024;
 
+/// How long to wait before the first restart after a crash; it doubles each
+/// time up to [`BACKOFF_CAP`] (`docs/ARCHITECTURE.md` §4.1).
+pub const BACKOFF_START: Duration = Duration::from_secs(1);
+pub const BACKOFF_CAP: Duration = Duration::from_secs(30);
+
+/// Crashes in a row before the pool gives up and waits to be asked again.
+pub const MAX_RESTARTS: u32 = 5;
+
+/// Crashes further apart than this are not "in a row": a server that has been
+/// fine for ten minutes and then dies gets the full budget again.
+pub const RESTART_WINDOW: Duration = Duration::from_secs(600);
+
+/// The error code a request gets when its server went away under it. The
+/// editor treats it as transient and asks again on the next keystroke.
+pub const SERVER_RESTARTED: i64 = -32000;
+
 /// What the pool needs to start one server. Plain data: the app builds it from
 /// the plugin's `[lsp]` section, which keeps this crate free of the plugin
 /// format (see the dependency direction in the root `Cargo.toml`).
@@ -56,6 +72,10 @@ pub struct ServerConfig {
     /// How long a request waits for the handshake. [`START_TIMEOUT`] unless a
     /// caller (or a test) says otherwise.
     pub start_timeout: Duration,
+    /// How long to wait before the first restart after a crash; it doubles
+    /// from there. [`BACKOFF_START`] unless a caller (or a test) says
+    /// otherwise.
+    pub backoff: Duration,
 }
 
 impl ServerConfig {
@@ -67,6 +87,7 @@ impl ServerConfig {
             init_options: None,
             install_hint: None,
             start_timeout: START_TIMEOUT,
+            backoff: BACKOFF_START,
         }
     }
 
@@ -88,6 +109,13 @@ impl ServerConfig {
     /// Mostly for tests: the default is long enough for a cold rust-analyzer.
     pub fn with_start_timeout(mut self, timeout: Duration) -> Self {
         self.start_timeout = timeout;
+        self
+    }
+
+    /// Mostly for tests: the default gives a crashing server a second to
+    /// settle, which is a long time to sit through five times over.
+    pub fn with_backoff(mut self, backoff: Duration) -> Self {
+        self.backoff = backoff;
         self
     }
 }
@@ -119,17 +147,34 @@ pub enum RequestError {
     },
 }
 
+/// One process, and the two ends of the pipe to it. Replaced wholesale when a
+/// crashed server is restarted, which is why the handle around it can be held
+/// by tabs that never notice (02-05).
+#[derive(Debug)]
+struct Connection {
+    pid: u32,
+    sender: Sender,
+    kill: tinkerpad_process::KillHandle,
+}
+
+/// How often this server has crashed lately.
+#[derive(Debug, Default)]
+struct Restarts {
+    count: u32,
+    last: Option<std::time::Instant>,
+}
+
 /// A running (or failed) language server.
 #[derive(Debug)]
 pub struct ServerHandle {
     language: String,
-    /// The process id, or 0 when the server never started.
-    pid: u32,
     start_timeout: Duration,
     root: Option<std::path::PathBuf>,
+    /// How to start it, kept so a crashed server can be started again.
+    config: ServerConfig,
     state: watch::Sender<ServerState>,
-    sender: Option<Sender>,
-    kill: Option<tinkerpad_process::KillHandle>,
+    connection: Mutex<Option<Connection>>,
+    restarts: Mutex<Restarts>,
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, oneshot::Sender<RawMessage>>>,
     open_docs: Mutex<HashMap<String, DocState>>,
@@ -146,14 +191,18 @@ impl ServerHandle {
     /// never stops the editor from working.
     pub fn failed(config: &ServerConfig, reason: String) -> Self {
         let state = ServerState::failed(reason, config.install_hint.clone());
+        Self::with_state(config, state)
+    }
+
+    fn with_state(config: &ServerConfig, state: ServerState) -> Self {
         Self {
             language: config.language.clone(),
-            pid: 0,
             start_timeout: config.start_timeout,
             root: config.root.clone(),
+            config: config.clone(),
             state: watch::Sender::new(state),
-            sender: None,
-            kill: None,
+            connection: Mutex::default(),
+            restarts: Mutex::default(),
             next_id: AtomicI64::new(1),
             pending: Mutex::default(),
             open_docs: Mutex::default(),
@@ -166,36 +215,178 @@ impl ServerHandle {
     /// in the background: the state goes `Starting` → `Ready`, and requests
     /// made in between wait for it.
     pub fn start(config: &ServerConfig) -> std::sync::Arc<Self> {
-        let transport = match Transport::spawn(&config.language, config.spawn.clone()) {
+        let server = std::sync::Arc::new(Self::with_state(config, ServerState::Starting));
+        server.connect();
+        server
+    }
+
+    /// Spawn the process and start talking to it. Used to start the server and
+    /// to start it again after a crash.
+    fn connect(self: &std::sync::Arc<Self>) {
+        let transport = match Transport::spawn(&self.language, self.config.spawn.clone()) {
             Ok(transport) => transport,
             Err(e) => {
-                warn!(language = %config.language, error = %e, "language server did not start");
-                return std::sync::Arc::new(Self::failed(config, e.to_string()));
+                warn!(language = %self.language, error = %e, "language server did not start");
+                self.set_state(ServerState::failed(
+                    e.to_string(),
+                    self.config.install_hint.clone(),
+                ));
+                return;
             }
         };
 
-        let server = std::sync::Arc::new(Self {
-            language: config.language.clone(),
+        *self.capabilities.lock().expect("capabilities lock") = None;
+        *self.connection.lock().expect("connection lock") = Some(Connection {
             pid: transport.pid(),
-            start_timeout: config.start_timeout,
-            root: config.root.clone(),
-            state: watch::Sender::new(ServerState::Starting),
-            sender: Some(transport.sender()),
-            kill: Some(transport.kill_handle()),
-            next_id: AtomicI64::new(1),
-            pending: Mutex::default(),
-            open_docs: Mutex::default(),
-            capabilities: Mutex::default(),
-            from_server: broadcast::channel(BROADCAST).0,
+            sender: transport.sender(),
+            kill: transport.kill_handle(),
+        });
+        self.set_state(ServerState::Starting);
+
+        tokio::spawn(route(self.clone(), transport));
+        tokio::spawn(handshake(self.clone(), self.config.clone()));
+    }
+
+    /// Start the server again now, forgetting how often it has crashed.
+    ///
+    /// This is the Restart button in the status strip (02-08), and what a new
+    /// tab does when it finds a server the pool had given up on: asking for it
+    /// again is a person saying "try once more".
+    pub fn restart(self: &std::sync::Arc<Self>) {
+        self.restarts.lock().expect("restarts lock").count = 0;
+        let running = self
+            .connection
+            .lock()
+            .expect("connection lock")
+            .as_ref()
+            .map(|c| c.kill.clone());
+        let server = self.clone();
+        tokio::spawn(async move {
+            if let Some(kill) = running {
+                let mut states = server.watch_state();
+                server.set_state(ServerState::Stopping);
+                kill.kill();
+                let _ = tokio::time::timeout(
+                    STOP_GRACE,
+                    states.wait_for(|state| !matches!(state, ServerState::Stopping)),
+                )
+                .await;
+            }
+            server.connect();
+            server.replay().await;
+        });
+    }
+
+    /// The server died without being asked to. Count it, say so, and start it
+    /// again after a wait that doubles with each crash — unless it has been
+    /// crashing steadily, in which case something is properly wrong and
+    /// restarting it again would only burn the machine.
+    fn crashed(self: &std::sync::Arc<Self>, reason: String) {
+        let count = {
+            let mut restarts = self.restarts.lock().expect("restarts lock");
+            let now = std::time::Instant::now();
+            // A server that has been fine for a while and then dies starts
+            // over with a full budget.
+            if restarts
+                .last
+                .is_some_and(|last| now - last > RESTART_WINDOW)
+            {
+                restarts.count = 0;
+            }
+            restarts.count += 1;
+            restarts.last = Some(now);
+            restarts.count
+        };
+
+        if count > MAX_RESTARTS {
+            warn!(language = %self.language, crashes = count, "giving up on the language server");
+            self.set_state(ServerState::failed(
+                format!("it crashed {count} times in a row: {reason}"),
+                Some("Restart it from the status strip when you have fixed the cause.".to_owned()),
+            ));
+            return;
+        }
+
+        let wait = backoff(self.config.backoff, count);
+        warn!(
+            language = %self.language,
+            crashes = count,
+            wait_ms = wait.as_millis() as u64,
+            %reason,
+            "language server crashed; restarting"
+        );
+        self.set_state(ServerState::Crashed {
+            reason,
+            restarts: count,
         });
 
-        tokio::spawn(route(server.clone(), transport));
-        tokio::spawn(handshake(server.clone(), config.clone()));
-        server
+        let server = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            // Someone may have stopped or restarted it while we waited.
+            if !matches!(server.state(), ServerState::Crashed { .. }) {
+                return;
+            }
+            server.connect();
+            server.replay().await;
+        });
+    }
+
+    /// Open every document the server knew about again, at the text the editor
+    /// last sent. Diagnostics come back on their own after that.
+    ///
+    /// Only the current text is replayed, never the history of changes: the
+    /// text is the whole of what a server needs.
+    async fn replay(self: &std::sync::Arc<Self>) {
+        let docs = self.open_docs();
+        if docs.is_empty() {
+            return;
+        }
+        for doc in &docs {
+            let message = RawMessage::notification(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": doc.uri,
+                        "languageId": doc.language_id,
+                        "version": doc.version,
+                        "text": doc.text,
+                    }
+                }),
+            );
+            if let Err(e) = self.send(message).await {
+                warn!(language = %self.language, uri = doc.uri, error = %e, "could not reopen a document");
+                return;
+            }
+        }
+        info!(language = %self.language, documents = docs.len(), "reopened documents after a restart");
     }
 
     pub fn language(&self) -> &str {
         &self.language
+    }
+
+    /// The process id of the server as it is running now, or 0 if it isn't.
+    pub fn pid(&self) -> u32 {
+        self.connection
+            .lock()
+            .expect("connection lock")
+            .as_ref()
+            .map_or(0, |c| c.pid)
+    }
+
+    /// How many times this server has crashed and been restarted in a row.
+    pub fn restarts(&self) -> u32 {
+        self.restarts.lock().expect("restarts lock").count
+    }
+
+    /// The end of the pipe to the server, if it is running.
+    fn sender(&self) -> Option<Sender> {
+        self.connection
+            .lock()
+            .expect("connection lock")
+            .as_ref()
+            .map(|c| c.sender.clone())
     }
 
     pub fn root(&self) -> Option<&Path> {
@@ -339,7 +530,7 @@ impl ServerHandle {
         params: Value,
     ) -> Result<(i64, oneshot::Receiver<RawMessage>), RequestError> {
         self.wait_ready().await?;
-        let sender = self.sender.as_ref().ok_or_else(|| self.not_running())?;
+        let sender = self.sender().ok_or_else(|| self.not_running())?;
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
@@ -370,7 +561,7 @@ impl ServerHandle {
     /// The proxy uses this to pass a notification through untouched.
     pub async fn send(&self, message: RawMessage) -> Result<(), RequestError> {
         self.wait_ready().await?;
-        let sender = self.sender.as_ref().ok_or_else(|| self.not_running())?;
+        let sender = self.sender().ok_or_else(|| self.not_running())?;
         sender.send(message).await.map_err(|_| self.disconnected())
     }
 
@@ -383,7 +574,7 @@ impl ServerHandle {
     /// Send a notification without waiting for the handshake. Used by the
     /// handshake itself (`initialized`) and by shutdown.
     async fn notify_now(&self, method: &str, params: Value) -> Result<(), RequestError> {
-        let sender = self.sender.as_ref().ok_or_else(|| self.not_running())?;
+        let sender = self.sender().ok_or_else(|| self.not_running())?;
         sender
             .send(RawMessage::notification(method, params))
             .await
@@ -471,7 +662,7 @@ impl ServerHandle {
     /// `shutdown`, then `exit`, then kill if it is still there. Returns once
     /// the process is gone or the grace period is up.
     pub async fn stop(&self) {
-        if self.sender.is_none() || matches!(self.state(), ServerState::Stopped { .. }) {
+        if self.sender().is_none() || matches!(self.state(), ServerState::Stopped { .. }) {
             return;
         }
         let mut exited = self.state.subscribe();
@@ -494,8 +685,8 @@ impl ServerHandle {
 
     /// End the process now. The router publishes the stop.
     pub fn kill(&self) {
-        if let Some(kill) = &self.kill {
-            kill.kill();
+        if let Some(connection) = self.connection.lock().expect("connection lock").as_ref() {
+            connection.kill.kill();
         }
     }
 
@@ -567,7 +758,7 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
     let id = server.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = oneshot::channel();
     server.pending.lock().expect("pending lock").insert(id, tx);
-    let sent = match server.sender.as_ref() {
+    let sent = match server.sender().as_ref() {
         Some(sender) => sender
             .send(RawMessage::request(id, "initialize", params))
             .await
@@ -609,7 +800,7 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
         Some(result.get("capabilities").cloned().unwrap_or(json!({})));
     let _ = server.notify_now("initialized", json!({})).await;
     server.set_state(ServerState::Ready {
-        pid: server.pid,
+        pid: server.pid(),
         name: info["name"].as_str().map(str::to_owned),
         version: info["version"].as_str().map(str::to_owned),
     });
@@ -618,6 +809,13 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
         ms = started.elapsed().as_millis() as u64,
         "language server ready"
     );
+}
+
+/// How long to wait before the nth restart: the base, doubling each time, up
+/// to [`BACKOFF_CAP`]. With the default base that is 1s, 2s, 4s, 8s, 16s, 30s.
+fn backoff(base: Duration, attempt: u32) -> Duration {
+    let doubled = base * 2u32.saturating_pow(attempt.saturating_sub(1));
+    doubled.min(BACKOFF_CAP)
 }
 
 /// Deliver responses to whoever asked, and broadcast the rest.
@@ -647,16 +845,20 @@ async fn route(server: std::sync::Arc<ServerHandle>, mut transport: Transport) {
             }
             TransportEvent::Exited(exit) => {
                 let expected = exit.killed || matches!(server.state(), ServerState::Stopping);
-                server.set_state(if expected {
-                    ServerState::stopped()
+                *server.connection.lock().expect("connection lock") = None;
+                // Waking the waiters before the state changes means a request
+                // in flight fails as "disconnected" rather than hanging until
+                // its own timeout; the proxy turns that into an error response
+                // for the tab that asked.
+                server.pending.lock().expect("pending lock").clear();
+                if expected {
+                    server.set_state(ServerState::stopped());
                 } else {
-                    ServerState::Crashed {
-                        reason: match exit.code {
-                            Some(code) => format!("it exited with code {code}"),
-                            None => "it was ended by a signal".to_owned(),
-                        },
-                    }
-                });
+                    server.crashed(match exit.code {
+                        Some(code) => format!("it exited with code {code}"),
+                        None => "it was ended by a signal".to_owned(),
+                    });
+                }
                 break;
             }
         }
@@ -717,4 +919,21 @@ pub fn path_to_uri(path: &Path) -> String {
         }
     }
     uri
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_doubles_and_then_stops_growing() {
+        let base = BACKOFF_START;
+        let seconds = |attempt| backoff(base, attempt).as_secs();
+        assert_eq!(
+            (1..=8).map(seconds).collect::<Vec<_>>(),
+            [1, 2, 4, 8, 16, 30, 30, 30],
+        );
+        // A test's shorter base scales the same way.
+        assert_eq!(backoff(Duration::from_millis(10), 3).as_millis(), 40);
+    }
 }
