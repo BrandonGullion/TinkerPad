@@ -407,15 +407,25 @@ impl Proxy {
         if message.is_request() {
             let id = message.id().cloned().unwrap_or(Value::Null);
             let answer = match method.as_str() {
-                // One `null` per item: no per-workspace settings yet (04-02).
+                // One value per item asked about: whatever the plugin's
+                // `[lsp.register]` has put there, and null for anything else
+                // (per-workspace settings arrive in 04-02).
                 "workspace/configuration" => {
                     let items = message
                         .params()
                         .and_then(|p| p.get("items"))
                         .and_then(Value::as_array)
-                        .map(Vec::len)
-                        .unwrap_or(0);
-                    RawMessage::response(id, Value::Array(vec![Value::Null; items]))
+                        .cloned()
+                        .unwrap_or_default();
+                    let answers: Vec<Value> = items
+                        .iter()
+                        .map(|item| {
+                            let section = item.get("section").and_then(Value::as_str).unwrap_or("");
+                            server.configuration_section(section)
+                        })
+                        .collect();
+                    server.note_configuration_request();
+                    RawMessage::response(id, Value::Array(answers))
                 }
                 // Accepted: the core's capabilities don't change per document.
                 "client/registerCapability" | "client/unregisterCapability" => {
@@ -423,6 +433,13 @@ impl Proxy {
                 }
                 // Progress is welcome; the status strip shows it (02-08).
                 "window/workDoneProgress/create" => RawMessage::response(id, Value::Null),
+                // Pull diagnostics are not used here — the server publishes
+                // them — so there is nothing to refresh, and saying so is
+                // friendlier than an error.
+                "workspace/diagnostic/refresh"
+                | "workspace/semanticTokens/refresh"
+                | "workspace/inlayHint/refresh"
+                | "workspace/codeLens/refresh" => RawMessage::response(id, Value::Null),
                 other => RawMessage::error(
                     id,
                     METHOD_NOT_FOUND,

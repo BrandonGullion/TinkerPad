@@ -1,0 +1,8 @@
+{
+  "//": "Written by TinkerPad the first time its TypeScript language server starts, and never overwritten. Run `npm install` here once: the language server needs a TypeScript of its own to analyse your playgrounds with. Nothing here affects how playgrounds run.",
+  "name": "tinkerpad-typescript-workspace",
+  "private": true,
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

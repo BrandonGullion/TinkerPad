@@ -161,6 +161,9 @@ pub struct LspSpec {
     /// `initializationOptions`, converted from TOML.
     pub init_options: Option<serde_json::Value>,
     pub register: Option<Register>,
+    /// Files written into the server's workspace the first time it starts,
+    /// and never overwritten (work item 02-07).
+    pub workspace_files: Vec<ScaffoldFile>,
 }
 
 pub use manifest::Workspace;
@@ -169,6 +172,8 @@ pub use manifest::Workspace;
 pub struct Register {
     pub setting: String,
     pub value: String,
+    /// Sent after the setting changes, if the plugin names one.
+    pub reload: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -598,12 +603,22 @@ impl Validator<'_> {
     }
 
     fn scaffold(&mut self, raw: manifest::Scaffold) -> Vec<ScaffoldFile> {
+        self.template_files("scaffold.files", raw.files)
+    }
+
+    /// A list of `path` + `template` pairs: where to write it, and what to
+    /// write there. Used by `[scaffold].files` and `[lsp].workspace_files`.
+    fn template_files(
+        &mut self,
+        section: &str,
+        files: Vec<manifest::ScaffoldFile>,
+    ) -> Vec<ScaffoldFile> {
         let templates = self.dir.join(TEMPLATES_DIR);
-        raw.files
+        files
             .into_iter()
             .enumerate()
             .filter_map(|(i, f)| {
-                let key = format!("scaffold.files[{i}]");
+                let key = format!("{section}[{i}]");
                 let path = self.relative_path(&format!("{key}.path"), &f.path);
                 let template = self
                     .relative_path(&format!("{key}.template"), &f.template)
@@ -770,7 +785,7 @@ impl Validator<'_> {
 
     fn lsps(&mut self, variants: Vec<(String, manifest::Lsp, bool)>) -> Option<LspSpec> {
         let mut chosen = None;
-        for (key, l, is_chosen) in variants {
+        for (key, mut l, is_chosen) in variants {
             let command = self.command(&key, l.command, l.args, None, l.env);
             let idle_shutdown =
                 self.idle_shutdown(&format!("{key}.idle_shutdown"), l.idle_shutdown.as_deref());
@@ -787,14 +802,20 @@ impl Validator<'_> {
                 Register {
                     setting: r.setting,
                     value: r.value,
+                    reload: r.reload,
                 }
             });
+            let workspace_files = self.template_files(
+                &format!("{key}.workspace_files"),
+                std::mem::take(&mut l.workspace_files),
+            );
             let spec = LspSpec {
                 command,
                 workspace: l.workspace.unwrap_or(Workspace::PlaygroundDir),
                 idle_shutdown,
                 init_options,
                 register,
+                workspace_files,
             };
             if is_chosen {
                 chosen = Some(spec);

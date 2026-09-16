@@ -65,6 +65,10 @@ const WATCH_TICK: Duration = Duration::from_secs(5);
 /// How often resident memory is sampled for the status strip (02-08).
 const RSS_EVERY: Duration = Duration::from_secs(10);
 
+/// How long to wait for a server to read a configuration it has just been
+/// told about, before asking it to reload anyway (work item 02-07).
+const CONFIG_READ_WAIT: Duration = Duration::from_secs(2);
+
 /// What the pool needs to start one server. Plain data: the app builds it from
 /// the plugin's `[lsp]` section, which keeps this crate free of the plugin
 /// format (see the dependency direction in the root `Cargo.toml`).
@@ -97,6 +101,16 @@ pub struct ServerConfig {
     /// How often the idle clock is checked and memory sampled. Shortened by
     /// tests; there is nothing to be gained from a shorter one in the app.
     pub watch_tick: Duration,
+    /// The setting a shared server is told about its playgrounds through, as a
+    /// dotted path: `rust-analyzer.linkedProjects`. From the plugin's
+    /// `[lsp.register]` (work item 02-07).
+    pub register_setting: Option<String>,
+    /// A request to send after that setting changes, for a server that reads
+    /// its projects once rather than on every change.
+    pub register_reload: Option<String>,
+    /// How long to give a server to read a changed configuration before the
+    /// reload request is sent anyway.
+    pub config_read_wait: Duration,
 }
 
 impl ServerConfig {
@@ -112,6 +126,9 @@ impl ServerConfig {
             idle_shutdown: None,
             idle_unused: IDLE_UNUSED,
             watch_tick: WATCH_TICK,
+            register_setting: None,
+            register_reload: None,
+            config_read_wait: CONFIG_READ_WAIT,
         }
     }
 
@@ -161,6 +178,18 @@ impl ServerConfig {
     /// to.
     pub fn with_watch_tick(mut self, tick: Duration) -> Self {
         self.watch_tick = tick;
+        self
+    }
+
+    /// The dotted setting a shared server learns about its playgrounds through.
+    pub fn with_register_setting(mut self, setting: impl Into<String>) -> Self {
+        self.register_setting = Some(setting.into());
+        self
+    }
+
+    /// A request to send after that setting changes.
+    pub fn with_register_reload(mut self, method: impl Into<String>) -> Self {
+        self.register_reload = Some(method.into());
         self
     }
 }
@@ -220,6 +249,9 @@ pub struct ServerHandle {
     state: watch::Sender<ServerState>,
     connection: Mutex<Option<Connection>>,
     restarts: Mutex<Restarts>,
+    /// What each attached playground contributes to the registered setting,
+    /// by document URI (work item 02-07).
+    registrations: Mutex<std::collections::BTreeMap<String, Value>>,
     /// When the last document was closed, or when the server started with none.
     /// `None` while it has documents open (work item 02-06).
     idle_since: Mutex<Option<std::time::Instant>>,
@@ -234,6 +266,9 @@ pub struct ServerHandle {
     capabilities: Mutex<Option<Value>>,
     /// Notifications and server-to-client requests, for the proxy (02-03).
     from_server: broadcast::Sender<RawMessage>,
+    /// Fired when the server asks for its configuration, so a reload request
+    /// can wait until it has actually read the new one.
+    config_asked: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl ServerHandle {
@@ -254,6 +289,7 @@ impl ServerHandle {
             state: watch::Sender::new(state),
             connection: Mutex::default(),
             restarts: Mutex::default(),
+            registrations: Mutex::default(),
             idle_since: Mutex::new(Some(std::time::Instant::now())),
             ever_opened: std::sync::atomic::AtomicBool::new(false),
             next_id: AtomicI64::new(1),
@@ -261,6 +297,7 @@ impl ServerHandle {
             open_docs: Mutex::default(),
             capabilities: Mutex::default(),
             from_server: broadcast::channel(BROADCAST).0,
+            config_asked: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -268,10 +305,157 @@ impl ServerHandle {
     /// in the background: the state goes `Starting` → `Ready`, and requests
     /// made in between wait for it.
     pub fn start(config: &ServerConfig) -> std::sync::Arc<Self> {
-        let server = std::sync::Arc::new(Self::with_state(config, ServerState::Starting));
-        server.connect();
-        tokio::spawn(watch(server.clone()));
+        let server = Self::prepare(config);
+        server.begin();
         server
+    }
+
+    /// Build the handle without starting anything. The pool uses this to
+    /// record which playgrounds a server is for *before* it starts, so the
+    /// handshake can carry them: rust-analyzer reads its projects once, at
+    /// startup, and a list that arrives later means a reload (02-07).
+    pub fn prepare(config: &ServerConfig) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::with_state(config, ServerState::Starting))
+    }
+
+    /// Start a prepared server.
+    pub fn begin(self: &std::sync::Arc<Self>) {
+        self.connect();
+        tokio::spawn(watch(self.clone()));
+    }
+
+    /// Tell a shared server about one more playground.
+    ///
+    /// A server rooted at a workspace of its own (`scratch_workspace`) has no
+    /// way to discover the playgrounds it is meant to serve, so the plugin
+    /// names a setting — `rust-analyzer.linkedProjects` — and each attached
+    /// playground adds a value to it. The whole list is pushed every time it
+    /// changes, which is what a server expects from
+    /// `workspace/didChangeConfiguration`.
+    pub async fn register(&self, uri: &str, value: Value) {
+        if self.note_registration(uri, value) {
+            self.push_configuration().await;
+        }
+    }
+
+    /// Record a playground's contribution without pushing it yet. The pool
+    /// does this as the tab attaches, before the handshake has finished, so a
+    /// server that asks for its configuration is answered correctly the first
+    /// time it asks.
+    pub fn note_registration(&self, uri: &str, value: Value) -> bool {
+        if self.config.register_setting.is_none() {
+            return false;
+        }
+        let mut registrations = self.registrations.lock().expect("registrations lock");
+        registrations.insert(uri.to_owned(), value.clone()) != Some(value)
+    }
+
+    /// The playgrounds this server has been told to serve.
+    pub fn registrations(&self) -> Vec<Value> {
+        self.registrations
+            .lock()
+            .expect("registrations lock")
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    /// Send the registered setting as it stands now. The pool calls this
+    /// after noting a registration.
+    pub async fn push_registrations(&self) {
+        if self.config.register_setting.is_some() {
+            self.push_configuration().await;
+        }
+    }
+
+    /// Forget a playground's contribution to the registered setting.
+    pub async fn unregister(&self, uri: &str) {
+        if self.forget_registration(uri) {
+            self.push_configuration().await;
+        }
+    }
+
+    /// Take a playground out of the registered setting without telling the
+    /// server yet. A tab closing does this as it goes, so the next tab to
+    /// attach sees an accurate list rather than one that is still being
+    /// cleaned up.
+    pub fn forget_registration(&self, uri: &str) -> bool {
+        if self.config.register_setting.is_none() {
+            return false;
+        }
+        self.registrations
+            .lock()
+            .expect("registrations lock")
+            .remove(uri)
+            .is_some()
+    }
+
+    /// The settings object this server should be seeing: the registered
+    /// setting's dotted path, holding every attached playground's value.
+    ///
+    /// Empty when the plugin registers nothing, which is most of them.
+    pub fn configuration(&self) -> Value {
+        let Some(setting) = &self.config.register_setting else {
+            return json!({});
+        };
+        let values: Vec<Value> = self
+            .registrations
+            .lock()
+            .expect("registrations lock")
+            .values()
+            .cloned()
+            .collect();
+        nest(setting, Value::Array(values))
+    }
+
+    /// Note that the server has asked for its configuration. The proxy calls
+    /// this when it answers one, so a reload request can wait for it.
+    pub fn note_configuration_request(&self) {
+        self.config_asked.notify_waiters();
+    }
+
+    /// The value at a dotted section of the configuration, for a server that
+    /// asks with `workspace/configuration` instead of waiting to be told.
+    pub fn configuration_section(&self, section: &str) -> Value {
+        let mut value = self.configuration();
+        if section.is_empty() {
+            return value;
+        }
+        for part in section.split('.') {
+            value = value.get(part).cloned().unwrap_or(Value::Null);
+            if value.is_null() {
+                break;
+            }
+        }
+        value
+    }
+
+    async fn push_configuration(&self) {
+        let settings = self.configuration();
+        debug!(language = %self.language, %settings, "telling the server about its playgrounds");
+        let _ = self
+            .notify(
+                "workspace/didChangeConfiguration",
+                json!({ "settings": settings }),
+            )
+            .await;
+
+        // Some servers read their projects once and act on a change only when
+        // asked to; the plugin names the request to send (rust-analyzer wants
+        // `rust-analyzer/reloadWorkspace`). Reloading before the server has
+        // read the new configuration would reload the old one, so wait for it
+        // to ask — and go ahead anyway if it doesn't. Failures are the server's
+        // business, not the user's.
+        if let Some(method) = self.config.register_reload.clone() {
+            let asked = self.config_asked.clone();
+            let _ = tokio::time::timeout(self.config.config_read_wait, asked.notified()).await;
+            match self.request(&method, Value::Null).await {
+                Ok(_) => debug!(language = %self.language, %method, "asked the server to reload"),
+                Err(e) => {
+                    debug!(language = %self.language, %method, error = %e, "reload request failed")
+                }
+            }
+        }
     }
 
     /// Note that the set of open documents changed: the idle clock runs only
@@ -433,6 +617,18 @@ impl ServerHandle {
     /// Only the current text is replayed, never the history of changes: the
     /// text is the whole of what a server needs.
     async fn replay(self: &std::sync::Arc<Self>) {
+        // The registered setting first: a server that learns about a project
+        // after the file in it is open may not connect the two.
+        if self.config.register_setting.is_some()
+            && !self
+                .registrations
+                .lock()
+                .expect("registrations lock")
+                .is_empty()
+        {
+            self.push_configuration().await;
+        }
+
         let docs = self.open_docs();
         if docs.is_empty() {
             return;
@@ -872,9 +1068,14 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
             "name": config.language,
         }])),
         "capabilities": client_capabilities(),
-        "initializationOptions": config.init_options,
+        "initializationOptions": initialization_options(&config, &server),
     });
 
+    debug!(
+        language = %server.language,
+        options = %params["initializationOptions"],
+        "handshake"
+    );
     // Sent directly: the state is `Starting`, which is exactly what everything
     // else is waiting for.
     let started = std::time::Instant::now();
@@ -1054,6 +1255,38 @@ async fn route(server: std::sync::Arc<ServerHandle>, mut transport: Transport) {
     server.pending.lock().expect("pending lock").clear();
 }
 
+/// The plugin's `initializationOptions` with the registered setting folded in.
+///
+/// `initializationOptions` is a server's own settings without its namespace —
+/// rust-analyzer reads `linkedProjects`, not `rust-analyzer.linkedProjects` —
+/// so the leading segment of the registered setting is dropped. Sending it here
+/// as well as in `didChangeConfiguration` is what lets a server that reads its
+/// projects once get them right the first time.
+fn initialization_options(config: &ServerConfig, server: &ServerHandle) -> Value {
+    let Some(setting) = &config.register_setting else {
+        return config.init_options.clone().unwrap_or(Value::Null);
+    };
+    let namespace = setting.split('.').next().unwrap_or_default();
+    let registered = server.configuration_section(namespace);
+    let Some(registered) = registered.as_object().filter(|map| !map.is_empty()) else {
+        return config.init_options.clone().unwrap_or(Value::Null);
+    };
+    let mut merged = config.init_options.clone().unwrap_or_else(|| json!({}));
+    if let Some(target) = merged.as_object_mut() {
+        for (key, value) in registered {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+    merged
+}
+
+/// A dotted path as a nested object: `a.b` and `1` become `{"a":{"b":1}}`.
+fn nest(path: &str, value: Value) -> Value {
+    path.split('.')
+        .rev()
+        .fold(value, |inner, part| json!({ part: inner }))
+}
+
 /// What this client can do, which is what the editor client (02-04) supports.
 /// Kept small on purpose: a server should not send what nothing will render.
 fn client_capabilities() -> Value {
@@ -1111,6 +1344,15 @@ pub fn path_to_uri(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dotted_setting_becomes_a_nested_object() {
+        assert_eq!(
+            nest("rust-analyzer.linkedProjects", json!(["a", "b"])),
+            json!({ "rust-analyzer": { "linkedProjects": ["a", "b"] } }),
+        );
+        assert_eq!(nest("flat", json!(1)), json!({ "flat": 1 }));
+    }
 
     #[test]
     fn the_wait_doubles_and_then_stops_growing() {

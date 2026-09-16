@@ -1815,7 +1815,11 @@ async function packagesScenario(ctx: SelftestContext, check: Check) {
 
   for (const t of [...tabs.tabs]) await tabs.close(t);
   for (const id of [plain.id, expression.id, csharp.id]) {
-    await invoke("delete_playground", { id });
+    try {
+      await invoke("delete_playground", { id });
+    } catch (e) {
+      await report(`INFO could not delete ${id}: ${JSON.stringify(e)}`);
+    }
   }
 }
 
@@ -1943,6 +1947,10 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
     await report("INFO rust toolchain missing; skipping the language server checks");
     return;
   }
+
+  // From no tabs, so the checks below are about this scenario's playgrounds
+  // and not whatever an earlier one left open.
+  for (const t of [...tabs.tabs]) await tabs.close(t);
 
   const playground = await invoke<Playground>("create_playground", {
     name: "Lsp Test",
@@ -2087,7 +2095,9 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: "fn main() {\n    let x: i32 =\n}\n" },
   });
-  const marked = await until(() => countDiagnostics(view) > 0, 60_000);
+  // Under load — the suite has just built several crates — rust-analyzer can
+  // take a while to index before it reports anything.
+  const marked = await until(() => countDiagnostics(view) > 0, 180_000);
   await check(
     "a broken file gets diagnostics from the server",
     marked,
@@ -2096,17 +2106,28 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   const squiggles = document.querySelectorAll(".cm-lintRange, .cm-lint-marker").length;
   await check("they are drawn in the editor and its gutter", squiggles > 0, `${squiggles} marks`);
 
+  const markedLines: number[] = [];
+  forEachDiagnostic(view.state, (_, from) => {
+    markedLines.push(view.state.doc.lineAt(from).number);
+  });
   view.dispatch({ selection: { anchor: 0 } });
   ctx.handleGlobalKey(key("F8"));
   await frame();
   const line = view.state.doc.lineAt(view.state.selection.main.head).number;
-  await check("F8 walks the server's diagnostics too", line > 1, `line ${line}`);
+  await check(
+    "F8 walks the server's diagnostics too",
+    markedLines.includes(line),
+    JSON.stringify({ cursor: line, diagnostics: markedLines }),
+  );
 
   // A restart under a live tab: the documents are opened again by the core
   // (02-05), so the editor carries on without touching anything itself.
+  const rustServer = (await invoke<ServerStatus[]>("server_status")).find(
+    (server) => server.language === "rust",
+  );
   const restarted = await invoke<boolean>("restart_server", {
     language: "rust",
-    root: tabs.summary(tab.id)?.dir ?? null,
+    root: rustServer?.root ?? null,
   });
   await check("a language server can be restarted", restarted);
   // Keep typing until the answers come back, the way a person would.
@@ -2151,15 +2172,63 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   await check("a second Rust tab connects to the server already running", reconnected, `${reconnectMs.toFixed(0)} ms`);
   await report(`INFO second tab connected in ${reconnectMs.toFixed(0)} ms`);
 
+  // One server, two playgrounds: the second was added to its linkedProjects
+  // rather than starting a second rust-analyzer (02-07).
+  const rustServers = (await invoke<ServerStatus[]>("server_status")).filter(
+    (server) => server.language === "rust",
+  );
+  await check(
+    "both Rust playgrounds are served by one process",
+    rustServers.length === 1 && (rustServers[0]?.state.pid ?? 0) > 0,
+    JSON.stringify(rustServers.map((server) => ({ root: server.root, pid: server.state.pid }))),
+  );
+  await check(
+    "rooted at a workspace of TinkerPad's own, not at a playground",
+    (rustServers[0]?.root ?? "").includes("scratch"),
+    rustServers[0]?.root ?? "",
+  );
+
+  // And the second playground gets completions of its own, which is the whole
+  // point of registering it.
+  view.dispatch({
+    changes: {
+      from: 0,
+      to: view.state.doc.length,
+      insert: 'fn main() {\n    let v: Vec<u32> = Vec::new();\n    v.\n}\n',
+    },
+    selection: { anchor: "fn main() {\n    let v: Vec<u32> = Vec::new();\n    v.".length },
+  });
+  const secondCompletions = performance.now();
+  let alsoOffered: readonly { label: string }[] = [];
+  let alsoFound = false;
+  for (let attempt = 0; attempt < 60 && !alsoFound; attempt++) {
+    startCompletion(view);
+    alsoFound = await until(() => {
+      alsoOffered = currentCompletions(view.state);
+      return alsoOffered.length > 0;
+    }, 2000);
+  }
+  await check(
+    "the second playground gets completions too, from the same server",
+    alsoFound && alsoOffered.some((c) => c.label.startsWith("len")),
+    JSON.stringify(alsoOffered.slice(0, 5).map((c) => c.label)),
+  );
+  await report(
+    `INFO first completion in a second playground took ${((performance.now() - secondCompletions) / 1000).toFixed(1)} s`,
+  );
+  closeCompletion(view);
+
   await tabs.close(secondTab);
+  // The server is rooted elsewhere now, but it has loaded these crates and
+  // watches their folders, so Windows can still refuse to delete one while it
+  // is running. Reported, not fatal: this scenario is about the editor.
   for (const id of [second.id, playground.id]) {
-    // rust-analyzer keeps the playground folder open (its workspace is that
-    // folder until 02-07), and Windows won't delete a folder in use. The
-    // scenario is about the editor, so a failure here is reported, not fatal.
     try {
       await invoke("delete_playground", { id });
     } catch (e) {
-      await report(`INFO could not delete ${id} while its server is running: ${String(e)}`);
+      await report(
+        `INFO could not delete ${id} while the language server watches it: ${JSON.stringify(e)}`,
+      );
     }
   }
 }
@@ -2226,6 +2295,126 @@ async function prewarmScenario(ctx: SelftestContext, check: Check) {
   await check("its memory is sampled", measured, `${Math.round((sampled ?? 0) / 1024)} KiB`);
 }
 
+/**
+ * The same editor path against typescript-language-server, whose server is
+ * rooted at the library rather than at one playground (02-07).
+ *
+ * Skipped with an INFO line where the server isn't installed.
+ */
+async function lspTypescriptScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs } = ctx;
+  const view = editor.view;
+
+  const status = await invoke<PluginsStatus>("list_plugins");
+  const plugin = status.plugins.find((p) => p.id === "typescript");
+  await check(
+    "the TypeScript plugin declares a language server",
+    plugin?.lsp === true,
+    JSON.stringify({ lsp: plugin?.lsp, highlighter: plugin?.highlighter }),
+  );
+
+  const playground = await invoke<Playground>("create_playground", {
+    name: "Lsp Typescript",
+    language: "typescript",
+    kind: "statements",
+  });
+  await openPlayground(editor, ctx.status, playground.id);
+  view.dispatch({
+    changes: {
+      from: 0,
+      to: view.state.doc.length,
+      insert: "const names = [\"ada\", \"grace\"];\nnames.\n",
+    },
+    selection: { anchor: 'const names = ["ada", "grace"];\nnames.'.length },
+  });
+
+  const tab = tabs.activeTab!;
+  const connected = await until(() => tab.lsp !== null, 60_000);
+  if (!connected) {
+    await report("INFO typescript-language-server did not connect; skipping");
+    await tabs.close(tab);
+    await invoke("delete_playground", { id: playground.id });
+    return;
+  }
+
+  // A server rooted at the library, not at this playground.
+  const server = (await invoke<ServerStatus[]>("server_status")).find(
+    (s) => s.language === "typescript",
+  );
+  const library = tabs.summary(playground.id)?.dir ?? "";
+  await check(
+    "its server is rooted at the library, above the playground",
+    (server?.root.length ?? 0) > 0 && library.startsWith(server?.root ?? "\u0000"),
+    JSON.stringify({ root: server?.root, playground: library }),
+  );
+  await check(
+    "and the tsconfig.json it needs was written there",
+    (await invoke<string[]>("selftest_list_dir", { dir: server?.root ?? "" })).includes(
+      "tsconfig.json",
+    ),
+    server?.root ?? "",
+  );
+
+  let offered: readonly { label: string }[] = [];
+  let found = false;
+  const started = performance.now();
+  for (let attempt = 0; attempt < 30 && !found; attempt++) {
+    startCompletion(view);
+    found = await until(() => {
+      offered = currentCompletions(view.state);
+      return offered.length > 0;
+    }, 2000);
+  }
+  // tsserver labels a completion after a dot with the dot included, so compare
+  // on the name itself.
+  const names = offered.map((c) => c.label.replace(/^./, ""));
+  await check(
+    "completions on an array come from the server",
+    found && names.includes("map") && names.includes("filter"),
+    JSON.stringify(names.slice(0, 6)),
+  );
+  await report(
+    `INFO first TypeScript completion took ${((performance.now() - started) / 1000).toFixed(1)} s`,
+  );
+
+  // Warm, the number worth comparing with rust-analyzer's.
+  const samples: number[] = [];
+  for (let n = 0; n < 5; n++) {
+    closeCompletion(view);
+    await frame();
+    const at = performance.now();
+    view.dispatch({
+      changes: { from: view.state.selection.main.head, insert: "m" },
+      selection: { anchor: view.state.selection.main.head + 1 },
+      userEvent: "input.type",
+    });
+    if (await until(() => currentCompletions(view.state).length > 0, 10_000)) {
+      samples.push(performance.now() - at);
+    }
+    view.dispatch({
+      changes: { from: view.state.selection.main.head - 1, to: view.state.selection.main.head },
+    });
+  }
+  samples.sort((a, b) => a - b);
+  const median = samples[Math.floor(samples.length / 2)] ?? Number.POSITIVE_INFINITY;
+  await check(
+    "a warm TypeScript server answers a keystroke quickly",
+    samples.length >= 3 && median < 1000,
+    JSON.stringify(samples.map((ms) => Math.round(ms))),
+  );
+  await report(
+    `INFO warm TypeScript completion: median ${median.toFixed(0)} ms, best ${(samples[0] ?? 0).toFixed(0)} ms`,
+  );
+  closeCompletion(view);
+
+  await tabs.close(tab);
+  try {
+    await invoke("delete_playground", { id: playground.id });
+  } catch (e) {
+    await report(`INFO could not delete the TypeScript playground: ${JSON.stringify(e)}`);
+  }
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -2255,6 +2444,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "library-trash": libraryTrashScenario,
   locked: lockedScenario,
   lsp: lspScenario,
+  "lsp-typescript": lspTypescriptScenario,
   prewarm: prewarmScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,

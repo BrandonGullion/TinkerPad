@@ -291,8 +291,36 @@ framing and can be told to log, answer big messages, or cut its stdout in half.
 |---|---|---|
 | `playground_dir` | Server root is the playground folder; one server per playground | Fallback; wasteful |
 | `library_root` | One server rooted at `~/TinkerPad/` serving all playgrounds | TypeScript (`typescript-language-server` is fine with loose files) |
-| `scratch_workspace` | One server rooted at an app-owned scratch dir; playgrounds registered dynamically | Rust (`linkedProjects`), Go (`go.work`) |
+| `scratch_workspace` | One server rooted at `<app-data>/scratch/<plugin-id>/`; playgrounds registered dynamically | Rust (`linkedProjects`), Go (`go.work`) |
 | `none` | Server needs no root (file-based) | C# Roslyn for file-based apps |
+
+**Registration.** A server rooted at a workspace of its own has no way to find the
+playgrounds it is meant to serve, so the plugin names the setting they go in:
+
+```toml
+[lsp.register]
+setting = "rust-analyzer.linkedProjects"
+value = "{dir}/Cargo.toml"
+reload = "rust-analyzer/reloadWorkspace"
+```
+
+Every attached playground contributes its `value` to that setting, and the whole
+list is sent whenever it changes. Three things make it land:
+
+1. **At startup** the list goes in `initializationOptions`, without its leading
+   namespace — `initializationOptions` is a server's own settings, so
+   `rust-analyzer.linkedProjects` is sent as `linkedProjects`. A server that reads
+   its projects once, at startup, needs them there; rust-analyzer does. The pool
+   therefore records a tab's registration *before* starting the server for it.
+2. **Afterwards** each change is a `workspace/didChangeConfiguration`, and a server
+   that asks instead (`workspace/configuration`) is answered from the same place.
+3. **Then the reload**, if the plugin names one, sent after the server has read the
+   new configuration — the core waits for the server's configuration request before
+   sending it, with a two-second cap, because reloading first would reload the old
+   list.
+
+A restart replays all of this before the documents (02-05), so a crashed
+rust-analyzer comes back knowing which crates it is serving.
 
 ## 5. Execution (tinkerpad-runner)
 

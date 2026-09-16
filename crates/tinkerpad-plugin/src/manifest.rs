@@ -154,6 +154,10 @@ pub struct Lsp {
     pub idle_shutdown: Option<String>,
     pub init_options: Option<toml::Table>,
     pub register: Option<Register>,
+    /// Files the server's workspace needs, written there once: a
+    /// `tsconfig.json` for a server that insists on one.
+    #[serde(default)]
+    pub workspace_files: Vec<ScaffoldFile>,
     pub os: Option<Vec<Os>>,
 }
 
@@ -171,6 +175,10 @@ pub enum Workspace {
 pub struct Register {
     pub setting: String,
     pub value: String,
+    /// A request to send after the setting changes, for a server that reads
+    /// its projects once rather than on every change:
+    /// `rust-analyzer/reloadWorkspace`.
+    pub reload: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

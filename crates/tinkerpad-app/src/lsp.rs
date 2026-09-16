@@ -112,12 +112,16 @@ pub async fn open(
         Some(playground),
         &resolver,
         state.library.root(),
+        &state.scratch_root(),
         &state.lsp_settings,
     )?;
     // The editor's own client opens the document; the pool only has to have
-    // the server running (02-04).
+    // the server running (02-04). A shared server is told which project this
+    // playground is, through the setting its plugin named (02-07).
     let uri = tinkerpad_lsp::path_to_uri(&playground.main_file);
-    let attachment = state.lsp.attach_editor(&config, &uri);
+    let attachment = state
+        .lsp
+        .attach_registered(&config, &uri, registration(&plugin, playground));
 
     Ok(state.proxy.open_tab(
         playground.id.as_str(),
@@ -138,6 +142,7 @@ fn config(
     playground: Option<&Playground>,
     resolver: &Resolver,
     library_root: &std::path::Path,
+    scratch_root: &std::path::Path,
     settings: &LspSettings,
 ) -> Result<ServerConfig, CommandError> {
     let lsp = plugin.lsp.as_ref().ok_or_else(|| {
@@ -147,9 +152,8 @@ fn config(
         )
     })?;
 
-    // A pre-warmed server has no playground yet, and a strategy that wants
-    // one can't be pre-warmed. 02-07 gives those languages a shared workspace,
-    // which is exactly what makes them warmable.
+    // A server whose workspace is one playground's folder can't be started
+    // before there is a playground; every other strategy can.
     let playground_dir = || -> Result<PathBuf, CommandError> {
         playground.map(|p| p.dir.clone()).ok_or_else(|| {
             CommandError::new(
@@ -165,14 +169,19 @@ fn config(
         Workspace::None => None,
         Workspace::PlaygroundDir => Some(playground_dir()?),
         Workspace::LibraryRoot => Some(library_root.to_path_buf()),
-        Workspace::ScratchWorkspace => {
-            tracing::warn!(
-                plugin = %plugin.id,
-                "scratch_workspace is work item 02-07; using the playground folder"
-            );
-            Some(playground_dir()?)
-        }
+        // A folder of the app's own, shared by every playground of this
+        // language, and empty except for whatever the plugin writes there. It
+        // is deliberately *beside* the plugin's scratch folder rather than
+        // inside it: Rust's shared cargo target directory lives there, and a
+        // server rooted above it would index every build artefact in it.
+        // The playgrounds themselves are named through `[lsp.register]`.
+        Workspace::ScratchWorkspace => Some(scratch_root.join(plugin.id.as_str()).join("lsp")),
     };
+    if let Some(root) = &root
+        && let Err(error) = std::fs::create_dir_all(root)
+    {
+        tracing::warn!(root = %root.display(), %error, "could not make the server's workspace folder");
+    }
 
     // The same placeholders a run gets, minus the ones that only make sense
     // for one execution. A pre-warmed server has no playground, so the ones
@@ -234,10 +243,81 @@ fn config(
 
     let mut config = ServerConfig::new(plugin.id.as_str(), spawn)
         .with_idle_shutdown(settings.idle_for(plugin.id.as_str(), from_plugin));
+    if let Some(register) = &lsp.register {
+        config = config.with_register_setting(register.setting.clone());
+        if let Some(reload) = &register.reload {
+            config = config.with_register_reload(reload.clone());
+        }
+    }
     config.root = root;
     config.init_options = lsp.init_options.clone();
     config.install_hint = plugin.install_hint.clone();
+
+    // Files the workspace itself needs — a `tsconfig.json` for a server that
+    // wants one — written once and never overwritten, so anything the user
+    // changes there stays changed.
+    if let Some(root) = &config.root {
+        write_workspace_files(plugin, root);
+    }
     Ok(config)
+}
+
+/// What this playground contributes to its server's registered setting, if the
+/// plugin asks for one: `[lsp.register].value` with the placeholders filled in.
+fn registration(plugin: &Plugin, playground: &Playground) -> Option<serde_json::Value> {
+    let register = plugin.lsp.as_ref()?.register.as_ref()?;
+    let dir = playground.dir.to_string_lossy();
+    let main = playground.main_file.to_string_lossy();
+    let plugin_dir = plugin.dir.to_string_lossy();
+    let values = [
+        ("dir", &*dir),
+        ("main", &*main),
+        ("plugin_dir", &*plugin_dir),
+        ("id", playground.id.as_str()),
+        ("name", &*playground.name),
+    ];
+    match placeholders::substitute(&register.value, &values) {
+        Ok(value) => Some(serde_json::Value::String(value)),
+        Err(error) => {
+            tracing::warn!(plugin = %plugin.id, %error, "[lsp.register] value");
+            None
+        }
+    }
+}
+
+/// Write the plugin's `[lsp].workspace_files` into the server's workspace, if
+/// they aren't there already.
+fn write_workspace_files(plugin: &Plugin, root: &std::path::Path) {
+    let Some(lsp) = &plugin.lsp else { return };
+    for file in &lsp.workspace_files {
+        let path = root.join(&file.path);
+        if path.exists() {
+            continue;
+        }
+        let template = plugin.dir.join("templates").join(&file.template);
+        match std::fs::read_to_string(&template) {
+            Ok(text) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&path, text) {
+                    Ok(()) => tracing::info!(
+                        plugin = %plugin.id,
+                        file = %path.display(),
+                        "wrote a file the language server's workspace needs"
+                    ),
+                    Err(error) => {
+                        tracing::warn!(file = %path.display(), %error, "could not write it")
+                    }
+                }
+            }
+            Err(error) => tracing::warn!(
+                template = %template.display(),
+                %error,
+                "[lsp].workspace_files names a template that can't be read"
+            ),
+        }
+    }
 }
 
 /// Start the servers the user pinned in `[lsp] prewarm`, so the first tab of
@@ -254,6 +334,7 @@ pub fn prewarm(state: &AppState) {
     }
     let resolver = state.toolchains.resolver();
     let library_root = state.library.root().to_path_buf();
+    let scratch_root = state.scratch_root();
     let plugins = state.plugins.read().expect("plugins lock");
 
     for language in languages {
@@ -261,7 +342,14 @@ pub fn prewarm(state: &AppState) {
             tracing::warn!(language, "[lsp] prewarm names a language with no plugin");
             continue;
         };
-        match config(&plugin, None, &resolver, &library_root, &state.lsp_settings) {
+        match config(
+            &plugin,
+            None,
+            &resolver,
+            &library_root,
+            &scratch_root,
+            &state.lsp_settings,
+        ) {
             Ok(config) => {
                 tracing::info!(language, "pre-warming a language server");
                 state.lsp.server_for(&config);

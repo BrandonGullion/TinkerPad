@@ -68,6 +68,38 @@ Details:
 `dump` writes an escape sequence to stdout (`tinkerpad-dump-v1`, see
 `docs/PLUGINS.md` §6). In a normal terminal it's invisible.
 
+## The language server
+
+Completions, hover, signature help, and live errors come from
+[typescript-language-server]. TinkerPad does not ship it, because it and the
+TypeScript it analyses with are both npm packages that belong to you rather than
+to the app.
+
+```sh
+npm install -g typescript-language-server
+```
+
+The server is started once for your whole library folder (`~/TinkerPad`) rather
+than once per playground, which is what it prefers for loose files. The first
+time it starts, TinkerPad writes two files there and never touches them again:
+
+| File | Why |
+|---|---|
+| `tsconfig.json` | Without one, your `.ts` files are analysed as loose JavaScript with no types. |
+| `package.json` | Declares the TypeScript the server analyses with. |
+
+Run `npm install` in that folder once, and the server has its TypeScript:
+
+```sh
+cd ~/TinkerPad && npm install
+```
+
+Until you do, the server starts and then stops with "Could not find a valid
+TypeScript installation", which the status strip shows. The editor keeps working
+throughout — you lose completions, not the playground.
+
+[typescript-language-server]: https://github.com/typescript-language-server/typescript-language-server
+
 ## Files
 
 | Path | Purpose |
