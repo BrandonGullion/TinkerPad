@@ -11,6 +11,7 @@
 pub mod events;
 mod library;
 mod logging;
+mod packages;
 mod playgrounds;
 mod plugins;
 mod runs;
@@ -300,6 +301,25 @@ mod commands {
             .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e.to_string()))
     }
 
+    /// Add a package to a playground the way its plugin's `[deps]` says:
+    /// either a command runs (its output arrives as `run` events) or the UI
+    /// gets a line to insert at the top of the main file.
+    #[tauri::command(async)]
+    pub async fn add_package(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+        name: String,
+        version: Option<String>,
+    ) -> Result<crate::packages::AddPackage, CommandError> {
+        crate::packages::add(
+            &state,
+            &playground,
+            &name,
+            version.as_deref().unwrap_or_default(),
+        )
+        .await
+    }
+
     /// One sample of every dump kind, for the dev-only "render examples"
     /// command and the renderer self-test.
     #[tauri::command]
@@ -445,6 +465,7 @@ pub fn run() {
             commands::delete_playground,
             commands::read_source,
             commands::write_source,
+            commands::add_package,
             commands::dump_examples,
             commands::load_session,
             commands::save_session,

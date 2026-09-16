@@ -308,6 +308,22 @@ body {
   color: var(--muted);
 }
 
+/* A prompt is a picker with labelled fields instead of a list. */
+.prompt {
+  padding-bottom: 6px;
+}
+
+.prompt-field {
+  display: block;
+}
+
+.prompt-label {
+  display: block;
+  padding: 2px 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .output-host {
   display: flex;
 }

@@ -121,6 +121,47 @@ export class RunController {
     for (const event of early) this.apply(playground, record, event);
   }
 
+  /**
+   * Stream a command started by `begin` into the playground's output pane as
+   * if it were a run: adding a package, for example. `begin` invokes the
+   * command and returns its run id, or `null` when there was nothing to run.
+   * Events that arrive before it returns are buffered, as for a run.
+   */
+  async adopt(playground: string, begin: () => Promise<number | null>): Promise<void> {
+    const record = this.record(playground);
+    const token = ++this.latestToken;
+    record.token = token;
+    record.current = null;
+    this.setState(playground, record, { kind: "running", since: performance.now() });
+
+    this.startsInFlight++;
+    let id: number | null;
+    try {
+      id = await begin();
+    } catch (e) {
+      this.startsInFlight--;
+      if (this.startsInFlight === 0) this.early.clear();
+      const message = (e as { message?: string }).message ?? String(e);
+      if (record.token === token) this.finish(playground, record, { kind: "failed", message });
+      throw e;
+    }
+    this.startsInFlight--;
+    const early = id === null ? [] : (this.early.get(id) ?? []);
+    if (id !== null) {
+      this.runPlayground.set(id, playground);
+      this.early.delete(id);
+    }
+    if (this.startsInFlight === 0) this.early.clear();
+    if (record.token !== token) return;
+    if (id === null) {
+      // Nothing ran: the plugin adds packages by editing the file.
+      this.setState(playground, record, { kind: "idle" });
+      return;
+    }
+    record.current = id;
+    for (const event of early) this.apply(playground, record, event);
+  }
+
   /** Cancel a playground's run (the active tab's by default). */
   async cancel(playground: string | null = this.host.activePlayground()): Promise<void> {
     if (playground && this.isRunning(playground)) await invoke("cancel", { playground });

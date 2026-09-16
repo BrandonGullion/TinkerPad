@@ -18,15 +18,17 @@ import { invoke } from "./ipc";
 import type { RunState, StatusBar } from "./layout";
 import { findLocked, lockedLinesExtension } from "./locked";
 import { OutputPane } from "./output";
-import { pick } from "./picker";
+import { pick, prompt } from "./picker";
 import { LOCKED_HINT, MISMATCH_NOTE, type OpenedPlayground } from "./playground";
 import type {
+  AddPackage,
   Annotation,
   Listing,
   Playground,
   PlaygroundSummary,
   PluginsStatus,
   PluginSummary,
+  Directive,
   Session,
 } from "./protocol";
 import type { RunController, RunHost } from "./run";
@@ -511,6 +513,102 @@ export class TabManager implements RunHost {
     if (!choice) return;
     await this.open(choice.id);
     this.ui.editor.focus();
+  }
+
+  // ---- packages ------------------------------------------------------------
+
+  /**
+   * Add a package to the active playground, the way its plugin's `[deps]`
+   * says (work item 01-14). Either a command runs, with its output in the
+   * tab's pane, or a directive goes at the top of the file.
+   */
+  async addPackage(): Promise<void> {
+    const tab = this.active;
+    const summary = tab && this.listing.get(tab.id);
+    if (!tab || !summary) {
+      this.ui.status.flashNote("Open a playground to add a package to it.");
+      return;
+    }
+    const answers = await prompt(`Add a package to ${summary.name}`, [
+      { label: "Package", placeholder: "name" },
+      { label: "Version", placeholder: "latest", optional: true },
+    ]);
+    const [name, version] = answers ?? [];
+    if (!name) return;
+
+    // A push, not a variable, so the result of the callback below is still
+    // typed when it's read after the await.
+    const directives: Directive[] = [];
+    tab.output.clear();
+    await this.runs
+      .adopt(tab.id, async () => {
+        const result = await invoke<AddPackage>("add_package", {
+          playground: tab.id,
+          name,
+          version: version || null,
+        });
+        if (result.kind === "directive") {
+          directives.push(result);
+          return null;
+        }
+        tab.output.append("info", `$ ${result.command}\n`);
+        return result.run;
+      })
+      .catch(() => {});
+    const directive = directives[0];
+    if (directive) this.insertDirective(tab, name, directive);
+  }
+
+  /**
+   * Put the plugin's directive line at the top of the file, after any
+   * directives already there. A line for the same package is replaced, so
+   * adding twice doesn't leave two.
+   */
+  private insertDirective(tab: Tab, name: string, directive: Directive): void {
+    // The directive has to be the first thing in the file, and a kind with a
+    // prelude owns that spot: its lines are locked, and the file has to start
+    // with them for the lock to be recognised at all.
+    if (tab.opened.lock === "locked" && tab.opened.prelude) {
+      toast(
+        "warning",
+        `A package line has to go at the top of the file, and this kind's first lines are locked. ` +
+          `Add ${name} from a playground of a kind without locked lines.`,
+      );
+      return;
+    }
+    if (tab !== this.active) return;
+
+    const view = this.ui.editor.view;
+    const doc = view.state.doc;
+    const { prefix, line } = directive;
+    const mine = `${prefix}${name}`;
+    let insertBefore = 1;
+    for (let n = 1; n <= doc.lines; n++) {
+      const existing = doc.line(n);
+      if (!existing.text.startsWith(prefix)) break;
+      const rest = existing.text.slice(mine.length);
+      if (existing.text.startsWith(mine) && (rest === "" || rest.startsWith("@"))) {
+        if (existing.text === line) {
+          this.ui.status.flashNote(`${name} is already in this playground.`);
+          return;
+        }
+        view.dispatch({ changes: { from: existing.from, to: existing.to, insert: line } });
+        this.afterDirective(tab, `Updated ${name}.`);
+        return;
+      }
+      insertBefore = n + 1;
+    }
+    const at = insertBefore <= doc.lines ? doc.line(insertBefore).from : doc.length;
+    const insert = insertBefore <= doc.lines ? `${line}\n` : `\n${line}\n`;
+    view.dispatch({ changes: { from: at, insert } });
+    this.afterDirective(tab, `Added ${line.trim()}.`);
+  }
+
+  /** Save the directive straight away, so the next run compiles with it. */
+  private afterDirective(tab: Tab, note: string): void {
+    this.ui.status.flashNote(note);
+    tab.output.append("info", `${note}\n`);
+    void this.save(tab);
   }
 
   // ---- saving --------------------------------------------------------------

@@ -42,7 +42,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [01-11 Rust plugin](phase-1-plugins/01-11-rust-plugin.md) · M · 1 open criterion
 - [x] [01-12 Tabs, new-tab flow, autosave](phase-1-plugins/01-12-tabs-and-autosave.md) · M
 - [x] [01-13 Clickable error annotations](phase-1-plugins/01-13-error-annotations.md) · S
-- [ ] [01-14 Dependencies: add package](phase-1-plugins/01-14-dependencies.md) · S
+- [x] [01-14 Dependencies: add package](phase-1-plugins/01-14-dependencies.md) · S
 
 ## Phase 2 — Language servers, kept alive
 
