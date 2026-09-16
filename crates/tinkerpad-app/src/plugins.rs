@@ -94,6 +94,10 @@ pub struct PluginSummary {
     pub source: Source,
     pub dir: String,
     pub kinds: Vec<KindSummary>,
+    /// The CodeMirror language the UI highlights with (docs/PLUGINS.md §9).
+    pub highlighter: Option<String>,
+    /// Whether the plugin declares a language server.
+    pub lsp: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,6 +141,8 @@ impl PluginsStatus {
                             default: k.default,
                         })
                         .collect(),
+                    highlighter: e.plugin.highlighter.clone(),
+                    lsp: e.plugin.lsp.is_some(),
                 })
                 .collect(),
             failures: r

@@ -558,8 +558,11 @@ The template for each kind already imports the helper, so a new playground can c
 ## 9. Highlighters
 
 The UI bundles CodeMirror language packages and the manifest picks one by name.
-Initial list: `javascript`, `typescript`, `csharp`, `rust`, `python`, `go`, `json`,
-`markdown`, `shell`, `sql`, `yaml`, `cpp`, `java`, `kotlin`, `swift`, `lua`, `zig`.
+Bundled: `cpp`, `csharp`, `go`, `java`, `javascript`, `json`, `jsx`, `kotlin`,
+`lua`, `markdown`, `python`, `ruby`, `rust`, `scala`, `shell`, `sql`, `swift`,
+`toml`, `typescript`, `yaml`. Each is a separate chunk, loaded the first time a
+playground in that language is opened, so none of them is in the startup bundle
+(`ui/src/highlight.ts`).
 A plugin whose language has no bundled highlighter gets plain text and files an issue.
 Loading highlighters from the plugin folder is a possible later addition.
 

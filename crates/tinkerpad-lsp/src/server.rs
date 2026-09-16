@@ -133,6 +133,9 @@ pub struct ServerHandle {
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, oneshot::Sender<RawMessage>>>,
     open_docs: Mutex<HashMap<String, DocState>>,
+    /// What the server said it could do, from the handshake. The proxy hands
+    /// this to each editor client instead of a second `initialize` (02-04).
+    capabilities: Mutex<Option<Value>>,
     /// Notifications and server-to-client requests, for the proxy (02-03).
     from_server: broadcast::Sender<RawMessage>,
 }
@@ -154,6 +157,7 @@ impl ServerHandle {
             next_id: AtomicI64::new(1),
             pending: Mutex::default(),
             open_docs: Mutex::default(),
+            capabilities: Mutex::default(),
             from_server: broadcast::channel(BROADCAST).0,
         }
     }
@@ -181,6 +185,7 @@ impl ServerHandle {
             next_id: AtomicI64::new(1),
             pending: Mutex::default(),
             open_docs: Mutex::default(),
+            capabilities: Mutex::default(),
             from_server: broadcast::channel(BROADCAST).0,
         });
 
@@ -219,6 +224,85 @@ impl ServerHandle {
         let mut docs: Vec<_> = docs.values().cloned().collect();
         docs.sort_by(|a, b| a.uri.cmp(&b.uri));
         docs
+    }
+
+    /// What the server said it could do, once the handshake is done.
+    pub fn capabilities(&self) -> Option<Value> {
+        self.capabilities.lock().expect("capabilities lock").clone()
+    }
+
+    /// Wait for the handshake, then report what the server can do.
+    ///
+    /// The proxy answers each editor client's own `initialize` with this. An
+    /// editor told "no capabilities" because the handshake hadn't finished
+    /// would believe it for as long as the tab is open, and offer no
+    /// completions at all (02-04).
+    pub async fn ready(&self) -> Result<Value, RequestError> {
+        self.wait_ready().await?;
+        Ok(self.capabilities().unwrap_or_else(|| json!({})))
+    }
+
+    /// Record a document-sync notification on its way from an editor.
+    ///
+    /// The editor's LSP client numbers its own versions, and the server echoes
+    /// those numbers back in `publishDiagnostics`; a client drops diagnostics
+    /// whose version isn't the one it sent. So the notification passes through
+    /// untouched — incremental changes and all — and the core just keeps up
+    /// with what it says, which is what 02-05 replays after a restart.
+    ///
+    /// Returns the message to send on, or `None` when there is nothing to send
+    /// (a close for a document nobody opened).
+    pub fn sync_from_editor(&self, message: &RawMessage) -> Option<RawMessage> {
+        let method = message.method()?;
+        let params = message.params()?;
+        let document = &params["textDocument"];
+        let uri = document["uri"].as_str()?.to_owned();
+
+        match method {
+            "textDocument/didOpen" => {
+                let doc = DocState {
+                    uri: uri.clone(),
+                    language_id: document["languageId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    version: document["version"].as_i64().unwrap_or(1) as i32,
+                    text: document["text"].as_str().unwrap_or_default().to_owned(),
+                };
+                let mut docs = self.open_docs.lock().expect("open_docs lock");
+                if docs.insert(uri, doc).is_some() {
+                    // Two editors on one document would be two `didOpen`s for
+                    // one URI, which LSP doesn't allow. Tabs are one per
+                    // playground, so this means something is wrong upstream.
+                    warn!(language = %self.language, "a document was opened twice");
+                }
+            }
+            "textDocument/didChange" => {
+                let mut docs = self.open_docs.lock().expect("open_docs lock");
+                let doc = docs.get_mut(&uri)?;
+                doc.version = document["version"]
+                    .as_i64()
+                    .unwrap_or(doc.version as i64 + 1) as i32;
+                // A change carrying the whole document keeps the core's copy
+                // current; an incremental one leaves it behind, and 02-05
+                // re-opens from the editor rather than guessing.
+                if let Some(changes) = params["contentChanges"].as_array()
+                    && let [only] = changes.as_slice()
+                    && only.get("range").is_none()
+                    && let Some(text) = only["text"].as_str()
+                {
+                    doc.text = text.to_owned();
+                }
+            }
+            "textDocument/didClose" => {
+                self.open_docs
+                    .lock()
+                    .expect("open_docs lock")
+                    .remove(&uri)?;
+            }
+            _ => {}
+        }
+        Some(message.clone())
     }
 
     pub fn is_open(&self, uri: &str) -> bool {
@@ -519,10 +603,10 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
         return;
     }
 
-    let info = response
-        .result()
-        .and_then(|result| result.get("serverInfo").cloned())
-        .unwrap_or(Value::Null);
+    let result = response.result().cloned().unwrap_or(Value::Null);
+    let info = result.get("serverInfo").cloned().unwrap_or(Value::Null);
+    *server.capabilities.lock().expect("capabilities lock") =
+        Some(result.get("capabilities").cloned().unwrap_or(json!({})));
     let _ = server.notify_now("initialized", json!({})).await;
     server.set_state(ServerState::Ready {
         pid: server.pid,

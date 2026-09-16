@@ -31,25 +31,29 @@ const KNOWN_HOOKS: &[&str] = &[
     "add_dependency",
 ];
 
-/// Highlighters the UI bundles (docs/PLUGINS.md §9).
+/// Highlighters the UI bundles (docs/PLUGINS.md §9). Kept in step with
+/// `ui/src/highlight.ts`, which is where each one is actually loaded.
 const KNOWN_HIGHLIGHTERS: &[&str] = &[
-    "javascript",
-    "typescript",
+    "cpp",
     "csharp",
-    "rust",
-    "python",
     "go",
+    "java",
+    "javascript",
     "json",
+    "jsx",
+    "kotlin",
+    "lua",
     "markdown",
+    "python",
+    "ruby",
+    "rust",
+    "scala",
     "shell",
     "sql",
-    "yaml",
-    "cpp",
-    "java",
-    "kotlin",
     "swift",
-    "lua",
-    "zig",
+    "toml",
+    "typescript",
+    "yaml",
 ];
 
 /// Named groups `[output].error_regex` may use.

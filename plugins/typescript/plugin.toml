@@ -30,6 +30,14 @@ template = "program.ts"
 # installs beside it, into the playground's own node_modules.
 files = [{ path = "package.json", template = "package.json" }]
 
+[lsp]
+# Needs typescript-language-server on PATH:
+#   npm install -g typescript-language-server typescript
+# One server for the whole library, which is how it prefers loose files.
+command = "typescript-language-server"
+args = ["--stdio"]
+workspace = "library_root"
+
 [deps]
 # Installs into the playground's own node_modules, next to its package.json.
 kind = "command"

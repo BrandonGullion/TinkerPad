@@ -318,7 +318,6 @@ mod commands {
     pub async fn lsp_open(
         state: State<'_, AppState>,
         playground: tinkerpad_core::PlaygroundId,
-        text: String,
         channel: tauri::ipc::Channel<serde_json::Value>,
     ) -> Result<String, CommandError> {
         let playground = state.library.get(&playground).ok_or_else(|| {
@@ -327,7 +326,7 @@ mod commands {
                 format!("no playground {playground}"),
             )
         })?;
-        crate::lsp::open(&state, &playground, text, channel).await
+        crate::lsp::open(&state, &playground, channel).await
     }
 
     /// One message from a tab's editor, on its way to the server.

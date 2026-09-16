@@ -131,6 +131,10 @@ export interface PluginSummary {
   source: PluginSource;
   dir: string;
   kinds: { id: string; name: string; default: boolean }[];
+  /** The CodeMirror language to highlight with, from `[language].highlighter`. */
+  highlighter: string | null;
+  /** Whether the plugin declares a language server (`[lsp]`). */
+  lsp: boolean;
 }
 
 /** `<app-data>/session.json`: the tabs to reopen at launch. */
