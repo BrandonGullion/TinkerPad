@@ -48,7 +48,7 @@ time passes, or by a later item); the item file says why each one is open.
 
 - [x] [02-01 JSON-RPC transport](phase-2-lsp/02-01-jsonrpc-transport.md) · S
 - [x] [02-02 Server pool: spawn, share, keep alive, shutdown](phase-2-lsp/02-02-server-pool.md) · M · 1 open criterion
-- [ ] [02-03 Proxy: URI rewriting and id ownership](phase-2-lsp/02-03-proxy.md) · M
+- [x] [02-03 Proxy: URI rewriting and id ownership](phase-2-lsp/02-03-proxy.md) · M · 1 open criterion
 - [ ] [02-04 Editor LSP client](phase-2-lsp/02-04-editor-lsp-client.md) · M
 - [ ] [02-05 Crash restart and replay](phase-2-lsp/02-05-crash-restart.md) · S
 - [ ] [02-06 Idle policy and pre-warm](phase-2-lsp/02-06-idle-and-prewarm.md) · S

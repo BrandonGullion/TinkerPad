@@ -51,6 +51,9 @@ pub struct AppState {
     /// Language servers, kept alive across tabs (work item 02-02). Empty until
     /// the editor client attaches to one (02-04).
     lsp: Arc<tinkerpad_lsp::LspPool>,
+    /// The editor's side of those servers: one channel per tab, URIs and
+    /// request ids translated in both directions (02-03).
+    proxy: Arc<tinkerpad_lsp::Proxy>,
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
     library: Arc<Library>,
@@ -261,7 +264,10 @@ mod commands {
             .library
             .get(&playground)
             .ok_or_else(|| {
-                CommandError::new(ErrorCode::NotFound, format!("no playground {playground}"))
+                CommandError::new(
+                    tinkerpad_core::ErrorCode::NotFound,
+                    format!("no playground {playground}"),
+                )
             })?
             .language;
         let plugin = state
@@ -303,6 +309,53 @@ mod commands {
         app.opener()
             .open_path(dir.to_string_lossy(), None::<&str>)
             .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e.to_string()))
+    }
+
+    /// Connect this playground's editor to its language server (02-03).
+    /// Messages for the editor arrive on `channel`; the reply is the URI the
+    /// editor should use for the document.
+    #[tauri::command(async)]
+    pub async fn lsp_open(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+        text: String,
+        channel: tauri::ipc::Channel<serde_json::Value>,
+    ) -> Result<String, CommandError> {
+        let playground = state.library.get(&playground).ok_or_else(|| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::NotFound,
+                format!("no playground {playground}"),
+            )
+        })?;
+        crate::lsp::open(&state, &playground, text, channel).await
+    }
+
+    /// One message from a tab's editor, on its way to the server.
+    #[tauri::command(async)]
+    pub async fn lsp_send(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+        message: serde_json::Value,
+    ) -> Result<(), CommandError> {
+        state
+            .proxy
+            .from_editor(
+                playground.as_str(),
+                tinkerpad_lsp::jsonrpc::RawMessage::new(message),
+            )
+            .await;
+        Ok(())
+    }
+
+    /// The tab closed: cancel what it was waiting for and close its document.
+    /// The server stays up for the next tab.
+    #[tauri::command(async)]
+    pub async fn lsp_close(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+    ) -> Result<(), CommandError> {
+        state.proxy.close_tab(playground.as_str()).await;
+        Ok(())
     }
 
     /// Add a package to a playground the way its plugin's `[deps]` says:
@@ -439,6 +492,7 @@ pub fn run() {
 
             let runs = Runs::new(bus.clone(), data_dir.join("scratch"), toolchains.clone());
             let lsp = lsp::pool(bus.clone());
+            let proxy = lsp::proxy(bus.clone());
             app.manage(AppState {
                 events: bus,
                 runs,
@@ -446,6 +500,7 @@ pub fn run() {
                 data_dir,
                 toolchains,
                 lsp,
+                proxy,
                 plugins: RwLock::new(registry),
                 library: playgrounds,
                 _library_watcher: Mutex::new(library_watcher),
@@ -472,6 +527,9 @@ pub fn run() {
             commands::read_source,
             commands::write_source,
             commands::add_package,
+            commands::lsp_open,
+            commands::lsp_send,
+            commands::lsp_close,
             commands::dump_examples,
             commands::load_session,
             commands::save_session,
