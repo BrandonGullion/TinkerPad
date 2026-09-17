@@ -14,6 +14,7 @@ mod logging;
 mod lsp;
 mod lsp_settings;
 mod packages;
+mod peek;
 mod playgrounds;
 mod plugins;
 mod runs;
@@ -253,6 +254,14 @@ mod commands {
             .map_err(crate::library::to_command_error)
     }
 
+    /// Read any file, for a read-only peek tab (02-09): a dependency's
+    /// source, a generated file, a stack frame's file later on. Capped, so a
+    /// decompiled assembly is a note rather than a frozen editor.
+    #[tauri::command(async)]
+    pub fn open_readonly(path: String) -> Result<crate::peek::Peek, CommandError> {
+        crate::peek::read(&path)
+    }
+
     /// Replace a playground's main file atomically. Returns whether the file
     /// changed: identical text leaves it (and its modification time) alone.
     #[tauri::command(async)]
@@ -479,6 +488,24 @@ mod commands {
             .filter(|s| !s.is_empty())
     }
 
+    /// Write a file. Self-tests only: a scenario needs files to open that are
+    /// not playgrounds.
+    #[tauri::command]
+    pub fn selftest_write_file(path: String, text: String) -> Result<(), CommandError> {
+        use tinkerpad_core::ErrorCode;
+        if selftest_scenario().is_none() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidInput,
+                "only available while self-testing",
+            ));
+        }
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&path, text)
+            .map_err(|e| CommandError::new(ErrorCode::Io, format!("could not write {path}: {e}")))
+    }
+
     /// What is in a folder. Self-tests only, so a scenario can check that a
     /// file the app was supposed to write is there.
     #[tauri::command]
@@ -614,6 +641,7 @@ pub fn run() {
             commands::rename_playground,
             commands::delete_playground,
             commands::read_source,
+            commands::open_readonly,
             commands::write_source,
             commands::add_package,
             commands::lsp_open,
@@ -629,6 +657,7 @@ pub fn run() {
             commands::selftest_scenario,
             commands::selftest_report,
             commands::selftest_list_dir,
+            commands::selftest_write_file,
             commands::selftest_touch_source,
         ])
         .build(tauri::generate_context!())

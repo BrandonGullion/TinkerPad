@@ -173,7 +173,7 @@ jobs:
       - name: Language servers (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -186,6 +186,8 @@ jobs:
           grep -q "selftest: PASS a pinned language server is up" lsp.log
           grep -q "selftest: PASS a language server shows up in the status bar" lsp.log
           grep -q "selftest: PASS Restart brings it back" lsp.log
+          grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
+          grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
 
       - name: Session restore across two launches (Linux)
         if: runner.os == 'Linux'
@@ -226,7 +228,7 @@ jobs:
       - name: Language servers (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -239,6 +241,8 @@ jobs:
           grep -q "selftest: PASS a pinned language server is up" lsp.log
           grep -q "selftest: PASS a language server shows up in the status bar" lsp.log
           grep -q "selftest: PASS Restart brings it back" lsp.log
+          grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
+          grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
 
       - name: Session restore across two launches (macOS)
         if: runner.os == 'macOS'

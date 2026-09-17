@@ -10,6 +10,9 @@
 //   textDocument/didChange  same, from the new text
 //   textDocument/completion  three items, one of them named after the file
 //   textDocument/hover    the word under the cursor, as Markdown
+//   textDocument/definition  a line saying "away" points at this file;
+//                         "many" gives two places to choose from; anything
+//                         else points at line 1 of the same document
 //   shutdown / exit       stops
 
 "use strict";
@@ -23,6 +26,17 @@ function send(message) {
 
 function reply(id, result) {
   if (id !== undefined && id !== null) send({ jsonrpc: "2.0", id, result });
+}
+
+/** A zero-width range at a line and character, which is all a jump needs. */
+function span(line, character) {
+  return { start: { line, character }, end: { line, character } };
+}
+
+/** A file path as the file:// URI a client expects. */
+function fileUri(path) {
+  const slashes = path.replace(/\\/g, "/");
+  return "file://" + (slashes.startsWith("/") ? "" : "/") + encodeURI(slashes).replace(/#/g, "%23");
 }
 
 /** One diagnostic per line holding the word "broken". */
@@ -58,6 +72,8 @@ function handle(message) {
         capabilities: {
           textDocumentSync: 1,
           completionProvider: { triggerCharacters: ["."] },
+          definitionProvider: true,
+          typeDefinitionProvider: true,
           hoverProvider: true,
         },
         serverInfo: { name: "node-check-server", version: "1", pid: process.pid },
@@ -85,6 +101,19 @@ function handle(message) {
         { label: "alpha", kind: 3, detail: "a function", documentation: "The **first** one." },
         { label: "beta", kind: 3, detail: "a function" },
       ]);
+      break;
+    }
+    case "textDocument/definition":
+    case "textDocument/typeDefinition": {
+      const uri = params.textDocument.uri;
+      const line = (docs.get(uri) ?? "").split(String.fromCharCode(10))[params.position.line] ?? "";
+      const here = { uri, range: span(0, 0) };
+      // Somewhere else entirely: this file, which every machine running the
+      // tests has, and which is not a playground.
+      const away = { uri: fileUri(__filename), range: span(3, 0) };
+      if (line.includes("many")) reply(id, [here, away]);
+      else if (line.includes("away")) reply(id, [away]);
+      else reply(id, here);
       break;
     }
     case "textDocument/hover": {

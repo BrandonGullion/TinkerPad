@@ -45,6 +45,16 @@ export type AddPackage =
   | { kind: "command"; run: number; command: string }
   | ({ kind: "directive" } & Directive);
 
+/** A file opened read-only in a peek tab (work item 02-09). */
+export interface Peek {
+  path: string;
+  title: string;
+  extension: string;
+  text: string;
+  bytes: number;
+  tooLarge: boolean;
+}
+
 /** Whether a language's server is up (work item 02-02). */
 export type ServerState =
   | { kind: "stopped"; reason: string | null; hint: string | null }
