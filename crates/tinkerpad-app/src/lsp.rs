@@ -23,34 +23,85 @@ use crate::AppState;
 use crate::events::EventBus;
 use crate::lsp_settings::LspSettings;
 
-/// One language server, as the UI sees it. The status strip (02-08) renders
-/// these; until then it is how the self-tests look at the pool.
+/// One language server, as the status strip sees it (work item 02-08).
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatus {
     pub language: String,
+    /// The plugin's display name — "Rust", not "rust".
+    pub name: String,
     /// The workspace root, or empty for a server that needs none.
     pub root: String,
     pub state: tinkerpad_core::ServerState,
+    /// How long the current process has been up.
+    pub uptime_ms: u64,
+    /// Crashes it has come back from in a row (02-05).
+    pub restarts: u32,
+    /// Documents it has open.
+    pub documents: usize,
+    /// Messages it has sent since it started, and how quickly it answers.
+    pub messages: u64,
+    pub requests: u64,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    /// The program that was started, as resolved.
+    pub program: String,
+    /// What to do about it when there is no program: the plugin's hint.
+    pub install_hint: Option<String>,
 }
 
 /// Every server the pool holds, running or not.
 pub fn status(state: &AppState) -> Vec<ServerStatus> {
+    let names: std::collections::BTreeMap<String, String> = state
+        .plugins
+        .read()
+        .expect("plugins lock")
+        .all()
+        .iter()
+        .map(|entry| (entry.plugin.id.to_string(), entry.plugin.name.clone()))
+        .collect();
+
     let mut servers: Vec<ServerStatus> = state
         .lsp
         .servers()
         .into_iter()
-        .map(|server| ServerStatus {
-            language: server.language().to_owned(),
-            root: server
-                .root()
-                .map(|r| r.display().to_string())
-                .unwrap_or_default(),
-            state: server.state(),
+        .map(|server| {
+            let stats = server.stats();
+            ServerStatus {
+                name: names
+                    .get(server.language())
+                    .cloned()
+                    .unwrap_or_else(|| server.language().to_owned()),
+                language: server.language().to_owned(),
+                root: server
+                    .root()
+                    .map(|r| r.display().to_string())
+                    .unwrap_or_default(),
+                state: server.state(),
+                uptime_ms: stats.uptime_ms,
+                restarts: server.restarts(),
+                documents: server.open_docs().len(),
+                messages: stats.messages,
+                requests: stats.requests,
+                p50_ms: stats.p50_us as f64 / 1000.0,
+                p95_ms: stats.p95_us as f64 / 1000.0,
+                program: server.program(),
+                install_hint: server.install_hint().map(str::to_owned),
+            }
         })
         .collect();
-    servers.sort_by(|a, b| a.language.cmp(&b.language).then(a.root.cmp(&b.root)));
+    servers.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
     servers
+}
+
+/// The last few hundred lines a server wrote to stderr or sent as
+/// `window/logMessage`, oldest first.
+pub fn server_log(state: &AppState, language: &str, root: Option<&std::path::Path>) -> Vec<String> {
+    state
+        .lsp
+        .get(language, root)
+        .map(|server| server.log())
+        .unwrap_or_default()
 }
 
 /// Build the pool and forward its state changes to the UI.

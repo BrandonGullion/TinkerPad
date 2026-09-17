@@ -53,7 +53,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [02-05 Crash restart and replay](phase-2-lsp/02-05-crash-restart.md) · S
 - [x] [02-06 Idle policy and pre-warm](phase-2-lsp/02-06-idle-and-prewarm.md) · S
 - [x] [02-07 Workspace strategies and registration](phase-2-lsp/02-07-workspace-strategies.md) · M · 2 open criteria
-- [ ] [02-08 Server status strip](phase-2-lsp/02-08-status-strip.md) · S
+- [x] [02-08 Server status strip](phase-2-lsp/02-08-status-strip.md) · S · 1 open criterion
 - [ ] [02-09 Go to definition](phase-2-lsp/02-09-go-to-definition.md) · S
 - [ ] [02-10 A deleted playground leaves its language server](phase-2-lsp/02-10-deleted-playground-detach.md) · S
 

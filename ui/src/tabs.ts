@@ -520,6 +520,8 @@ export class TabManager implements RunHost {
     this.ui.status.setLanguage("No playground");
     this.ui.status.setNote(null);
     this.ui.status.setRun({ kind: "idle" });
+    // Nothing is open, so a stopped server is nobody's business (02-08).
+    this.ui.status.servers.setLanguages([]);
     this.renderConflict();
   }
 
@@ -983,6 +985,11 @@ export class TabManager implements RunHost {
   }
 
   private renderStatus(): void {
+    // The status bar shows a stopped server only while a tab still wants it
+    // (02-08), so it needs to know which languages are open.
+    this.ui.status.servers.setLanguages(
+      this.tabs.map((t) => this.listing.get(t.id)?.language).filter((l): l is string => !!l),
+    );
     const tab = this.active;
     if (!tab) return;
     const summary = this.listing.get(tab.id);

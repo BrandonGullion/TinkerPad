@@ -2415,6 +2415,108 @@ async function lspTypescriptScenario(ctx: SelftestContext, check: Check) {
   }
 }
 
+/** The language servers in the status bar (02-08). */
+async function serversScenario(ctx: SelftestContext, check: Check) {
+  const { tabs } = ctx;
+  const chips = () => [...document.querySelectorAll<HTMLElement>(".server-chip")];
+  const chipFor = (language: string) =>
+    chips().find((chip) => (chip.dataset.key ?? "").startsWith(`${language}|`));
+  const popover = () => document.querySelector<HTMLElement>(".server-popover");
+
+  /** The popover stays open between actions, so only open it if it is shut. */
+  const openPopover = async () => {
+    if (popover() === null) chipFor("node-check")?.click();
+    await frame();
+  };
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+
+  // A playground with a server gets a chip that says what it is doing.
+  const playground = await openTestPlayground(ctx, "Servers Strip");
+  const appeared = await until(() => chipFor("node-check") !== undefined, 30_000);
+  await check(
+    "a language server shows up in the status bar",
+    appeared,
+    JSON.stringify(chips().map((chip) => chip.dataset.key)),
+  );
+
+  // Memory is sampled every ten seconds, so the chip says "ready" before it
+  // says how much.
+  const ready = await until(
+    () =>
+      chipFor("node-check")?.dataset.state === "ready" &&
+      /\d+ MB/.test(chipFor("node-check")?.querySelector(".server-rss")?.textContent ?? ""),
+    60_000,
+  );
+  const chip = chipFor("node-check")!;
+  await check(
+    "its chip says ready, with a dot and the memory it is using",
+    ready &&
+      chip.querySelector(".server-dot") !== null &&
+      /\d+ MB/.test(chip.querySelector(".server-rss")?.textContent ?? ""),
+    chip.textContent ?? "",
+  );
+
+  // Clicking it opens the details worth having when something is wrong.
+  chip.click();
+  await frame();
+  const facts = popover()?.textContent ?? "";
+  await check(
+    "clicking it shows what the server is doing",
+    popover() !== null &&
+      facts.includes("Process") &&
+      facts.includes("Documents") &&
+      facts.includes("Answers") &&
+      facts.includes("Program"),
+    facts.slice(0, 160),
+  );
+
+  // The server's own words, on demand.
+  const logButton = [...(popover()?.querySelectorAll<HTMLElement>(".server-action") ?? [])].find(
+    (button) => button.textContent === "Log",
+  );
+  logButton?.click();
+  const logged = await until(() => document.querySelector(".server-log-body") !== null, 10_000);
+  await check(
+    "and what the server itself has said",
+    logged,
+    (document.querySelector(".server-log-body")?.textContent ?? "").slice(0, 80),
+  );
+
+  // Stop and restart, the two things worth doing from here.
+  const action = (label: string) =>
+    [...(popover()?.querySelectorAll<HTMLElement>(".server-action") ?? [])].find(
+      (button) => button.textContent === label,
+    );
+  action("Stop")?.click();
+  const stopped = await until(() => chipFor("node-check")?.dataset.state === "stopped", 30_000);
+  await check(
+    "Stop stops it, and the chip stays while a tab still wants it",
+    stopped && chipFor("node-check") !== undefined,
+    chipFor("node-check")?.dataset.state ?? "gone",
+  );
+
+  await openPopover();
+  action("Restart")?.click();
+  const back = await until(() => chipFor("node-check")?.dataset.state === "ready", 60_000);
+  await check("Restart brings it back", back, chipFor("node-check")?.dataset.state ?? "gone");
+
+  // With no tab open, a stopped server is not worth a chip.
+  await openPopover();
+  action("Stop")?.click();
+  await until(() => chipFor("node-check")?.dataset.state === "stopped", 30_000);
+  await tabs.close(tabs.activeTab!);
+  const hidden = await until(() => chipFor("node-check") === undefined, 30_000);
+  await check("a stopped server with no tab open is not shown", hidden);
+
+  // Leave a chip and its popover on screen for a screenshot.
+  await openTestPlayground(ctx, "Servers Shot");
+  await until(() => chipFor("node-check")?.dataset.state === "ready", 30_000);
+  await openPopover();
+  await report("INFO shot-ready");
+
+  await invoke("delete_playground", { id: playground.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -2446,6 +2548,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   lsp: lspScenario,
   "lsp-typescript": lspTypescriptScenario,
   prewarm: prewarmScenario,
+  servers: serversScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
 };

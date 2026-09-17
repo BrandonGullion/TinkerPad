@@ -28,6 +28,7 @@ export type CoreEvent =
   | { type: "toast"; level: Level; message: string }
   | ({ type: "run" } & RunEvent)
   | { type: "toolchain"; language: string; state: ToolchainState }
+  | { type: "server"; language: string; root: string; state: ServerState }
   | { type: "libraryChanged" }
   | { type: "sourceChangedOnDisk"; playground: string };
 
@@ -43,6 +44,37 @@ export interface Directive {
 export type AddPackage =
   | { kind: "command"; run: number; command: string }
   | ({ kind: "directive" } & Directive);
+
+/** Whether a language's server is up (work item 02-02). */
+export type ServerState =
+  | { kind: "stopped"; reason: string | null; hint: string | null }
+  | { kind: "starting" }
+  | {
+      kind: "ready";
+      pid: number;
+      name: string | null;
+      version: string | null;
+      rssBytes: number | null;
+    }
+  | { kind: "crashed"; reason: string; restarts: number }
+  | { kind: "stopping" };
+
+/** One language server, as the status strip shows it (02-08). */
+export interface ServerStatus {
+  language: string;
+  name: string;
+  root: string;
+  state: ServerState;
+  uptimeMs: number;
+  restarts: number;
+  documents: number;
+  messages: number;
+  requests: number;
+  p50Ms: number;
+  p95Ms: number;
+  program: string;
+  installHint: string | null;
+}
 
 /** A place in a file that a run's output pointed at. */
 export interface Annotation {

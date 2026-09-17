@@ -442,6 +442,17 @@ Tabs (`ui/src/tabs.ts`, work item 01-12):
 - Names, languages, and kinds always come from the library listing, never from
   a copy kept by the tab.
 
+The status bar (`ui/src/servers.ts`, work item 02-08) ends with one chip per
+language server: a dot for its state, the language, and its resident memory.
+Clicking one opens what is worth knowing when something is slow — uptime,
+restarts, open documents, request p50/p95, the program that was started — and the
+three things worth doing: Restart, Stop, and reading what the server itself said
+(its stderr and `window/logMessage`s, the last 500 lines). A server that has
+stopped keeps its chip only while a tab still wants it, and one that could not
+start shows the plugin's install hint with a copy button. The numbers are
+samples: the strip polls once a second and on each `server` event, never per LSP
+message.
+
 Language support (`ui/src/lsp.ts`, `ui/src/highlight.ts`, work item 02-04):
 
 - **A client per tab, a server per language.** `@codemirror/lsp-client` talks over

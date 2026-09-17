@@ -363,10 +363,41 @@ mod commands {
         Ok(())
     }
 
-    /// Every language server the pool holds, with its state and memory.
+    /// Every language server the pool holds, with its state, memory, and
+    /// traffic. The status strip polls this (02-08).
     #[tauri::command]
     pub fn server_status(state: State<'_, AppState>) -> Vec<crate::lsp::ServerStatus> {
         crate::lsp::status(&state)
+    }
+
+    /// What one server has written to stderr or logged, oldest first.
+    #[tauri::command]
+    pub fn server_log(
+        state: State<'_, AppState>,
+        language: String,
+        root: Option<String>,
+    ) -> Vec<String> {
+        crate::lsp::server_log(&state, &language, root.as_deref().map(std::path::Path::new))
+    }
+
+    /// Stop a language server. It stays stopped until a tab wants it again, or
+    /// the Restart button is pressed.
+    #[tauri::command(async)]
+    pub async fn stop_server(
+        state: State<'_, AppState>,
+        language: String,
+        root: Option<String>,
+    ) -> Result<bool, CommandError> {
+        let server = state
+            .lsp
+            .get(&language, root.as_deref().map(std::path::Path::new));
+        match server {
+            Some(server) => {
+                server.stop().await;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     /// Restart a language's server, as the status strip's button will
@@ -590,6 +621,8 @@ pub fn run() {
             commands::lsp_close,
             commands::restart_server,
             commands::server_status,
+            commands::server_log,
+            commands::stop_server,
             commands::dump_examples,
             commands::load_session,
             commands::save_session,
