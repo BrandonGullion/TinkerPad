@@ -25,11 +25,14 @@ async fn next(transport: &mut Transport) -> TransportEvent {
     }
 }
 
-/// The next event, which should be a message.
+/// The next message, skipping the server's chatter on stderr.
 async fn next_message(transport: &mut Transport) -> RawMessage {
-    match next(transport).await {
-        TransportEvent::Message(message) => message,
-        other => panic!("expected a message, got {other:?}"),
+    loop {
+        match next(transport).await {
+            TransportEvent::Message(message) => return message,
+            TransportEvent::Stderr(_) => continue,
+            other => panic!("expected a message, got {other:?}"),
+        }
     }
 }
 
@@ -212,6 +215,7 @@ async fn stdout_closing_mid_message_ends_the_stream_with_an_error() {
         match next(&mut transport).await {
             TransportEvent::Broken(e) => broken = Some(e),
             TransportEvent::Exited(exit) => break exit,
+            TransportEvent::Stderr(line) => println!("server said: {line}"),
             TransportEvent::Message(m) => panic!("unexpected message {m}"),
         }
     };
@@ -283,8 +287,9 @@ async fn stderr_does_not_disturb_the_message_stream() {
     let mut transport = server();
     initialize(&mut transport).await;
 
-    // A server that chats on stderr (rust-analyzer logs there) is normal; the
-    // lines go to the log, not to the caller.
+    // A server that chats on stderr (rust-analyzer logs there) is normal. The
+    // lines arrive as events of their own — the status strip shows the last few
+    // (02-08) — and the message stream carries on regardless.
     transport
         .send(RawMessage::request(
             21,

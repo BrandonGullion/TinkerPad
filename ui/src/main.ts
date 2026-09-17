@@ -158,6 +158,9 @@ subscribe((env) => {
     case "run":
       runs.handle(env);
       break;
+    case "server":
+      statusBar.servers.changed();
+      break;
     case "libraryChanged":
       void tabs.libraryChanged().catch(() => {});
       break;
@@ -169,6 +172,9 @@ subscribe((env) => {
 
 await ready();
 await invoke("ping");
+
+// The language servers in the status bar refresh themselves from here on.
+statusBar.servers.start();
 
 // Self-tests start from no tabs (unless they're testing session restore);
 // normal launches reopen the last session.

@@ -42,6 +42,9 @@ pub enum TransportEvent {
     /// session with it. A [`TransportError::Frame`] at the very end means the
     /// stream stopped mid-message.
     Broken(TransportError),
+    /// A line the server wrote to stderr. Already logged; carried as an event
+    /// so the status strip can show the last few (work item 02-08).
+    Stderr(String),
     /// The server is gone. Always the last event.
     Exited(Exit),
 }
@@ -176,9 +179,17 @@ async fn read(mut child: Supervised, out: mpsc::Sender<TransportEvent>) {
                     return;
                 }
             }
-            ProcessEvent::Stderr(bytes) => stderr.push(&bytes),
+            ProcessEvent::Stderr(bytes) => {
+                for line in stderr.push(&bytes) {
+                    if out.send(TransportEvent::Stderr(line)).await.is_err() {
+                        return;
+                    }
+                }
+            }
             ProcessEvent::Exited(exit) => {
-                stderr.flush();
+                for line in stderr.flush() {
+                    let _ = out.send(TransportEvent::Stderr(line)).await;
+                }
                 decoder.end();
                 drain(&mut decoder, &out, &mut messages).await;
                 info!(
@@ -259,28 +270,32 @@ struct Lines {
 }
 
 impl Lines {
-    /// Log every line `bytes` completes.
-    fn push(&mut self, bytes: &[u8]) {
+    /// Log every line `bytes` completes, and hand them back for the record the
+    /// status strip shows.
+    fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+        let mut lines = Vec::new();
         for &byte in bytes {
             if byte == b'\n' {
-                self.emit();
+                lines.extend(self.emit());
             } else {
                 self.partial.push(byte);
             }
         }
+        lines
     }
 
-    /// Log whatever is left, once no more bytes are coming.
-    fn flush(&mut self) {
-        if !self.partial.is_empty() {
-            self.emit();
+    /// Whatever is left, once no more bytes are coming.
+    fn flush(&mut self) -> Vec<String> {
+        if self.partial.is_empty() {
+            return Vec::new();
         }
+        self.emit().into_iter().collect()
     }
 
-    fn emit(&mut self) {
-        if let Some(line) = Self::clean(std::mem::take(&mut self.partial)) {
-            info!(target: "tinkerpad_lsp::server", "{line}");
-        }
+    fn emit(&mut self) -> Option<String> {
+        let line = Self::clean(std::mem::take(&mut self.partial))?;
+        info!(target: "tinkerpad_lsp::server", "{line}");
+        Some(line)
     }
 
     /// A line worth logging: valid text, no line ending, not just space.
@@ -311,6 +326,15 @@ mod tests {
         }
         out.extend(Lines::clean(partial));
         out
+    }
+
+    #[test]
+    fn the_lines_are_handed_back_as_well_as_logged() {
+        let mut lines = Lines::default();
+        assert_eq!(lines.push(b"one\ntwo\n"), ["one", "two"]);
+        assert!(lines.push(b"half").is_empty(), "an unfinished line waits");
+        assert_eq!(lines.flush(), ["half"]);
+        assert!(lines.flush().is_empty(), "and only once");
     }
 
     #[test]

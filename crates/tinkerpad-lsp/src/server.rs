@@ -37,6 +37,13 @@ pub const STOP_GRACE: Duration = Duration::from_secs(2);
 /// How many server-initiated messages are held for a subscriber that is slow.
 const BROADCAST: usize = 1024;
 
+/// How many of a server's own log lines are kept for the status strip (02-08).
+/// Enough to see what went wrong, not a log browser.
+pub const LOG_LINES: usize = 500;
+
+/// How many request round trips are kept for the percentiles the strip shows.
+const TIMINGS: usize = 512;
+
 /// How long to wait before the first restart after a crash; it doubles each
 /// time up to [`BACKOFF_CAP`] (`docs/ARCHITECTURE.md` §4.1).
 pub const BACKOFF_START: Duration = Duration::from_secs(1);
@@ -194,6 +201,57 @@ impl ServerConfig {
     }
 }
 
+/// A request on the wire: who is waiting, and since when.
+#[derive(Debug)]
+struct Pending {
+    answer: oneshot::Sender<RawMessage>,
+    sent: std::time::Instant,
+}
+
+/// What one server has been doing, for the status strip (work item 02-08).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerStats {
+    /// Messages received from the server since it last started.
+    pub messages: u64,
+    /// Requests the core has sent it, answered or not.
+    pub requests: u64,
+    /// Round trips, in microseconds, over the last few hundred requests.
+    pub p50_us: u64,
+    pub p95_us: u64,
+    /// How long the current process has been up.
+    pub uptime_ms: u64,
+}
+
+/// Request round trips, kept in a fixed window.
+#[derive(Debug, Default)]
+struct Timings {
+    requests: u64,
+    recent: std::collections::VecDeque<u64>,
+}
+
+impl Timings {
+    fn record(&mut self, micros: u64) {
+        self.requests += 1;
+        if self.recent.len() == TIMINGS {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(micros);
+    }
+
+    /// Nearest-rank percentiles over the window, and zero when it is empty.
+    fn percentiles(&self) -> (u64, u64) {
+        let mut sorted: Vec<u64> = self.recent.iter().copied().collect();
+        sorted.sort_unstable();
+        let at = |fraction: f64| -> u64 {
+            if sorted.is_empty() {
+                return 0;
+            }
+            sorted[((sorted.len() - 1) as f64 * fraction).round() as usize]
+        };
+        (at(0.5), at(0.95))
+    }
+}
+
 /// A document the server has been told about.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocState {
@@ -259,7 +317,7 @@ pub struct ServerHandle {
     /// pre-warmed and never used is held to a shorter limit.
     ever_opened: std::sync::atomic::AtomicBool,
     next_id: AtomicI64,
-    pending: Mutex<HashMap<i64, oneshot::Sender<RawMessage>>>,
+    pending: Mutex<HashMap<i64, Pending>>,
     open_docs: Mutex<HashMap<String, DocState>>,
     /// What the server said it could do, from the handshake. The proxy hands
     /// this to each editor client instead of a second `initialize` (02-04).
@@ -269,6 +327,13 @@ pub struct ServerHandle {
     /// Fired when the server asks for its configuration, so a reload request
     /// can wait until it has actually read the new one.
     config_asked: std::sync::Arc<tokio::sync::Notify>,
+    /// Traffic and round trips since the current process started (02-08).
+    timings: Mutex<Timings>,
+    messages: std::sync::atomic::AtomicU64,
+    /// When the current process started, for uptime.
+    started: Mutex<Option<std::time::Instant>>,
+    /// The server's own last words: stderr and `window/logMessage`.
+    log: Mutex<std::collections::VecDeque<String>>,
 }
 
 impl ServerHandle {
@@ -298,6 +363,10 @@ impl ServerHandle {
             capabilities: Mutex::default(),
             from_server: broadcast::channel(BROADCAST).0,
             config_asked: std::sync::Arc::new(tokio::sync::Notify::new()),
+            timings: Mutex::default(),
+            messages: std::sync::atomic::AtomicU64::new(0),
+            started: Mutex::default(),
+            log: Mutex::default(),
         }
     }
 
@@ -348,6 +417,52 @@ impl ServerHandle {
         }
         let mut registrations = self.registrations.lock().expect("registrations lock");
         registrations.insert(uri.to_owned(), value.clone()) != Some(value)
+    }
+
+    /// Traffic, round trips, and uptime since this process started.
+    pub fn stats(&self) -> ServerStats {
+        let (p50_us, p95_us) = {
+            let timings = self.timings.lock().expect("timings lock");
+            let (p50, p95) = timings.percentiles();
+            (p50, p95)
+        };
+        ServerStats {
+            messages: self.messages.load(std::sync::atomic::Ordering::Relaxed),
+            requests: self.timings.lock().expect("timings lock").requests,
+            p50_us,
+            p95_us,
+            uptime_ms: self
+                .started
+                .lock()
+                .expect("started lock")
+                .map(|at| at.elapsed().as_millis() as u64)
+                .unwrap_or(0),
+        }
+    }
+
+    /// The server's own last words: stderr lines and `window/logMessage`s,
+    /// oldest first, at most [`LOG_LINES`] of them.
+    pub fn log(&self) -> Vec<String> {
+        self.log.lock().expect("log lock").iter().cloned().collect()
+    }
+
+    /// Record one line of what the server said.
+    fn note_log(&self, line: String) {
+        let mut log = self.log.lock().expect("log lock");
+        if log.len() == LOG_LINES {
+            log.pop_front();
+        }
+        log.push_back(line);
+    }
+
+    /// Where this server's program lives, as resolved when it was configured.
+    pub fn program(&self) -> String {
+        self.config.spawn.program.to_string_lossy().into_owned()
+    }
+
+    /// The plugin's install hint, for a server that isn't there.
+    pub fn install_hint(&self) -> Option<&str> {
+        self.config.install_hint.as_deref()
     }
 
     /// The playgrounds this server has been told to serve.
@@ -511,6 +626,9 @@ impl ServerHandle {
         };
 
         *self.capabilities.lock().expect("capabilities lock") = None;
+        *self.timings.lock().expect("timings lock") = Timings::default();
+        self.messages.store(0, std::sync::atomic::Ordering::Relaxed);
+        *self.started.lock().expect("started lock") = Some(std::time::Instant::now());
         *self.connection.lock().expect("connection lock") = Some(Connection {
             pid: transport.pid(),
             sender: transport.sender(),
@@ -816,7 +934,13 @@ impl ServerHandle {
         let sender = self.sender().ok_or_else(|| self.not_running())?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().expect("pending lock").insert(id, tx);
+        self.pending.lock().expect("pending lock").insert(
+            id,
+            Pending {
+                answer: tx,
+                sent: std::time::Instant::now(),
+            },
+        );
         if sender
             .send(RawMessage::request(id, method, params))
             .await
@@ -845,7 +969,13 @@ impl ServerHandle {
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().expect("pending lock").insert(id, tx);
+        self.pending.lock().expect("pending lock").insert(
+            id,
+            Pending {
+                answer: tx,
+                sent: std::time::Instant::now(),
+            },
+        );
 
         if sender
             .send(RawMessage::request(id, method, params))
@@ -1081,7 +1211,13 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
     let started = std::time::Instant::now();
     let id = server.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = oneshot::channel();
-    server.pending.lock().expect("pending lock").insert(id, tx);
+    server.pending.lock().expect("pending lock").insert(
+        id,
+        Pending {
+            answer: tx,
+            sent: std::time::Instant::now(),
+        },
+    );
     let sent = match server.sender().as_ref() {
         Some(sender) => sender
             .send(RawMessage::request(id, "initialize", params))
@@ -1210,14 +1346,28 @@ fn backoff(base: Duration, attempt: u32) -> Duration {
 async fn route(server: std::sync::Arc<ServerHandle>, mut transport: Transport) {
     while let Some(event) = transport.recv().await {
         match event {
+            TransportEvent::Stderr(line) => server.note_log(line),
             TransportEvent::Message(message) => {
+                server
+                    .messages
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if message.method() == Some("window/logMessage")
+                    && let Some(text) = message.params().and_then(|p| p["message"].as_str())
+                {
+                    server.note_log(text.to_owned());
+                }
                 if let Some(id) = message.id().and_then(Value::as_i64)
                     && message.is_response()
                 {
                     let waiting = server.pending.lock().expect("pending lock").remove(&id);
                     match waiting {
-                        Some(tx) => {
-                            let _ = tx.send(message);
+                        Some(pending) => {
+                            server
+                                .timings
+                                .lock()
+                                .expect("timings lock")
+                                .record(pending.sent.elapsed().as_micros() as u64);
+                            let _ = pending.answer.send(message);
                         }
                         None => debug!(language = %server.language, id, "reply to nothing"),
                     }

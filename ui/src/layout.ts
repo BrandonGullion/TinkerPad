@@ -1,5 +1,7 @@
 // Editor-over-panel layout with a draggable splitter, and the status bar.
 
+import { ServerStrip } from "./servers";
+
 const SPLIT_KEY = "tinkerpad.split";
 const MIN_PX = 80;
 
@@ -106,6 +108,8 @@ export type RunState =
 
 export class StatusBar {
   readonly element: HTMLElement;
+  /** The language servers, with their own refresh (work item 02-08). */
+  readonly servers = new ServerStrip();
   private readonly language: HTMLElement;
   private readonly note: HTMLElement;
   private readonly run: HTMLElement;
@@ -143,7 +147,15 @@ export class StatusBar {
     logs.textContent = "Logs";
     logs.title = "Open the log folder";
     logs.addEventListener("click", () => this.onOpenLogs());
-    this.element.append(this.language, this.note, spacer, this.run, this.cancelButton, logs);
+    this.element.append(
+      this.language,
+      this.note,
+      spacer,
+      this.servers.element,
+      this.run,
+      this.cancelButton,
+      logs,
+    );
     this.setRun({ kind: "idle" });
   }
 
