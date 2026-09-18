@@ -588,15 +588,23 @@ The template for each kind already imports the helper, so a new playground can c
 - **No helper needed.** The shared target dir is the warm cache.
 - **Memory:** RA is why `idle_shutdown` exists. Default 30 minutes.
 
-### Python (once installed)
+### Python
 
-- **Run:** `python main.py`, or `uv run main.py` when `uv` is present (inline script
-  metadata per PEP 723 for deps).
-- **LSP:** `basedpyright-langserver --stdio`, workspace `playground_dir`.
-- **Helper:** ~40 lines: read JSON lines, `exec(compile(src, path, "exec"), {})`,
-  capture stdout. The cheapest demonstration of the helper protocol; write it first
-  when Phase 3 starts, and use it as the reference implementation in the plugin
-  template repo.
+- **Toolchain:** `python3` then `python` on macOS and Linux; `python` then `py` on
+  Windows, where the first is usually the Microsoft Store stub and fails the probe.
+  Whichever answers becomes `{toolchain}` for both the run command and the helper,
+  so one interpreter does everything.
+- **Run:** `{toolchain} -u -X utf8 main.py`, with `PYTHONPATH` pointing at the
+  plugin's `dump/`. (`uv run` and PEP 723 inline metadata are a later refinement.)
+- **LSP:** `basedpyright-langserver --stdio`, workspace `playground_dir`. `pip`
+  puts it in Python's `Scripts`/`bin` folder, which isn't always on `PATH` — the
+  install hint says so, and `[toolchains.python]` in settings.toml can point at it.
+- **Helper:** `helper/helper.py`, the reference implementation of §5 and the file
+  to read before writing one of your own. A run is `exec(compile(src, path,
+  "exec"), globals)` on a thread called `tinkerpad-run`, with `sys.stdout` and
+  `sys.stderr` replaced by objects that turn writes into protocol messages, and
+  `cancel` is `KeyboardInterrupt` raised into that thread. Warm means the
+  interpreter is shared: globals are fresh each run, imported modules are not.
 
 ### Go (later)
 

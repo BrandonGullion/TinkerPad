@@ -2735,6 +2735,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   typescript: typescriptScenario,
   csharp: csharpScenario,
   rust: rustScenario,
+  python: pythonScenario,
   tabs: tabsScenario,
   annotations: annotationsScenario,
   "session-prepare": sessionPrepareScenario,
@@ -3009,6 +3010,249 @@ async function helperRunScenario(ctx: SelftestContext, check: Check) {
   unsubscribe();
   await invoke("delete_playground", { id: other.id }).catch(() => {});
   await invoke("delete_playground", { id: main.id }).catch(() => {});
+  await report("INFO shot-ready");
+}
+
+/**
+ * The Python plugin end to end (work item 03-04): probes, templates, `dump()`,
+ * tracebacks, and the warm helper that runs it all.
+ */
+async function pythonScenario(ctx: SelftestContext, check: Check) {
+  const { runs, editor, status } = ctx;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+  const runStatus = () => document.querySelector(".status-run")?.textContent ?? "";
+
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const python = plugins.plugins.find((p) => p.id === "python");
+  await check("the Python plugin is bundled", python?.source === "bundled", JSON.stringify(python ?? null));
+
+  const state = await settledToolchain("python");
+  await check(
+    "Python is ready, whichever of python/python3/py answered",
+    state?.kind === "ready" && /^3\.(1[1-9]|[2-9]\d)/.test(state.version ?? ""),
+    JSON.stringify(state ?? null),
+  );
+  if (state?.kind !== "ready") return;
+  await report(`INFO python: ${state.program} ${state.version} at ${state.path}`);
+
+  const created = await invoke<Playground>("create_playground", { name: "Py Self Test", language: "python" });
+  await openPlayground(editor, status, created.id);
+  await check(
+    "a new playground starts from the statements template",
+    created.kind === "statements" && editor.text.startsWith("from tinkerpad import dump\n"),
+    JSON.stringify(editor.text.slice(0, 60)),
+  );
+
+  // Mod+Enter on the untouched template, until its table is on screen.
+  const tableVisible = async (label: string) => {
+    const end = runs.waitForEnd();
+    const start = performance.now();
+    runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+    let ms: number | null = null;
+    let warm = false;
+    while (performance.now() - start < 30_000) {
+      warm ||= runStatus().includes("warm");
+      const table = ctx.output.element.querySelector<HTMLElement>(".dump-kind-table");
+      if (table && table.getClientRects().length > 0) {
+        ms = performance.now() - start;
+        break;
+      }
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const outcome = await withTimeout(end, 30_000, label);
+    await report(`INFO ${label}: Mod+Enter to table visible ${ms === null ? "never" : `${ms.toFixed(0)} ms`}`);
+    return { ms, outcome, warm };
+  };
+
+  const first = await tableVisible("Python first run");
+  await ctx.output.flushed();
+  const table = ctx.output.element.querySelector(".dump-kind-table");
+  await check(
+    "the template's dump renders a table, on the helper",
+    first.ms !== null &&
+      first.outcome.kind === "exited" &&
+      first.outcome.code === 0 &&
+      first.warm &&
+      table?.querySelector(".dump-title")?.textContent === "people" &&
+      table.querySelectorAll("tbody tr").length === 2 &&
+      !ctx.output.element.querySelector(".out-stderr"),
+    JSON.stringify({ outcome: first.outcome, warm: first.warm, text: outText().slice(0, 200) }),
+  );
+  // The second run is too quick to catch "warm" in the status bar — it is over
+  // in a few milliseconds — so what it proves is the speed, and the pid check
+  // below proves it was the same interpreter.
+  const second = await tableVisible("Python warm run");
+  await check(
+    "and again, faster, on the interpreter that is already up",
+    second.outcome.kind === "exited" && (second.ms ?? 1e9) < (first.ms ?? 0),
+    JSON.stringify({ outcome: second.outcome, first: first.ms, second: second.ms }),
+  );
+
+  // The interpreter really is the same one between runs.
+  let end = runs.waitForEnd();
+  runCode(ctx, "import os, sys\nprint(os.getpid(), sys.version_info.major)\n");
+  await withTimeout(end, 30_000, "pid one");
+  await ctx.output.flushed();
+  const firstPid = outText().trim();
+  end = runs.waitForEnd();
+  runCode(ctx, "import os\nprint(os.getpid())\n");
+  await withTimeout(end, 30_000, "pid two");
+  await ctx.output.flushed();
+  await check(
+    "two runs share one interpreter, which is what warm means",
+    firstPid.startsWith(outText().trim()) && outText().trim().length > 0,
+    JSON.stringify({ firstPid, secondPid: outText().trim() }),
+  );
+
+  // Locked lines: the expression kind wraps one expression in a dump().
+  const expression = await invoke<Playground>("create_playground", {
+    name: "Py Expression Test",
+    language: "python",
+    kind: "expression",
+  });
+  await openPlayground(editor, status, expression.id);
+  const expressionEnd = runs.waitForEnd();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  const expressionOutcome = await withTimeout(expressionEnd, 30_000, "expression template");
+  await ctx.output.flushed();
+  await check(
+    "the expression kind dumps its one expression",
+    expressionOutcome.kind === "exited" &&
+      editor.text.startsWith("from tinkerpad import dump\n\ndump((\n") &&
+      ctx.output.element.querySelector(".dump-kind-tree") !== null,
+    JSON.stringify({ expressionOutcome, text: editor.text.slice(0, 60) }),
+  );
+
+  // A traceback points at the line it happened on.
+  await openPlayground(editor, status, created.id);
+  end = runs.waitForEnd();
+  runCode(ctx, 'print("before")\n\n\ndef boom():\n    return 1 / 0\n\n\nboom()\n');
+  const failed = await withTimeout(end, 30_000, "traceback");
+  await ctx.output.flushed();
+  const squiggles = [...document.querySelectorAll(".cm-annotation")].map((el) => el.textContent ?? "");
+  await check(
+    "a traceback is reported, and its line marked in the editor",
+    failed.kind === "exited" &&
+      failed.code === 1 &&
+      outText().includes("ZeroDivisionError") &&
+      squiggles.some((s) => s.includes("1 / 0")),
+    JSON.stringify({ failed, squiggles, out: outText().slice(-120) }),
+  );
+
+  // Cancel reaches the code running inside the helper.
+  end = runs.waitForEnd();
+  runCode(ctx, "while True:\n    pass\n");
+  await until(() => runStatus().startsWith("Running"), 30_000);
+  await runs.cancel();
+  const cancelled = await withTimeout(end, 30_000, "cancel");
+  await check("a runaway loop can be cancelled", cancelled.kind === "cancelled", JSON.stringify(cancelled));
+
+  const helper = (await invoke<HelperStatus[]>("helper_status")).find((h) => h.plugin === "python");
+  await check(
+    "and the helper is still warm afterwards",
+    helper?.state.kind === "ready",
+    JSON.stringify(helper?.state ?? null),
+  );
+
+  // The language server, when basedpyright is installed (`pip install
+  // basedpyright`). Without it the editor still works, which is the point of
+  // checking rather than assuming.
+  const view = editor.view;
+  const tab = ctx.tabs.activeTab;
+  const connected = await until(() => (tab?.lsp ?? null) !== null, 60_000);
+  if (!connected) {
+    await report("INFO basedpyright did not connect; skipping the language server checks");
+  } else {
+    const source = 'greeting = "hello"\ngreeting\n';
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: source },
+    });
+    // Then the dot on its own, as a keystroke would arrive: the server has to
+    // have seen the document before it can say what follows it.
+    await sleep(500);
+    const dotAt = source.indexOf("greeting\n") + "greeting".length;
+    view.dispatch({ changes: { from: dotAt, insert: "." }, selection: { anchor: dotAt + 1 } });
+    // Ask until the answer is about the string, not about the module: a
+    // server that hasn't caught up with the dot yet answers with what follows
+    // a bare name, which is not nothing, so "got something" isn't enough.
+    let completions: readonly { label: string }[] = [];
+    let got = false;
+    for (let attempt = 0; attempt < 30 && !got; attempt++) {
+      closeCompletion(view);
+      startCompletion(view);
+      got = await until(() => {
+        completions = currentCompletions(view.state);
+        return completions.some((c) => c.label.startsWith("upper"));
+      }, 2000);
+    }
+    await check(
+      "typing `.` offers the methods basedpyright knows about",
+      got,
+      JSON.stringify({
+        of: completions.length,
+        str: completions
+          .filter((c) => /^(upper|lower|strip|split|title)/.test(c.label))
+          .map((c) => c.label),
+      }),
+    );
+    closeCompletion(view);
+  }
+
+  // The measurement the work item asks for: the same one-line program, warm
+  // and cold, from the keystroke to the first character of output.
+  const printOne = async (label: string) => {
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const done = runs.waitForEnd();
+      runCode(ctx, "print(1)\n");
+      await withTimeout(done, 30_000, label);
+      await ctx.output.flushed();
+      best = Math.min(best, runs.firstOutputMs ?? Infinity);
+    }
+    await report(`INFO print(1) ${label}: Mod+Enter to first output ${best.toFixed(1)} ms (best of 3)`);
+    return best;
+  };
+  const warmMs = await printOne("on the helper");
+  await invoke("force_per_run", { forced: true });
+  const coldMs = await printOne("per-run");
+  await invoke("force_per_run", { forced: false });
+  await check(
+    "a warm run beats starting an interpreter",
+    warmMs < coldMs,
+    JSON.stringify({ warmMs, coldMs }),
+  );
+
+  // Leave a table and some text on screen for a screenshot.
+  end = runs.waitForEnd();
+  runCode(
+    ctx,
+    [
+      "from dataclasses import dataclass",
+      "from tinkerpad import dump",
+      "",
+      "",
+      "@dataclass",
+      "class Person:",
+      "    name: str",
+      "    born: int",
+      "    known_for: str",
+      "",
+      "",
+      'print("Hello, world!")',
+      "people = dump(",
+      "    [",
+      '        Person("Ada Lovelace", 1815, "the first program"),',
+      '        Person("Grace Hopper", 1906, "COBOL"),',
+      '        Person("Alan Turing", 1912, "the Turing machine"),',
+      "    ],",
+      '    "people",',
+      ")",
+      'print(f"{len(people)} people")',
+      "",
+    ].join("\n"),
+  );
+  await withTimeout(end, 30_000, "final run");
+  await ctx.output.flushed();
   await report("INFO shot-ready");
 }
 

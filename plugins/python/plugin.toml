@@ -1,0 +1,82 @@
+api = 1
+
+# Python, with a warm helper. See README.md — the helper is meant to be read.
+
+[language]
+id = "python"
+name = "Python"
+extension = "py"
+highlighter = "python"
+
+[toolchain]
+# Ordered; the first that answers wins, and its program becomes {toolchain}.
+#
+# On Windows, `python` is usually the Microsoft Store stub — it prints an advert
+# and no version, so the probe fails and the launcher is tried next. `py` is
+# what a Windows install of python.org actually puts on PATH.
+probe = [
+  { command = "python3", args = ["--version"], min_version = "3.11", os = ["macos", "linux"] },
+  { command = "python", args = ["--version"], min_version = "3.11", os = ["macos", "linux"] },
+  { command = "python", args = ["--version"], min_version = "3.11", os = ["windows"] },
+  { command = "py", args = ["--version"], min_version = "3.11", os = ["windows"] },
+]
+install_hint = "Install Python 3.11 or newer: https://python.org/downloads"
+
+[[kind]]
+id = "statements"
+name = "Python Statements"
+template = "statements.py"
+default = true
+
+# Locked lines: the file is one expression, and the wrapper dumps it.
+[[kind]]
+id = "expression"
+name = "Python Expression"
+template = "expression.py"
+prelude = "from tinkerpad import dump\n\ndump((\n"
+postlude = "\n))\n"
+
+[lsp]
+# Needs basedpyright on PATH:
+#   pip install basedpyright
+# One server per playground: Python's tooling expects a project folder, and a
+# playground is exactly that.
+command = "basedpyright-langserver"
+args = ["--stdio"]
+workspace = "playground_dir"
+idle_shutdown = "30m"
+
+[lsp.init_options]
+# Without this the server indexes only what is imported; a playground is small,
+# so index it all and get completions for everything in the folder.
+python = { analysis = { autoSearchPaths = true, useLibraryCodeForTypes = true } }
+
+[helper]
+# The warm runner (docs/PLUGINS.md §5). Nothing to build: it is one file of
+# Python, started with the same interpreter runs use.
+command = "{toolchain}"
+args = ["-u", "{plugin_dir}/helper/helper.py"]
+hooks = ["run"]
+# Python's start-up is quick, but a warm interpreter is the point of this, so
+# it stays until the machine has better uses for the memory.
+idle_shutdown = "2h"
+
+[output]
+# A traceback ends with the exception; the frame above it holds the position:
+#     Traceback (most recent call last):
+#       File "C:\play\main.py", line 3, in <module>
+#         boom()
+#     ZeroDivisionError: division by zero
+# The frame nearest the message is the one worth pointing at: it is where the
+# error happened. A frame line starts with two spaces and `File "`, and the
+# source lines under it with four, so "frame, its source, then the exception"
+# only matches the last frame.
+error_regex = '(?m)^  File "(?<file>[^"]+)", line (?<line>\d+)(?:, in [^\n]*)?\n(?:    [^\n]*\n)*(?<message>[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Exit|Warning|Interrupt)[^\n]*)$'
+error_regex_multiline = true
+
+[run]
+# -u: unbuffered, so output appears as it is printed rather than at the end.
+# -X utf8: UTF-8 whatever the console code page says, which matters on Windows.
+command = "{toolchain}"
+args = ["-u", "-X", "utf8", "{main}"]
+env = { PYTHONPATH = "{plugin_dir}/dump", PYTHONIOENCODING = "utf-8" }

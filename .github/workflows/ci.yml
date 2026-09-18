@@ -37,6 +37,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # The Python plugin needs 3.11 or newer, which is newer than some runner
+      # images ship, and basedpyright for its language server (03-04).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare the Python language server
+        run: pip install basedpyright
+
       # The Tauri app embeds ui/dist, so build the UI before any cargo step.
       - name: Build UI
         working-directory: ui
@@ -113,6 +122,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # The Python plugin needs 3.11 or newer, which is newer than some runner
+      # images ship, and basedpyright for its language server (03-04).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare the Python language server
+        run: pip install basedpyright
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           # The Rust plugin's language server, for the `lsp` scenario (02-04).
@@ -146,7 +164,7 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,python,library,library-trash,locked,tabs,annotations,packages
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -162,6 +180,8 @@ jobs:
           grep -q "selftest: PASS the template.s dump renders a table" launch.log
           grep -q "selftest: PASS the template.s .Dump() renders a table" launch.log
           grep -q "selftest: PASS a second playground builds and runs" launch.log
+          grep -q "selftest: PASS two runs share one interpreter" launch.log
+          grep -q "selftest: PASS a traceback is reported, and its line marked" launch.log
           grep -q "selftest: PASS Mod+N creates an Untitled playground" launch.log
           grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
@@ -209,7 +229,7 @@ jobs:
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,library,library-trash,locked,tabs,annotations,packages
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,python,library,library-trash,locked,tabs,annotations,packages
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -225,6 +245,8 @@ jobs:
           grep -q "selftest: PASS the template.s dump renders a table" launch.log
           grep -q "selftest: PASS the template.s .Dump() renders a table" launch.log
           grep -q "selftest: PASS a second playground builds and runs" launch.log
+          grep -q "selftest: PASS two runs share one interpreter" launch.log
+          grep -q "selftest: PASS a traceback is reported, and its line marked" launch.log
           grep -q "selftest: PASS Mod+N creates an Untitled playground" launch.log
           grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
