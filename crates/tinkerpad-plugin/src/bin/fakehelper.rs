@@ -27,6 +27,11 @@
 //! | `FAKEHELPER_HANG_ON_CANCEL` | ignores `cancel` completely |
 //! | `FAKEHELPER_IGNORE_SHUTDOWN` | ignores `shutdown`, so it has to be killed |
 //! | `FAKEHELPER_NO_BANNER` | skips the pre-`ready` noise |
+//!
+//! It also stands in for a plugin's `[helper.build]` command: with
+//! `FAKEHELPER_BUILD_INTO` set it appends a line to that file, says so on
+//! stdout, and exits — 0, or 3 with `FAKEHELPER_BUILD_FAILS`. A test counts
+//! the lines in that file to see how often the build ran (03-02).
 
 use std::io::{BufRead, BufReader, Write};
 
@@ -39,6 +44,10 @@ use serde_json::{Value, json};
 const CHUNK: usize = 7;
 
 fn main() {
+    if let Some(into) = env("FAKEHELPER_BUILD_INTO") {
+        build(&into);
+        return;
+    }
     let mut input = BufReader::new(std::io::stdin());
     let mut line = String::new();
     // The run the helper is pretending to be busy with.
@@ -98,6 +107,24 @@ fn main() {
             }
             other => eprintln!("fakehelper: nothing to do with {other}"),
         }
+    }
+}
+
+/// Stand in for a plugin's build command: leave a mark that it ran, and say
+/// something a waiting run can be shown.
+fn build(into: &str) {
+    println!("fakehelper: building");
+    println!("fakehelper: two lines, so a test can see them arrive");
+    let _ = std::io::stdout().flush();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(into)
+        .expect("build marker");
+    let _ = writeln!(file, "built");
+    if env("FAKEHELPER_BUILD_FAILS").is_some() {
+        eprintln!("fakehelper: the build was told to fail");
+        std::process::exit(3);
     }
 }
 

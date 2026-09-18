@@ -169,7 +169,8 @@ one you're on, so a mistake that only affects macOS still fails on Windows.
 
 | Where | Allowed |
 |---|---|
-| `[run]`, `[helper]` (and its `build`), `[lsp]`, `[lsp.register].value` | `{main}` `{dir}` `{id}` `{name}` `{scratch}` `{plugin_dir}` `{version}` `{toolchain}` |
+| `[run]`, `[lsp]`, `[lsp.register].value` | `{main}` `{dir}` `{id}` `{name}` `{scratch}` `{plugin_dir}` `{version}` `{toolchain}` |
+| `[helper]` and its `build` | `{scratch}` `{plugin_dir}` `{version}` `{toolchain}`. A helper serves every playground of its language, so the ones that name one are not available; the playground arrives in the `run` message instead. |
 | `[toolchain].probe` | `{plugin_dir}` `{scratch}` |
 | `[deps]` | `{name}` `{version}`, meaning the package being added |
 
@@ -227,7 +228,13 @@ against `error_regex`. A match becomes a position the app can use.
 - Ids (`language.id`, kind ids) use lowercase letters, digits, and hyphens.
 - Paths are relative and stay inside their folder: no leading `/`, no drive
   letter, no `..`.
-- `idle_shutdown` is `"never"` or a duration such as `"90s"`, `"30m"`, `"2h"`.
+- `idle_shutdown` is `"never"` or a duration such as `"90s"`, `"30m"`, `"2h"`. The
+  user may override it per plugin in `settings.toml`, under `[lsp.<id>]` for a
+  language server and `[helpers.<id>]` for a helper.
+- `[helper].build` runs before the helper's first use, and again whenever anything
+  in the plugin folder changes (its `bin`, `obj`, `target`, `node_modules` and `.git`
+  folders excepted). Nothing else runs it: a plugin that ships a built helper simply
+  leaves `build` out.
 - `min_version` is a dotted version such as `"10.0"`.
 - `[output].error_regex` must name the groups `line` and `message`. `file`, `col`,
   and `severity` are optional.

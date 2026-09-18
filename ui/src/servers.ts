@@ -1,20 +1,22 @@
-// The language servers, in the status bar (work item 02-08).
+// The language servers and plugin helpers, in the status bar (work items
+// 02-08, 03-02).
 //
-// One chip per server: a coloured dot, the language, and how much memory it is
-// using. Clicking one opens a popover with the details worth knowing when
-// something is slow or broken — uptime, restarts, open documents, how quickly
-// it answers — and the three things worth doing about it: Restart, Stop, and
-// reading what the server itself said.
+// One chip per process: a coloured dot, the language, and how much memory it
+// is using. Clicking one opens a popover with the details worth knowing when
+// something is slow or broken — uptime, restarts, what it is doing, how
+// quickly it answers — and the three things worth doing about it: Restart,
+// Stop, and reading what it said for itself.
+//
+// Servers and helpers are supervised by the same code in the core, so they get
+// the same chip here. Only two things differ: the numbers worth showing, and
+// which commands the buttons call. Both are folded into `Child` below, and
+// everything after that is one path.
 //
 // The numbers are samples, so the strip refreshes once a second and on every
-// `server` event, never per LSP message.
-//
-// Plugin helper processes (03-02) are the same idea and should become chips
-// here too: give them the same shape as a `ServerStatus` and this renders them
-// with no changes.
+// `server` or `helper` event, never per message.
 
 import { invoke } from "./ipc";
-import type { ServerState, ServerStatus } from "./protocol";
+import type { HelperStatus, ServerState, ServerStatus } from "./protocol";
 
 /** How often the samples are refreshed while the window is visible. */
 const REFRESH_MS = 1000;
@@ -40,13 +42,91 @@ function duration(ms: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+/** One long-lived process, whichever kind it is. */
+interface Child {
+  /** Unique, and safe to put in a CSS selector. */
+  key: string;
+  /** What it is, for the label a screen reader reads out. */
+  what: string;
+  /** The language or plugin id, for deciding whether to show a stopped one. */
+  language: string;
+  /** The display name: "Rust", not "rust". */
+  name: string;
+  state: ServerState;
+  uptimeMs: number;
+  restarts: number;
+  program: string;
+  installHint: string | null;
+  /** Rows for the popover, on top of the ones every child has. */
+  facts: [string, string][];
+  /** The commands its buttons call, and the arguments they take. */
+  commands: { restart: string; stop: string; log: string };
+  args: Record<string, unknown>;
+}
+
+/**
+ * The key goes into a `data-key` attribute and is looked up with a CSS
+ * selector, so it is escaped down to characters a selector can carry.
+ */
+function keyOf(...parts: string[]): string {
+  return parts.map(encodeURIComponent).join("|");
+}
+
+/** A language server as a chip. One per language and workspace root. */
+function fromServer(server: ServerStatus): Child {
+  return {
+    key: keyOf("server", server.language, server.root),
+    what: "language server",
+    language: server.language,
+    name: server.name,
+    state: server.state,
+    uptimeMs: server.uptimeMs,
+    restarts: server.restarts,
+    program: server.program,
+    installHint: server.installHint,
+    facts: [
+      ["Documents", `${server.documents}`],
+      [
+        "Answers",
+        server.requests > 0
+          ? `${server.requests} · ${server.p50Ms.toFixed(0)} ms p50 · ${server.p95Ms.toFixed(0)} ms p95`
+          : "none yet",
+      ],
+      ...(server.root ? ([["Workspace", server.root]] as [string, string][]) : []),
+    ],
+    commands: { restart: "restart_server", stop: "stop_server", log: "server_log" },
+    args: { language: server.language, root: server.root || null },
+  };
+}
+
+/** A plugin helper as a chip. One per plugin. */
+function fromHelper(helper: HelperStatus): Child {
+  return {
+    key: keyOf("helper", helper.plugin, ""),
+    what: "helper",
+    language: helper.plugin,
+    name: `${helper.name} helper`,
+    state: helper.state,
+    uptimeMs: helper.uptimeMs,
+    restarts: helper.restarts,
+    program: helper.program,
+    installHint: helper.installHint,
+    facts: [
+      ["Running", helper.uses > 0 ? `${helper.uses}` : "nothing"],
+      ["Idle", helper.idleMs === null ? "in use" : duration(helper.idleMs)],
+    ],
+    commands: { restart: "restart_helper", stop: "stop_helper", log: "helper_log" },
+    args: { plugin: helper.plugin },
+  };
+}
+
 /**
  * The servers section of the status bar. It owns its own refresh, so the rest
  * of the UI doesn't have to think about it.
  */
 export class ServerStrip {
   readonly element: HTMLElement;
-  private servers: ServerStatus[] = [];
+  private children: Child[] = [];
   private open: string | null = null;
   private popover: HTMLElement | null = null;
   private timer = 0;
@@ -74,63 +154,64 @@ export class ServerStrip {
     this.timer = 0;
   }
 
-  /** The languages currently open in tabs, whose servers are worth showing. */
+  /** The languages currently open in tabs, whose processes are worth showing. */
   setLanguages(languages: Iterable<string>): void {
     this.interesting = new Set(languages);
     this.render();
   }
 
-  /** A `server` event arrived: refresh now rather than at the next tick. */
+  /** A `server` or `helper` event arrived: refresh now, not at the next tick. */
   changed(): void {
     void this.refresh();
   }
 
   private async refresh(): Promise<void> {
     try {
-      this.servers = await invoke<ServerStatus[]>("server_status");
+      const [servers, helpers] = await Promise.all([
+        invoke<ServerStatus[]>("server_status"),
+        invoke<HelperStatus[]>("helper_status"),
+      ]);
+      this.children = [...servers.map(fromServer), ...helpers.map(fromHelper)];
     } catch {
-      // The command only fails if the app is going away.
+      // The commands only fail if the app is going away.
       return;
     }
     this.render();
   }
 
-  /** Servers worth a chip: running ones, and stopped ones a tab still wants. */
-  private shown(): ServerStatus[] {
-    return this.servers.filter(
-      (server) => server.state.kind !== "stopped" || this.interesting.has(server.language),
+  /** Worth a chip: running ones, and stopped ones a tab still wants. */
+  private shown(): Child[] {
+    return this.children.filter(
+      (child) => child.state.kind !== "stopped" || this.interesting.has(child.language),
     );
   }
 
   private render(): void {
     const shown = this.shown();
-    this.element.replaceChildren(...shown.map((server) => this.chip(server)));
+    this.element.replaceChildren(...shown.map((child) => this.chip(child)));
     this.element.hidden = shown.length === 0;
-    // A popover for a server that is no longer shown goes with it.
-    if (this.open && !shown.some((s) => key(s) === this.open)) this.closePopover();
+    // A popover for something no longer shown goes with it.
+    if (this.open && !shown.some((c) => c.key === this.open)) this.closePopover();
     else if (this.open) this.renderPopover();
   }
 
-  private chip(server: ServerStatus): HTMLElement {
+  private chip(child: Child): HTMLElement {
     const chip = document.createElement("button");
     chip.className = "server-chip";
-    chip.dataset.key = key(server);
-    chip.dataset.state = server.state.kind;
-    const dot = DOTS[server.state.kind];
-    chip.setAttribute(
-      "aria-label",
-      `${server.name} language server: ${dot.label}. Click for details.`,
-    );
+    chip.dataset.key = child.key;
+    chip.dataset.state = child.state.kind;
+    const dot = DOTS[child.state.kind];
+    chip.setAttribute("aria-label", `${child.name}: ${dot.label}. Click for details.`);
 
     const light = document.createElement("span");
     light.className = "server-dot";
     light.style.background = dot.colour;
     const name = document.createElement("span");
     name.className = "server-name";
-    name.textContent = server.name;
+    name.textContent = child.name;
     chip.append(light, name);
 
-    const rss = server.state.kind === "ready" ? megabytes(server.state.rssBytes) : "";
+    const rss = child.state.kind === "ready" ? megabytes(child.state.rssBytes) : "";
     if (rss) {
       const memory = document.createElement("span");
       memory.className = "server-rss";
@@ -138,17 +219,17 @@ export class ServerStrip {
       chip.append(memory);
     }
 
-    chip.title = `${server.name}: ${dot.label}${rss ? `, ${rss}` : ""}`;
-    chip.addEventListener("click", () => this.togglePopover(server));
+    chip.title = `${child.name}: ${dot.label}${rss ? `, ${rss}` : ""}`;
+    chip.addEventListener("click", () => this.togglePopover(child));
     return chip;
   }
 
-  private togglePopover(server: ServerStatus): void {
-    if (this.open === key(server)) {
+  private togglePopover(child: Child): void {
+    if (this.open === child.key) {
       this.closePopover();
       return;
     }
-    this.open = key(server);
+    this.open = child.key;
     this.renderPopover();
   }
 
@@ -159,9 +240,9 @@ export class ServerStrip {
   }
 
   private renderPopover(): void {
-    const server = this.servers.find((s) => key(s) === this.open);
+    const child = this.children.find((c) => c.key === this.open);
     const chip = this.element.querySelector<HTMLElement>(`.server-chip[data-key="${this.open}"]`);
-    if (!server || !chip) {
+    if (!child || !chip) {
       this.closePopover();
       return;
     }
@@ -169,18 +250,18 @@ export class ServerStrip {
     const popover = document.createElement("div");
     popover.className = "server-popover";
     popover.setAttribute("role", "dialog");
-    popover.setAttribute("aria-label", `${server.name} language server`);
+    popover.setAttribute("aria-label", `${child.name} ${child.what}`);
 
     const title = document.createElement("div");
     title.className = "server-popover-title";
-    title.textContent = `${server.name} · ${DOTS[server.state.kind].label}`;
+    title.textContent = `${child.name} · ${DOTS[child.state.kind].label}`;
     popover.append(title);
 
     const reason =
-      server.state.kind === "stopped"
-        ? server.state.reason
-        : server.state.kind === "crashed"
-          ? server.state.reason
+      child.state.kind === "stopped"
+        ? child.state.reason
+        : child.state.kind === "crashed"
+          ? child.state.reason
           : null;
     if (reason) {
       const why = document.createElement("div");
@@ -189,19 +270,19 @@ export class ServerStrip {
       popover.append(why);
     }
 
-    const hint = server.state.kind === "stopped" ? server.state.hint : null;
-    if (hint || (server.state.kind === "stopped" && server.installHint)) {
-      popover.append(this.hintBlock(hint ?? server.installHint ?? ""));
+    const hint = child.state.kind === "stopped" ? child.state.hint : null;
+    if (hint || (child.state.kind === "stopped" && child.installHint)) {
+      popover.append(this.hintBlock(hint ?? child.installHint ?? ""));
     }
 
-    popover.append(this.facts(server));
+    popover.append(this.facts(child));
 
     const actions = document.createElement("div");
     actions.className = "server-popover-actions";
     actions.append(
-      this.button("Restart", () => this.act(server, "restart_server")),
-      this.button("Stop", () => this.act(server, "stop_server"), server.state.kind === "stopped"),
-      this.button("Log", () => void this.showLog(server, popover)),
+      this.button("Restart", () => this.act(child, child.commands.restart)),
+      this.button("Stop", () => this.act(child, child.commands.stop), child.state.kind === "stopped"),
+      this.button("Log", () => void this.showLog(child, popover)),
     );
     popover.append(actions);
 
@@ -213,26 +294,19 @@ export class ServerStrip {
   }
 
   /** The numbers worth having when something feels slow. */
-  private facts(server: ServerStatus): HTMLElement {
+  private facts(child: Child): HTMLElement {
     const list = document.createElement("dl");
     list.className = "server-facts";
     const rows: [string, string][] = [];
-    if (server.state.kind === "ready") {
-      rows.push(["Process", `${server.state.pid}`]);
-      if (server.state.version) rows.push(["Version", server.state.version]);
-      rows.push(["Up", duration(server.uptimeMs)]);
-      rows.push(["Memory", megabytes(server.state.rssBytes) || "—"]);
+    if (child.state.kind === "ready") {
+      rows.push(["Process", `${child.state.pid}`]);
+      if (child.state.version) rows.push(["Version", child.state.version]);
+      rows.push(["Up", duration(child.uptimeMs)]);
+      rows.push(["Memory", megabytes(child.state.rssBytes) || "—"]);
     }
-    rows.push(["Documents", `${server.documents}`]);
-    rows.push([
-      "Answers",
-      server.requests > 0
-        ? `${server.requests} · ${server.p50Ms.toFixed(0)} ms p50 · ${server.p95Ms.toFixed(0)} ms p95`
-        : "none yet",
-    ]);
-    if (server.restarts > 0) rows.push(["Restarts", `${server.restarts}`]);
-    if (server.root) rows.push(["Workspace", server.root]);
-    rows.push(["Program", server.program]);
+    rows.push(...child.facts);
+    if (child.restarts > 0) rows.push(["Restarts", `${child.restarts}`]);
+    rows.push(["Program", child.program]);
 
     for (const [label, value] of rows) {
       const dt = document.createElement("dt");
@@ -245,7 +319,7 @@ export class ServerStrip {
     return list;
   }
 
-  /** A missing server: what to run, ready to copy. */
+  /** Something missing: what to run, ready to copy. */
   private hintBlock(hint: string): HTMLElement {
     const block = document.createElement("div");
     block.className = "server-popover-hint";
@@ -268,24 +342,21 @@ export class ServerStrip {
     return button;
   }
 
-  private async act(server: ServerStatus, command: string): Promise<void> {
-    await invoke(command, { language: server.language, root: server.root || null }).catch(() => {});
+  private async act(child: Child, command: string): Promise<void> {
+    await invoke(command, child.args).catch(() => {});
     await this.refresh();
   }
 
-  /** What the server itself said: its stderr and log messages. */
-  private async showLog(server: ServerStatus, popover: HTMLElement): Promise<void> {
-    const lines = await invoke<string[]>("server_log", {
-      language: server.language,
-      root: server.root || null,
-    }).catch(() => [] as string[]);
+  /** What it said for itself: stderr, log messages, and a helper's build. */
+  private async showLog(child: Child, popover: HTMLElement): Promise<void> {
+    const lines = await invoke<string[]>(child.commands.log, child.args).catch(() => [] as string[]);
 
     popover.querySelector(".server-log")?.remove();
     const log = document.createElement("div");
     log.className = "server-log";
     const body = document.createElement("pre");
     body.className = "server-log-body";
-    body.textContent = lines.length > 0 ? lines.join("\n") : "This server hasn't said anything.";
+    body.textContent = lines.length > 0 ? lines.join("\n") : "This one hasn't said anything.";
     const copy = document.createElement("button");
     copy.className = "status-link";
     copy.textContent = "Copy all";
@@ -294,13 +365,4 @@ export class ServerStrip {
     popover.append(log);
     body.scrollTop = body.scrollHeight;
   }
-}
-
-/**
- * A server is one per language and workspace root. The key goes into a
- * `data-key` attribute and is looked up with a CSS selector, so it is escaped
- * down to characters a selector can carry.
- */
-function key(server: ServerStatus): string {
-  return `${encodeURIComponent(server.language)}|${encodeURIComponent(server.root)}`;
 }

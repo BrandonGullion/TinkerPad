@@ -20,8 +20,17 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tinkerpad_core::ServerState;
 use tinkerpad_process::SpawnSpec;
+use tinkerpad_process::supervise::{Crash, Lifecycle, Policy, Supervised};
 use tokio::sync::{broadcast, oneshot, watch};
 use tracing::{debug, info, warn};
+
+/// Supervision is the same problem for a language server, a plugin helper, and
+/// a debug adapter, so it lives in one place and these are its names
+/// (work item 03-02). Re-exported because they are part of this crate's
+/// vocabulary: a caller tuning a server's backoff shouldn't have to know which
+/// crate the number comes from.
+pub use tinkerpad_process::supervise::STOP_GRACE;
+use tinkerpad_process::supervise::{BACKOFF_START, IDLE_UNUSED, WATCH_TICK};
 
 use crate::jsonrpc::RawMessage;
 use crate::transport::{Sender, Transport, TransportEvent};
@@ -31,46 +40,15 @@ use crate::transport::{Sender, Transport, TransportEvent};
 /// short enough that the editor doesn't look hung.
 pub const START_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long `shutdown` and `exit` are given before the process is killed.
-pub const STOP_GRACE: Duration = Duration::from_secs(2);
-
 /// How many server-initiated messages are held for a subscriber that is slow.
 const BROADCAST: usize = 1024;
-
-/// How many of a server's own log lines are kept for the status strip (02-08).
-/// Enough to see what went wrong, not a log browser.
-pub const LOG_LINES: usize = 500;
 
 /// How many request round trips are kept for the percentiles the strip shows.
 const TIMINGS: usize = 512;
 
-/// How long to wait before the first restart after a crash; it doubles each
-/// time up to [`BACKOFF_CAP`] (`docs/ARCHITECTURE.md` §4.1).
-pub const BACKOFF_START: Duration = Duration::from_secs(1);
-pub const BACKOFF_CAP: Duration = Duration::from_secs(30);
-
-/// Crashes in a row before the pool gives up and waits to be asked again.
-pub const MAX_RESTARTS: u32 = 5;
-
-/// Crashes further apart than this are not "in a row": a server that has been
-/// fine for ten minutes and then dies gets the full budget again.
-pub const RESTART_WINDOW: Duration = Duration::from_secs(600);
-
 /// The error code a request gets when its server went away under it. The
 /// editor treats it as transient and asks again on the next keystroke.
 pub const SERVER_RESTARTED: i64 = -32000;
-
-/// How long a server that has never been given a document may sit there. A
-/// pre-warmed language nobody opened shouldn't hold memory all day, whatever
-/// its plugin says about idling (work item 02-06).
-pub const IDLE_UNUSED: Duration = Duration::from_secs(3600);
-
-/// How often the idle clock and the memory sample are taken. Timers here are
-/// minutes or hours, so this is as often as it needs to be.
-const WATCH_TICK: Duration = Duration::from_secs(5);
-
-/// How often resident memory is sampled for the status strip (02-08).
-const RSS_EVERY: Duration = Duration::from_secs(10);
 
 /// How long to wait for a server to read a configuration it has just been
 /// told about, before asking it to reload anyway (work item 02-07).
@@ -136,6 +114,18 @@ impl ServerConfig {
             register_setting: None,
             register_reload: None,
             config_read_wait: CONFIG_READ_WAIT,
+        }
+    }
+
+    /// How this server is to be supervised, in the terms the shared
+    /// supervision code uses (03-02).
+    pub fn policy(&self) -> Policy {
+        Policy {
+            backoff: self.backoff,
+            idle_shutdown: self.idle_shutdown,
+            idle_unused: self.idle_unused,
+            watch_tick: self.watch_tick,
+            ..Policy::default()
         }
     }
 
@@ -289,13 +279,6 @@ struct Connection {
     kill: tinkerpad_process::KillHandle,
 }
 
-/// How often this server has crashed lately.
-#[derive(Debug, Default)]
-struct Restarts {
-    count: u32,
-    last: Option<std::time::Instant>,
-}
-
 /// A running (or failed) language server.
 #[derive(Debug)]
 pub struct ServerHandle {
@@ -304,18 +287,13 @@ pub struct ServerHandle {
     root: Option<std::path::PathBuf>,
     /// How to start it, kept so a crashed server can be started again.
     config: ServerConfig,
-    state: watch::Sender<ServerState>,
+    /// State, crash budget, idle clock, uptime, and the last few things the
+    /// server said. Shared with the helper pool (03-02).
+    life: Lifecycle,
     connection: Mutex<Option<Connection>>,
-    restarts: Mutex<Restarts>,
     /// What each attached playground contributes to the registered setting,
     /// by document URI (work item 02-07).
     registrations: Mutex<std::collections::BTreeMap<String, Value>>,
-    /// When the last document was closed, or when the server started with none.
-    /// `None` while it has documents open (work item 02-06).
-    idle_since: Mutex<Option<std::time::Instant>>,
-    /// Whether a document was ever opened on this server. One that was
-    /// pre-warmed and never used is held to a shorter limit.
-    ever_opened: std::sync::atomic::AtomicBool,
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, Pending>>,
     open_docs: Mutex<HashMap<String, DocState>>,
@@ -330,10 +308,6 @@ pub struct ServerHandle {
     /// Traffic and round trips since the current process started (02-08).
     timings: Mutex<Timings>,
     messages: std::sync::atomic::AtomicU64,
-    /// When the current process started, for uptime.
-    started: Mutex<Option<std::time::Instant>>,
-    /// The server's own last words: stderr and `window/logMessage`.
-    log: Mutex<std::collections::VecDeque<String>>,
 }
 
 impl ServerHandle {
@@ -350,13 +324,15 @@ impl ServerHandle {
             language: config.language.clone(),
             start_timeout: config.start_timeout,
             root: config.root.clone(),
+            life: Lifecycle::in_state(
+                config.language.clone(),
+                "language server",
+                config.policy(),
+                state,
+            ),
             config: config.clone(),
-            state: watch::Sender::new(state),
             connection: Mutex::default(),
-            restarts: Mutex::default(),
             registrations: Mutex::default(),
-            idle_since: Mutex::new(Some(std::time::Instant::now())),
-            ever_opened: std::sync::atomic::AtomicBool::new(false),
             next_id: AtomicI64::new(1),
             pending: Mutex::default(),
             open_docs: Mutex::default(),
@@ -365,8 +341,6 @@ impl ServerHandle {
             config_asked: std::sync::Arc::new(tokio::sync::Notify::new()),
             timings: Mutex::default(),
             messages: std::sync::atomic::AtomicU64::new(0),
-            started: Mutex::default(),
-            log: Mutex::default(),
         }
     }
 
@@ -390,7 +364,7 @@ impl ServerHandle {
     /// Start a prepared server.
     pub fn begin(self: &std::sync::Arc<Self>) {
         self.connect();
-        tokio::spawn(watch(self.clone()));
+        tokio::spawn(tinkerpad_process::supervise::watch(self.clone()));
     }
 
     /// Tell a shared server about one more playground.
@@ -432,10 +406,9 @@ impl ServerHandle {
             p50_us,
             p95_us,
             uptime_ms: self
-                .started
-                .lock()
-                .expect("started lock")
-                .map(|at| at.elapsed().as_millis() as u64)
+                .life
+                .uptime()
+                .map(|up| up.as_millis() as u64)
                 .unwrap_or(0),
         }
     }
@@ -443,16 +416,12 @@ impl ServerHandle {
     /// The server's own last words: stderr lines and `window/logMessage`s,
     /// oldest first, at most [`LOG_LINES`] of them.
     pub fn log(&self) -> Vec<String> {
-        self.log.lock().expect("log lock").iter().cloned().collect()
+        self.life.log()
     }
 
     /// Record one line of what the server said.
     fn note_log(&self, line: String) {
-        let mut log = self.log.lock().expect("log lock");
-        if log.len() == LOG_LINES {
-            log.pop_front();
-        }
-        log.push_back(line);
+        self.life.note_log(line);
     }
 
     /// Where this server's program lives, as resolved when it was configured.
@@ -576,38 +545,16 @@ impl ServerHandle {
     /// Note that the set of open documents changed: the idle clock runs only
     /// while there are none.
     fn docs_changed(&self) {
-        let empty = self.open_docs.lock().expect("open_docs lock").is_empty();
-        let mut idle = self.idle_since.lock().expect("idle lock");
-        if empty {
-            *idle = Some(std::time::Instant::now());
+        if self.open_docs.lock().expect("open_docs lock").is_empty() {
+            self.life.idle();
         } else {
-            *idle = None;
-            self.ever_opened
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    /// How long this server may sit with no documents, if at all.
-    fn idle_limit(&self) -> Option<Duration> {
-        let used = self.ever_opened.load(std::sync::atomic::Ordering::Relaxed);
-        match (self.config.idle_shutdown, used) {
-            // Never used: held to the shorter of the two, so a pre-warmed
-            // language nobody opened doesn't sit there all day.
-            (limit, false) => Some(
-                limit
-                    .unwrap_or(self.config.idle_unused)
-                    .min(self.config.idle_unused),
-            ),
-            (limit, true) => limit,
+            self.life.busy();
         }
     }
 
     /// How long the server has had no documents, if it has none.
     pub fn idle_for(&self) -> Option<Duration> {
-        self.idle_since
-            .lock()
-            .expect("idle lock")
-            .map(|since| since.elapsed())
+        self.life.idle_for()
     }
 
     /// Spawn the process and start talking to it. Used to start the server and
@@ -628,7 +575,7 @@ impl ServerHandle {
         *self.capabilities.lock().expect("capabilities lock") = None;
         *self.timings.lock().expect("timings lock") = Timings::default();
         self.messages.store(0, std::sync::atomic::Ordering::Relaxed);
-        *self.started.lock().expect("started lock") = Some(std::time::Instant::now());
+        self.life.starting_now();
         *self.connection.lock().expect("connection lock") = Some(Connection {
             pid: transport.pid(),
             sender: transport.sender(),
@@ -646,7 +593,7 @@ impl ServerHandle {
     /// tab does when it finds a server the pool had given up on: asking for it
     /// again is a person saying "try once more".
     pub fn restart(self: &std::sync::Arc<Self>) {
-        self.restarts.lock().expect("restarts lock").count = 0;
+        self.life.forget_crashes();
         let running = self
             .connection
             .lock()
@@ -679,32 +626,20 @@ impl ServerHandle {
     /// crashing steadily, in which case something is properly wrong and
     /// restarting it again would only burn the machine.
     fn crashed(self: &std::sync::Arc<Self>, reason: String) {
-        let count = {
-            let mut restarts = self.restarts.lock().expect("restarts lock");
-            let now = std::time::Instant::now();
-            // A server that has been fine for a while and then dies starts
-            // over with a full budget.
-            if restarts
-                .last
-                .is_some_and(|last| now - last > RESTART_WINDOW)
-            {
-                restarts.count = 0;
+        let (wait, count) = match self.life.note_crash() {
+            Crash::Restart { after, count } => (after, count),
+            Crash::GiveUp { count } => {
+                warn!(language = %self.language, crashes = count, "giving up on the language server");
+                self.set_state(ServerState::failed(
+                    format!("it crashed {count} times in a row: {reason}"),
+                    Some(
+                        "Restart it from the status strip when you have fixed the cause."
+                            .to_owned(),
+                    ),
+                ));
+                return;
             }
-            restarts.count += 1;
-            restarts.last = Some(now);
-            restarts.count
         };
-
-        if count > MAX_RESTARTS {
-            warn!(language = %self.language, crashes = count, "giving up on the language server");
-            self.set_state(ServerState::failed(
-                format!("it crashed {count} times in a row: {reason}"),
-                Some("Restart it from the status strip when you have fixed the cause.".to_owned()),
-            ));
-            return;
-        }
-
-        let wait = backoff(self.config.backoff, count);
         warn!(
             language = %self.language,
             crashes = count,
@@ -786,7 +721,7 @@ impl ServerHandle {
 
     /// How many times this server has crashed and been restarted in a row.
     pub fn restarts(&self) -> u32 {
-        self.restarts.lock().expect("restarts lock").count
+        self.life.restarts()
     }
 
     /// The end of the pipe to the server, if it is running.
@@ -803,12 +738,12 @@ impl ServerHandle {
     }
 
     pub fn state(&self) -> ServerState {
-        self.state.borrow().clone()
+        self.life.state()
     }
 
     /// State changes, for the pool to forward to the UI.
     pub fn watch_state(&self) -> watch::Receiver<ServerState> {
-        self.state.subscribe()
+        self.life.watch_state()
     }
 
     /// Everything the server says that wasn't a reply: notifications such as
@@ -1108,7 +1043,7 @@ impl ServerHandle {
         if self.sender().is_none() || matches!(self.state(), ServerState::Stopped { .. }) {
             return;
         }
-        let mut exited = self.state.subscribe();
+        let mut exited = self.life.watch_state();
         self.set_state(ServerState::Stopping);
 
         // A server that is wedged shouldn't hold up the app, so the polite
@@ -1135,14 +1070,7 @@ impl ServerHandle {
     }
 
     fn set_state(&self, state: ServerState) {
-        self.state.send_if_modified(|current| {
-            if *current == state {
-                return false;
-            }
-            debug!(language = %self.language, ?state, "server state");
-            *current = state;
-            true
-        });
+        self.life.set_state(state);
     }
 
     /// Wait until the server can be spoken to.
@@ -1156,7 +1084,7 @@ impl ServerHandle {
             ServerState::Starting | ServerState::Stopping | ServerState::Crashed { .. } => {}
             ServerState::Stopped { .. } => return Err(self.not_running()),
         }
-        let mut states = self.state.subscribe();
+        let mut states = self.life.watch_state();
         let settled = states.wait_for(|state| {
             matches!(
                 state,
@@ -1272,74 +1200,24 @@ async fn handshake(server: std::sync::Arc<ServerHandle>, config: ServerConfig) {
     );
 }
 
-/// Watch one server for as long as it exists: stop it when it has been idle
-/// too long, and sample its memory for the status strip (02-08).
-///
-/// One task per server, not per process, so a restart doesn't lose the clock.
-async fn watch(server: std::sync::Arc<ServerHandle>) {
-    let tick = server.config.watch_tick;
-    let mut system = sysinfo::System::new();
-    let mut last_sample = std::time::Instant::now() - RSS_EVERY;
-
-    loop {
-        tokio::time::sleep(tick).await;
-        // Nobody holds this server any more: the pool dropped it, so there is
-        // nothing left to watch.
-        if std::sync::Arc::strong_count(&server) == 1 {
-            return;
-        }
-        if !server.state().is_ready() {
-            continue;
-        }
-
-        if let Some(limit) = server.idle_limit()
-            && let Some(idle) = server.idle_for()
-            && idle >= limit
-        {
-            info!(
-                language = %server.language(),
-                idle_s = idle.as_secs(),
-                "stopping an idle language server"
-            );
-            // A clean stop, and no toast: nobody asked for this, so nobody
-            // needs to be told. It comes back when a tab wants it.
-            server.stop().await;
-            continue;
-        }
-
-        if last_sample.elapsed() >= RSS_EVERY {
-            last_sample = std::time::Instant::now();
-            let rss = resident_memory(&mut system, server.pid());
-            if let ServerState::Ready {
-                pid, name, version, ..
-            } = server.state()
-            {
-                server.set_state(ServerState::Ready {
-                    pid,
-                    name,
-                    version,
-                    rss_bytes: rss,
-                });
-            }
-        }
+/// A language server is one of the long-lived children the app supervises, and
+/// is watched by the same code that watches plugin helpers (03-02).
+impl Supervised for ServerHandle {
+    fn lifecycle(&self) -> &Lifecycle {
+        &self.life
     }
-}
 
-/// Resident memory of one process, or none if it can't be read.
-fn resident_memory(system: &mut sysinfo::System, pid: u32) -> Option<u64> {
-    if pid == 0 {
-        return None;
+    fn pid(&self) -> u32 {
+        ServerHandle::pid(self)
     }
-    let pid = sysinfo::Pid::from_u32(pid);
-    system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-    system.process(pid).map(|process| process.memory())
-}
 
-/// How long to wait before the nth restart: the base, doubling each time, up
-/// to [`BACKOFF_CAP`]. With the default base that is 1s, 2s, 4s, 8s, 16s, 30s.
-fn backoff(base: Duration, attempt: u32) -> Duration {
-    let doubled = base * 2u32.saturating_pow(attempt.saturating_sub(1));
-    doubled.min(BACKOFF_CAP)
+    fn stop(&self) -> impl std::future::Future<Output = ()> + Send {
+        ServerHandle::stop(self)
+    }
+
+    fn kill(&self) {
+        ServerHandle::kill(self);
+    }
 }
 
 /// Deliver responses to whoever asked, and broadcast the rest.
@@ -1502,17 +1380,5 @@ mod tests {
             json!({ "rust-analyzer": { "linkedProjects": ["a", "b"] } }),
         );
         assert_eq!(nest("flat", json!(1)), json!({ "flat": 1 }));
-    }
-
-    #[test]
-    fn the_wait_doubles_and_then_stops_growing() {
-        let base = BACKOFF_START;
-        let seconds = |attempt| backoff(base, attempt).as_secs();
-        assert_eq!(
-            (1..=8).map(seconds).collect::<Vec<_>>(),
-            [1, 2, 4, 8, 16, 30, 30, 30],
-        );
-        // A test's shorter base scales the same way.
-        assert_eq!(backoff(Duration::from_millis(10), 3).as_millis(), 40);
     }
 }

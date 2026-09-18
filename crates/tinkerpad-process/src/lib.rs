@@ -12,5 +12,6 @@
 
 pub mod platform;
 mod spawn;
+pub mod supervise;
 
 pub use spawn::{Exit, KillHandle, ProcessEvent, SpawnError, SpawnSpec, Supervised, spawn};

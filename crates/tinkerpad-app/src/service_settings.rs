@@ -1,4 +1,5 @@
-//! The `[lsp]` part of `settings.toml` (work item 02-06).
+//! The `[lsp]` and `[helpers]` parts of `settings.toml` (work items 02-06,
+//! 03-02).
 //!
 //! ```toml
 //! [lsp]
@@ -8,7 +9,14 @@
 //! [lsp.rust]
 //! # Overrides the plugin's own `idle_shutdown`.
 //! idle_shutdown = "30m"
+//!
+//! [helpers.csharp]
+//! # The same, for a plugin's warm helper.
+//! idle_shutdown = "never"
 //! ```
+//!
+//! The two sections have the same shape because the two things have the same
+//! life (`tinkerpad_process::supervise`), so one reader serves both.
 //!
 //! Anything wrong in here is a warning, never a failure to launch: a typo in a
 //! duration should cost you the setting, not the app.
@@ -18,9 +26,10 @@ use std::time::Duration;
 
 use tracing::warn;
 
-/// What `settings.toml` says about language servers.
+/// What `settings.toml` says about one kind of long-lived child: language
+/// servers under `[lsp]`, plugin helpers under `[helpers]`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LspSettings {
+pub struct ServiceSettings {
     /// Language ids to start at launch, in order.
     pub prewarm: Vec<String>,
     /// Per language: how long it may sit idle. `None` inside the map is
@@ -32,7 +41,11 @@ pub struct LspSettings {
 /// known set of servers up. Comma-separated language ids.
 pub const PREWARM_ENV: &str = "TINKERPAD_LSP_PREWARM";
 
-impl LspSettings {
+/// The `settings.toml` section a kind of child is configured under.
+pub const LSP: &str = "lsp";
+pub const HELPERS: &str = "helpers";
+
+impl ServiceSettings {
     /// Read `[lsp]` from a settings file, then let [`PREWARM_ENV`] override the
     /// pre-warm list.
     pub fn load(text: &str) -> Self {
@@ -48,8 +61,21 @@ impl LspSettings {
         settings
     }
 
+    /// Read `[helpers]` out of a settings file (03-02). Helpers have no
+    /// pre-warm list: a helper is started by the first run that wants it, and
+    /// a language whose server is pre-warmed usually isn't the one you run
+    /// first.
+    pub fn helpers(text: &str) -> Self {
+        Self::from_section(text, HELPERS)
+    }
+
     /// Read `[lsp]` out of a settings file. A missing section is no settings.
     pub fn from_settings(text: &str) -> Self {
+        Self::from_section(text, LSP)
+    }
+
+    /// Read one section. The two have the same shape.
+    pub fn from_section(text: &str, section: &str) -> Self {
         let table: toml::Table = match toml::from_str(text) {
             Ok(table) => table,
             Err(error) => {
@@ -57,25 +83,25 @@ impl LspSettings {
                 return Self::default();
             }
         };
-        let Some(lsp) = table.get("lsp").and_then(toml::Value::as_table) else {
+        let Some(entries) = table.get(section).and_then(toml::Value::as_table) else {
             return Self::default();
         };
 
         let mut settings = Self::default();
-        for (key, value) in lsp {
+        for (key, value) in entries {
             match (key.as_str(), value) {
                 ("prewarm", toml::Value::Array(languages)) => {
                     for language in languages {
                         match language.as_str() {
                             Some(id) => settings.prewarm.push(id.to_owned()),
-                            None => warn!("[lsp] prewarm should be a list of language ids"),
+                            None => warn!("[{section}] prewarm should be a list of language ids"),
                         }
                     }
                 }
                 ("prewarm", _) => {
-                    warn!(r#"[lsp] prewarm should be a list, e.g. ["typescript"]"#)
+                    warn!(r#"[{section}] prewarm should be a list, e.g. ["typescript"]"#)
                 }
-                // `[lsp.<language>]`, a table of that language's settings.
+                // `[<section>.<language>]`, a table of that language's settings.
                 (language, toml::Value::Table(per_language)) => {
                     for (key, value) in per_language {
                         match key.as_str() {
@@ -87,16 +113,16 @@ impl LspSettings {
                                     None => warn!(
                                         language,
                                         value = raw,
-                                        r#"[lsp.{language}] idle_shutdown should be "never" or a duration like "30m""#
+                                        r#"[{section}.{language}] idle_shutdown should be "never" or a duration like "30m""#
                                     ),
                                 },
                                 None => warn!(language, "idle_shutdown should be a string"),
                             },
-                            other => warn!(language, key = other, "unknown [lsp] setting"),
+                            other => warn!(language, key = other, section, "unknown setting"),
                         }
                     }
                 }
-                (other, _) => warn!(key = other, "unknown [lsp] setting"),
+                (other, _) => warn!(key = other, section, "unknown setting"),
             }
         }
         settings
@@ -136,7 +162,7 @@ mod tests {
 
     #[test]
     fn reads_prewarm_and_per_language_idle() {
-        let settings = LspSettings::from_settings(
+        let settings = ServiceSettings::from_settings(
             r#"
 [lsp]
 prewarm = ["typescript", "rust"]
@@ -167,13 +193,13 @@ idle_shutdown = "never"
 
     #[test]
     fn a_file_without_an_lsp_section_is_no_settings() {
-        let settings = LspSettings::from_settings("[toolchains.csharp]\ndotnet = \"x\"\n");
-        assert_eq!(settings, LspSettings::default());
+        let settings = ServiceSettings::from_settings("[toolchains.csharp]\ndotnet = \"x\"\n");
+        assert_eq!(settings, ServiceSettings::default());
     }
 
     #[test]
     fn nonsense_costs_the_setting_and_nothing_else() {
-        let settings = LspSettings::from_settings(
+        let settings = ServiceSettings::from_settings(
             r#"
 [lsp]
 prewarm = "typescript"

@@ -64,6 +64,14 @@ pub enum CoreEvent {
         root: String,
         state: ServerState,
     },
+    /// A plugin's warm helper changed state (work item 03-02). The same states
+    /// a server has, because it is supervised the same way; the status strip
+    /// shows both.
+    Helper {
+        /// The plugin id, which is also the language id.
+        plugin: crate::LanguageId,
+        state: ServerState,
+    },
     /// Playgrounds were added, removed, renamed, or their metadata changed on
     /// disk. The UI should list them again.
     LibraryChanged,

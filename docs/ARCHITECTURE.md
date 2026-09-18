@@ -42,7 +42,10 @@ core owns all processes).
   Nothing language-specific is linked into `tinkerpad.exe`.
 - **Two pools with the same shape:** `LspPool` for language servers, `HelperPool`
   for plugin helper processes. Both are "keyed map of supervised child processes with
-  a typed channel interface". Share the supervision code; keep the protocols separate
+  a typed channel interface". The supervision itself — state, crash backoff, idle
+  shutdown, memory sampling, the pool, and the stop-everything-at-exit budget — is
+  `tinkerpad_process::supervise`, and each pool supplies only what makes its children
+  that kind of child. Keep the protocols separate
   (LSP is JSON-RPC with Content-Length framing; helpers are JSON lines). A third,
   `DebugAdapterPool`, arrives in Phase 6 on the same code (DAP is Content-Length
   framing with its own message shapes), which is why framing and JSON-RPC routing
@@ -59,7 +62,8 @@ TinkerPad/
 │   ├── tinkerpad-core/           # domain types, events, errors, RichValue. No IO, no tokio.
 │   ├── tinkerpad-plugin/         # plugin.toml schema + loader, discovery, toolchain probes,
 │   │                             # helper protocol client (tinkerpad-plugin-v1)
-│   ├── tinkerpad-process/        # child process supervision, job objects, streaming IO
+│   ├── tinkerpad-process/        # child process supervision, job objects, streaming IO,
+│   │                             # supervise: lifecycle, backoff, idle, the generic Pool
 │   ├── tinkerpad-lsp/            # JSON-RPC transport, LspPool, proxy/rewriting
 │   ├── tinkerpad-runner/         # per-run execution, HelperPool, dump sentinel parsing
 │   ├── tinkerpad-library/        # playground folders on disk, playground.toml, search
@@ -214,7 +218,14 @@ Rules:
   needs. A toast says what happened; diagnostics come back on their own.
 - **Clean shutdown.** `shutdown` request → `exit` notification → wait 2s → kill.
   Done concurrently for all servers on app exit, under a 3s budget for the lot:
-  quitting is never held up by a wedged server.
+  quitting is never held up by a wedged server. Helpers stop at the same time, under
+  a budget of their own, so the two kinds don't queue behind each other.
+
+Every rule in this section holds for plugin helpers too, because it is the same code
+(`tinkerpad_process::supervise`, work item 03-02). Only three things differ: a helper's
+idle clock is held by runs rather than open documents, its settings override lives
+under `[helpers.<id>]` rather than `[lsp.<id>]`, and it may have to be built before
+its first use (§5.1).
 
 ### 4.2 Proxy: why the core sits in the middle
 
@@ -341,8 +352,13 @@ it (cwd = playground dir, `CREATE_NO_WINDOW`, UTF-8 env vars like
 process tree.
 
 **Helper** runners are the plugin's helper process, living in `HelperPool` with the
-same supervision rules as LSP servers (lazy, shared, restart on crash, idle policy).
-Protocol is JSON lines over stdin/stdout; see `PLUGINS.md` §5. The helper is
+same supervision rules as LSP servers (lazy, shared, restart on crash, idle policy) —
+the same code, in fact (`tinkerpad_process::supervise`). A plugin may ship its helper
+as source: `[helper.build]` runs before the first use, and again only when a hash of
+the plugin folder differs from the one recorded in `<app-data>/helpers/<plugin>.build`.
+Build output goes to the helper's log and to whoever is waiting on the build, so a run
+that caused it can show it. Protocol is JSON lines over stdin/stdout; see
+`PLUGINS.md` §5. The helper is
 responsible for isolating runs (new `AssemblyLoadContext`, fresh module scope, etc.)
 and for reporting when it can't (e.g. a run that hangs forever → the core kills and
 respawns the helper). If a plugin declares both `[run]` and `[helper]`, the helper is

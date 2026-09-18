@@ -173,7 +173,7 @@ jobs:
       - name: Language servers (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -188,6 +188,8 @@ jobs:
           grep -q "selftest: PASS Restart brings it back" lsp.log
           grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
+          grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
+          grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
 
       - name: Session restore across two launches (Linux)
         if: runner.os == 'Linux'
@@ -228,7 +230,7 @@ jobs:
       - name: Language servers (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -243,6 +245,8 @@ jobs:
           grep -q "selftest: PASS Restart brings it back" lsp.log
           grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
+          grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
+          grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
 
       - name: Session restore across two launches (macOS)
         if: runner.os == 'macOS'

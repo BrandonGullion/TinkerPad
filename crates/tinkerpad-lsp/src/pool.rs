@@ -6,21 +6,20 @@
 //! process stays up, so the next tab in that language is a `didOpen` and
 //! nothing else. Only [`LspPool::shutdown`] (app exit) stops them.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 use serde_json::Value;
 use tinkerpad_core::{CoreEvent, LanguageId, Level, ServerState};
+use tinkerpad_process::supervise::Pool;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
-
-use crate::server::{RequestError, ServerConfig, ServerHandle, path_to_uri};
+use tracing::{debug, info};
 
 /// The whole of app exit may not take longer than this, however many servers
 /// there are and however wedged they may be.
-pub const SHUTDOWN_BUDGET: Duration = Duration::from_secs(3);
+pub use tinkerpad_process::supervise::SHUTDOWN_BUDGET;
+
+use crate::server::{RequestError, ServerConfig, ServerHandle, path_to_uri};
 
 /// Which server a playground needs: one per language per workspace root, so
 /// two Rust playgrounds under one root share a `rust-analyzer`.
@@ -88,9 +87,13 @@ impl Drop for Attachment {
 }
 
 /// Every language server the app has going.
+///
+/// The holding, sharing, and stopping-at-exit is [`Pool`], which the helper
+/// pool uses too (03-02); what is here is what makes these servers rather than
+/// some other long-lived child.
 #[derive(Debug)]
 pub struct LspPool {
-    servers: Mutex<HashMap<ServerKey, Arc<ServerHandle>>>,
+    servers: Pool<ServerKey, ServerHandle>,
     /// State changes for the UI. The app forwards these to its event bus.
     events: Option<mpsc::UnboundedSender<CoreEvent>>,
 }
@@ -104,7 +107,7 @@ impl Default for LspPool {
 impl LspPool {
     pub fn new(events: Option<mpsc::UnboundedSender<CoreEvent>>) -> Self {
         Self {
-            servers: Mutex::default(),
+            servers: Pool::new(),
             events,
         }
     }
@@ -202,30 +205,35 @@ impl LspPool {
         before_start: impl FnOnce(&Arc<ServerHandle>),
     ) -> (Arc<ServerHandle>, bool) {
         let key = ServerKey::of(config);
-        let mut servers = self.servers.lock().expect("servers lock");
-        if let Some(server) = servers.get(&key) {
-            // A crashed server is already on its way back (02-05), so tabs
-            // share it as usual and their requests wait. One that stopped —
-            // idle, or given up on — starts again, because opening a tab is
-            // someone asking for it.
-            if matches!(
-                server.state(),
-                ServerState::Stopped { .. } | ServerState::Stopping
-            ) {
-                info!(language = %key.language, "starting a server that had stopped");
-                server.restart();
-            } else {
-                debug!(language = %key.language, "sharing the running server");
-            }
-            return (server.clone(), false);
+        let (server, fresh) = self.servers.get_or_make(
+            &key,
+            || {
+                info!(language = %key.language, root = ?key.root, "starting language server");
+                let server = ServerHandle::prepare(config);
+                before_start(&server);
+                server.begin();
+                server
+            },
+            |server| {
+                // A crashed server is already on its way back (02-05), so tabs
+                // share it as usual and their requests wait. One that stopped —
+                // idle, or given up on — starts again, because opening a tab is
+                // someone asking for it.
+                if matches!(
+                    server.state(),
+                    ServerState::Stopped { .. } | ServerState::Stopping
+                ) {
+                    info!(language = %key.language, "starting a server that had stopped");
+                    server.restart();
+                } else {
+                    debug!(language = %key.language, "sharing the running server");
+                }
+            },
+        );
+        if fresh {
+            self.publish(&server);
         }
-        info!(language = %key.language, root = ?key.root, "starting language server");
-        let server = ServerHandle::prepare(config);
-        before_start(&server);
-        server.begin();
-        servers.insert(key, server.clone());
-        self.publish(&server);
-        (server, true)
+        (server, fresh)
     }
 
     /// The server for `config`, started if it isn't already.
@@ -239,26 +247,17 @@ impl LspPool {
             language: language.to_owned(),
             root: root.map(PathBuf::from),
         };
-        self.servers
-            .lock()
-            .expect("servers lock")
-            .get(&key)
-            .cloned()
+        self.servers.get(&key)
     }
 
     /// Every server, for the status strip (02-08).
     pub fn servers(&self) -> Vec<Arc<ServerHandle>> {
-        self.servers
-            .lock()
-            .expect("servers lock")
-            .values()
-            .cloned()
-            .collect()
+        self.servers.all()
     }
 
     /// How many servers the pool holds, running or not.
     pub fn len(&self) -> usize {
-        self.servers.lock().expect("servers lock").len()
+        self.servers.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -269,30 +268,7 @@ impl LspPool {
     /// Never takes longer than [`SHUTDOWN_BUDGET`], however many servers there
     /// are, because app exit waits for it.
     pub async fn shutdown(&self) {
-        let servers = std::mem::take(&mut *self.servers.lock().expect("servers lock"));
-        if servers.is_empty() {
-            return;
-        }
-        let count = servers.len();
-        let started = std::time::Instant::now();
-
-        let mut stopping = tokio::task::JoinSet::new();
-        for server in servers.values() {
-            let server = server.clone();
-            stopping.spawn(async move { server.stop().await });
-        }
-        let all = async { while stopping.join_next().await.is_some() {} };
-        if tokio::time::timeout(SHUTDOWN_BUDGET, all).await.is_err() {
-            warn!("some servers did not stop in time; killing them");
-            for server in servers.values() {
-                server.kill();
-            }
-        }
-        info!(
-            servers = count,
-            ms = started.elapsed().as_millis() as u64,
-            "language servers stopped"
-        );
+        self.servers.shutdown(SHUTDOWN_BUDGET).await;
     }
 
     /// Restart one server now, whatever state it is in. The status strip's
