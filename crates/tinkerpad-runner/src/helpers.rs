@@ -188,6 +188,9 @@ pub struct HelperHandle {
     watching: AtomicBool,
     /// Build output, for whoever is waiting on the build to show it (03-03).
     build_output: broadcast::Sender<String>,
+    /// One run at a time, as the protocol says. Two playgrounds of the same
+    /// language queue here rather than cancelling each other (03-03).
+    run_slot: Arc<Mutex<()>>,
 }
 
 /// Something is using a helper. While one of these is alive the idle clock is
@@ -222,6 +225,7 @@ impl HelperHandle {
             stopping: AtomicBool::new(false),
             watching: AtomicBool::new(false),
             build_output: broadcast::channel(BUILD_LINES).0,
+            run_slot: Arc::new(Mutex::new(())),
         })
     }
 
@@ -372,6 +376,21 @@ impl HelperHandle {
             tokio::spawn(tinkerpad_process::supervise::watch(self.clone()));
         }
         Ok(client)
+    }
+
+    /// Wait for the helper to be free, and hold it for one run.
+    ///
+    /// A helper runs one program at a time (`docs/PLUGINS.md` §5), so a second
+    /// playground's run waits here instead of cancelling the first. Dropping
+    /// the guard lets the next one in.
+    pub async fn take_run_slot(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        Arc::clone(&self.run_slot).lock_owned().await
+    }
+
+    /// Whether something is running on it now, so a caller can say it is
+    /// waiting before it waits.
+    pub fn is_running(&self) -> bool {
+        self.run_slot.try_lock().is_err()
     }
 
     /// Take out a use: while one is held the helper is not idle.

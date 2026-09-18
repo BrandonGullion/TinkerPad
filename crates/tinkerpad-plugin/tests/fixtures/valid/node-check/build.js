@@ -13,6 +13,15 @@ const path = require("path");
 
 const scratch = process.argv[2];
 console.log("building the node-check helper");
+
+// A test can make the build fail — and so make the helper unavailable — by
+// writing something into `break.txt` beside this file, and make it work again
+// by emptying it (work item 03-03).
+const broken = path.join(__dirname, "break.txt");
+if (fs.existsSync(broken) && fs.readFileSync(broken, "utf8").trim() !== "") {
+  console.log("the node-check helper was told to fail its build");
+  process.exit(3);
+}
 if (scratch) {
   fs.mkdirSync(scratch, { recursive: true });
   fs.appendFileSync(path.join(scratch, "builds.txt"), `${new Date().toISOString()}\n`);

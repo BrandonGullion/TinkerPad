@@ -101,7 +101,11 @@ export function createLayout(root: HTMLElement): Layout {
 
 export type RunState =
   | { kind: "idle" }
-  | { kind: "running"; since: number }
+  /** Waiting for a plugin helper: being built, or busy with another
+   * playground's run (work item 03-03). */
+  | { kind: "waiting"; message: string; since: number }
+  /** `warm` when a plugin helper is running it. */
+  | { kind: "running"; since: number; warm?: boolean }
   | { kind: "done"; code: number | null; ms: number }
   | { kind: "cancelled"; ms: number }
   | { kind: "failed" };
@@ -189,14 +193,27 @@ export class StatusBar {
     clearInterval(this.timer);
     this.timer = 0;
     this.run.className = `status-run run-${state.kind}`;
-    this.cancelButton.hidden = state.kind !== "running";
+    this.cancelButton.hidden = state.kind !== "running" && state.kind !== "waiting";
     switch (state.kind) {
       case "idle":
         this.run.textContent = "Ready";
         break;
-      case "running": {
+      case "waiting": {
+        // Still the user's run, so the clock keeps going; it just isn't the
+        // program's time yet.
         const tick = () => {
-          this.run.textContent = `Running ${formatMs(performance.now() - state.since)}`;
+          this.run.textContent = `${state.message} ${formatMs(performance.now() - state.since)}`;
+        };
+        tick();
+        this.timer = window.setInterval(tick, 100);
+        break;
+      }
+      case "running": {
+        // "warm" is the only sign in the whole UI that a helper ran this
+        // rather than a process started for it (work item 03-03).
+        const warm = state.warm ? " · warm" : "";
+        const tick = () => {
+          this.run.textContent = `Running ${formatMs(performance.now() - state.since)}${warm}`;
         };
         tick();
         this.timer = window.setInterval(tick, 100);

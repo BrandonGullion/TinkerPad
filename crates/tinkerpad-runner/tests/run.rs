@@ -37,7 +37,8 @@ async fn console_log_one() {
     let mut saw_started = false;
     let end = loop {
         match handle.recv().await.expect("stream ended early") {
-            RunEvent::Started { pid } => {
+            RunEvent::Started { pid, warm } => {
+                assert!(!warm, "a per-run command is not a warm run");
                 assert!(pid > 0);
                 saw_started = true;
             }
