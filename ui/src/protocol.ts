@@ -29,6 +29,7 @@ export type CoreEvent =
   | ({ type: "run" } & RunEvent)
   | { type: "toolchain"; language: string; state: ToolchainState }
   | { type: "server"; language: string; root: string; state: ServerState }
+  | { type: "helper"; plugin: string; state: ServerState }
   | { type: "libraryChanged" }
   | { type: "sourceChangedOnDisk"; playground: string };
 
@@ -68,6 +69,22 @@ export type ServerState =
     }
   | { kind: "crashed"; reason: string; restarts: number }
   | { kind: "stopping" };
+
+/** One plugin helper, as the status strip shows it (work item 03-02). */
+export interface HelperStatus {
+  /** The plugin id, which is also the language id. */
+  plugin: string;
+  name: string;
+  state: ServerState;
+  uptimeMs: number;
+  restarts: number;
+  /** Runs and hooks using it right now; the idle clock runs at zero. */
+  uses: number;
+  /** How long it has had nothing to do, if it has nothing to do. */
+  idleMs: number | null;
+  program: string;
+  installHint: string | null;
+}
 
 /** One language server, as the status strip shows it (02-08). */
 export interface ServerStatus {

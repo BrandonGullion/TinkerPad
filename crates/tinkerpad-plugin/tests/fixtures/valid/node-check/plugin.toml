@@ -39,3 +39,16 @@ idle_shutdown = "never"
 [run]
 command = "{toolchain}"
 args = ["{main}"]
+
+[helper]
+# A warm runner in helper.js, so the self-tests have one on every machine (and
+# in CI) without installing anything. Built on first use by build.js, which
+# stands in for a real compile step.
+command = "node"
+args = ["{plugin_dir}/helper.js"]
+hooks = ["run"]
+idle_shutdown = "never"
+
+[helper.build]
+command = "node"
+args = ["{plugin_dir}/build.js", "{scratch}"]

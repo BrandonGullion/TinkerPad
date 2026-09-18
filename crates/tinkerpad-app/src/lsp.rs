@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 
 use crate::AppState;
 use crate::events::EventBus;
-use crate::lsp_settings::LspSettings;
+use crate::service_settings::ServiceSettings;
 
 /// One language server, as the status strip sees it (work item 02-08).
 #[derive(Debug, serde::Serialize)]
@@ -164,7 +164,7 @@ pub async fn open(
         &resolver,
         state.library.root(),
         &state.scratch_root(),
-        &state.lsp_settings,
+        &state.service_settings,
     )?;
     // The editor's own client opens the document; the pool only has to have
     // the server running (02-04). A shared server is told which project this
@@ -194,7 +194,7 @@ fn config(
     resolver: &Resolver,
     library_root: &std::path::Path,
     scratch_root: &std::path::Path,
-    settings: &LspSettings,
+    settings: &ServiceSettings,
 ) -> Result<ServerConfig, CommandError> {
     let lsp = plugin.lsp.as_ref().ok_or_else(|| {
         CommandError::new(
@@ -379,7 +379,7 @@ fn write_workspace_files(plugin: &Plugin, root: &std::path::Path) {
 /// (one whose server lives in each playground's folder) or isn't installed is
 /// logged and skipped.
 pub fn prewarm(state: &AppState) {
-    let languages = state.lsp_settings.prewarm.clone();
+    let languages = state.service_settings.prewarm.clone();
     if languages.is_empty() {
         return;
     }
@@ -399,7 +399,7 @@ pub fn prewarm(state: &AppState) {
             &resolver,
             &library_root,
             &scratch_root,
-            &state.lsp_settings,
+            &state.service_settings,
         ) {
             Ok(config) => {
                 tracing::info!(language, "pre-warming a language server");

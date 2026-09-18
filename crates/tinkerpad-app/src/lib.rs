@@ -9,15 +9,16 @@
 //! publishing on the [`EventBus`].
 
 pub mod events;
+mod helpers;
 mod library;
 mod logging;
 mod lsp;
-mod lsp_settings;
 mod packages;
 mod peek;
 mod playgrounds;
 mod plugins;
 mod runs;
+mod service_settings;
 mod session;
 mod settings;
 mod toolchains;
@@ -56,8 +57,13 @@ pub struct AppState {
     /// The editor's side of those servers: one channel per tab, URIs and
     /// request ids translated in both directions (02-03).
     proxy: Arc<tinkerpad_lsp::Proxy>,
+    /// Plugin helpers, kept warm between runs (work item 03-02). Empty until
+    /// a run or a hook wants one (03-03, 03-07).
+    helpers: Arc<tinkerpad_runner::HelperPool>,
     /// `[lsp]` from settings.toml: pre-warmed languages and idle overrides.
-    lsp_settings: lsp_settings::LspSettings,
+    service_settings: service_settings::ServiceSettings,
+    /// `[helpers]` from settings.toml: per-plugin idle overrides.
+    helper_settings: service_settings::ServiceSettings,
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
     library: Arc<Library>,
@@ -389,6 +395,55 @@ mod commands {
         crate::lsp::server_log(&state, &language, root.as_deref().map(std::path::Path::new))
     }
 
+    /// Every plugin helper the pool holds, running or not (03-02).
+    #[tauri::command]
+    pub fn helper_status(state: State<'_, AppState>) -> Vec<crate::helpers::HelperStatus> {
+        crate::helpers::status(&state)
+    }
+
+    /// What one helper has written, its build output included, oldest first.
+    #[tauri::command]
+    pub fn helper_log(state: State<'_, AppState>, plugin: String) -> Vec<String> {
+        crate::helpers::log(&state, &plugin)
+    }
+
+    /// Stop a plugin's helper. It comes back when the next run wants it.
+    #[tauri::command(async)]
+    pub async fn stop_helper(
+        state: State<'_, AppState>,
+        plugin: String,
+    ) -> Result<bool, CommandError> {
+        Ok(state.helpers.stop(&plugin).await)
+    }
+
+    /// Start a plugin's helper again now, however it is: the Restart button,
+    /// and the way back from one the pool has given up on.
+    #[tauri::command(async)]
+    pub async fn restart_helper(
+        state: State<'_, AppState>,
+        plugin: String,
+    ) -> Result<bool, CommandError> {
+        Ok(state.helpers.restart(&plugin))
+    }
+
+    /// Start a plugin's helper now, building it first if it ships as source.
+    /// The run path will do this for itself in 03-03; this is how the status
+    /// strip and the self-tests ask for one.
+    #[tauri::command(async)]
+    pub async fn start_helper(
+        state: State<'_, AppState>,
+        plugin: String,
+    ) -> Result<bool, CommandError> {
+        let config = crate::helpers::config_for(&state, &plugin)?;
+        match state.helpers.get(&config).await {
+            Ok(_) => Ok(true),
+            Err(e) => Err(CommandError::new(
+                tinkerpad_core::ErrorCode::Io,
+                e.to_string(),
+            )),
+        }
+    }
+
     /// Stop a language server. It stays stopped until a tab wants it again, or
     /// the Restart button is pressed.
     #[tauri::command(async)]
@@ -605,9 +660,11 @@ pub fn run() {
             let runs = Runs::new(bus.clone(), data_dir.join("scratch"), toolchains.clone());
             let lsp = lsp::pool(bus.clone());
             let proxy = lsp::proxy(bus.clone());
-            let lsp_settings = lsp_settings::LspSettings::load(
-                &std::fs::read_to_string(settings::path(&data_dir)).unwrap_or_default(),
-            );
+            let settings_text =
+                std::fs::read_to_string(settings::path(&data_dir)).unwrap_or_default();
+            let service_settings = service_settings::ServiceSettings::load(&settings_text);
+            let helper_settings = service_settings::ServiceSettings::helpers(&settings_text);
+            let helpers = helpers::pool(bus.clone());
             app.manage(AppState {
                 events: bus,
                 runs,
@@ -616,7 +673,9 @@ pub fn run() {
                 toolchains,
                 lsp,
                 proxy,
-                lsp_settings,
+                helpers,
+                service_settings,
+                helper_settings,
                 plugins: RwLock::new(registry),
                 library: playgrounds,
                 _library_watcher: Mutex::new(library_watcher),
@@ -649,6 +708,11 @@ pub fn run() {
             commands::lsp_close,
             commands::restart_server,
             commands::server_status,
+            commands::helper_status,
+            commands::helper_log,
+            commands::stop_helper,
+            commands::restart_helper,
+            commands::start_helper,
             commands::server_log,
             commands::stop_server,
             commands::dump_examples,
@@ -667,8 +731,13 @@ pub fn run() {
             // at once, and is killed if it doesn't go. The pool caps the whole
             // thing at three seconds, so quitting is never held up (02-02).
             if matches!(event, tauri::RunEvent::Exit) {
-                let pool = app.state::<AppState>().lsp.clone();
-                tauri::async_runtime::block_on(pool.shutdown());
+                let state = app.state::<AppState>();
+                let (servers, helpers) = (state.lsp.clone(), state.helpers.clone());
+                // Both kinds of child stop together, and neither waits for the
+                // other: the budget is for all of them at once (03-02).
+                tauri::async_runtime::block_on(async move {
+                    tokio::join!(servers.shutdown(), helpers.shutdown());
+                });
             }
         });
 }

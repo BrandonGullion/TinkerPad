@@ -2285,6 +2285,13 @@ interface ServerStatus {
   state: { kind: string; pid?: number; rssBytes?: number | null; reason?: string | null };
 }
 
+/** The same, for a plugin's warm helper (work item 03-02). */
+interface HelperStatus {
+  plugin: string;
+  uses: number;
+  state: { kind: string; pid?: number; name?: string | null; reason?: string | null };
+}
+
 /**
  * Pinned language servers start at launch, before any tab is open (02-06).
  *
@@ -2475,7 +2482,7 @@ async function serversScenario(ctx: SelftestContext, check: Check) {
   const { tabs } = ctx;
   const chips = () => [...document.querySelectorAll<HTMLElement>(".server-chip")];
   const chipFor = (language: string) =>
-    chips().find((chip) => (chip.dataset.key ?? "").startsWith(`${language}|`));
+    chips().find((chip) => (chip.dataset.key ?? "").startsWith(`server|${language}|`));
   const popover = () => document.querySelector<HTMLElement>(".server-popover");
 
   /** The popover stays open between actions, so only open it if it is shut. */
@@ -2726,10 +2733,126 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "lsp-typescript": lspTypescriptScenario,
   prewarm: prewarmScenario,
   servers: serversScenario,
+  helpers: helpersScenario,
   definition: definitionScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
 };
+
+/**
+ * Plugin helpers: built when their source changes, warm in between, and shown
+ * in the status strip (work item 03-02).
+ *
+ * The test plugin ships a helper in `helper.js` and a stand-in build step in
+ * `build.js`, which says what it is doing on stdout. Whether the helper has
+ * been built on this machine before is not something a test can assume, so
+ * this touches the plugin folder to make a build due, and then checks that the
+ * next start after that doesn't build it again.
+ */
+async function helpersScenario(ctx: SelftestContext, check: Check) {
+  const { tabs } = ctx;
+  const chips = () => [...document.querySelectorAll<HTMLElement>(".server-chip")];
+  const chip = () => chips().find((c) => (c.dataset.key ?? "").startsWith("helper|node-check|"));
+  const popover = () => document.querySelector<HTMLElement>(".server-popover");
+  const openPopover = async () => {
+    if (popover() === null) chip()?.click();
+    await frame();
+  };
+  const status = async () =>
+    (await invoke<HelperStatus[]>("helper_status")).find((h) => h.plugin === "node-check");
+  const log = async () => invoke<string[]>("helper_log", { plugin: "node-check" });
+  const builds = async () =>
+    (await log()).filter((line) => line.startsWith("Building the node-check helper")).length;
+  const start = async () => invoke<boolean>("start_helper", { plugin: "node-check" });
+  const stop = async () => invoke<boolean>("stop_helper", { plugin: "node-check" });
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  // A tab open in the language, so a stopped helper still gets a chip.
+  const playground = await openTestPlayground(ctx, "Helpers Test");
+
+  // Starting one is the run path's job in 03-03; here the command stands in.
+  const started = await start().catch((e: unknown) => String(e));
+  await check("a helper starts on demand", started === true, String(started));
+
+  const ready = await until(() => chip()?.dataset.state === "ready", 30_000);
+  await check(
+    "and shows up in the status strip as a chip of its own",
+    ready && (chip()?.textContent ?? "").includes("helper"),
+    `${chip()?.dataset.key ?? "gone"}: ${chip()?.textContent ?? ""}`,
+  );
+
+  const first = await status();
+  await check(
+    "the core knows what it is: a process, a name, and nothing using it",
+    first?.state.kind === "ready" &&
+      (first.state.pid ?? 0) > 0 &&
+      first.state.name === "node-check-helper" &&
+      first.uses === 0,
+    JSON.stringify(first?.state),
+  );
+
+  // Its details are the ones worth having.
+  await openPopover();
+  const facts = [...(popover()?.querySelectorAll("dt") ?? [])].map((dt) => dt.textContent);
+  await check(
+    "its popover shows what it is doing",
+    facts.includes("Process") && facts.includes("Running") && facts.includes("Idle"),
+    JSON.stringify(facts),
+  );
+
+  // Change the helper's source, and the next start builds it.
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const dir = plugins.plugins.find((p) => p.id === "node-check")?.dir ?? "";
+  const before = await builds();
+  await invoke("selftest_write_file", {
+    path: `${dir}/selftest-touch.txt`,
+    text: `${Date.now()}\n`,
+  });
+  await stop();
+  await start();
+  const after = await log();
+  const rebuilt = after.filter((l) => l.startsWith("Building the node-check helper")).length;
+  await check(
+    "changing the helper's source builds it again, with its output kept",
+    rebuilt === before + 1 &&
+      after.some((line) => line.includes("building the node-check helper")) &&
+      after.some((line) => line.startsWith("Built the node-check helper in")),
+    JSON.stringify(after.slice(-4)),
+  );
+
+  // Starting it again doesn't: nothing has changed since.
+  await stop();
+  await start();
+  await check("and starting it again doesn't rebuild it", (await builds()) === rebuilt, `${rebuilt} builds`);
+
+  // Stop and Restart, the two things worth doing from the strip.
+  await until(() => chip()?.dataset.state === "ready", 30_000);
+  await openPopover();
+  const action = (label: string) =>
+    [...(popover()?.querySelectorAll<HTMLElement>(".server-action") ?? [])].find(
+      (button) => button.textContent === label,
+    );
+  const wasPid = (await status())?.state.pid ?? 0;
+  action("Stop")?.click();
+  const stopped = await until(() => chip()?.dataset.state === "stopped", 30_000);
+  await check("Stop stops it", stopped, chip()?.dataset.state ?? "gone");
+
+  await openPopover();
+  action("Restart")?.click();
+  const back = await until(() => chip()?.dataset.state === "ready", 30_000);
+  const second = await status();
+  await check(
+    "Restart brings it back as a new process",
+    back && (second?.state.pid ?? 0) > 0 && second?.state.pid !== wasPid,
+    JSON.stringify(second?.state),
+  );
+
+  // Leave a chip and its popover on screen for a screenshot.
+  await openPopover();
+  await report("INFO shot-ready");
+
+  await invoke("delete_playground", { id: playground.id }).catch(() => {});
+}
 
 async function pluginsScenario(_ctx: SelftestContext, check: Check) {
   const status = await invoke<PluginsStatus>("list_plugins");

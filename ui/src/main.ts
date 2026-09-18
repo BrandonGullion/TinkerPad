@@ -166,6 +166,7 @@ subscribe((env) => {
       runs.handle(env);
       break;
     case "server":
+    case "helper":
       statusBar.servers.changed();
       break;
     case "libraryChanged":
