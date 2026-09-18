@@ -4025,6 +4025,8 @@ dependencies = [
 name = "tinkerpad-plugin"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "bytes",
  "regex",
  "serde",
  "serde_json",

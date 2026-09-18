@@ -59,7 +59,7 @@ time passes, or by a later item); the item file says why each one is open.
 
 ## Phase 3 — Plugin helpers and warm runners
 
-- [ ] [03-01 Helper protocol and fake helper](phase-3-helpers/03-01-helper-protocol.md) · M
+- [x] [03-01 Helper protocol and fake helper](phase-3-helpers/03-01-helper-protocol.md) · M
 - [ ] [03-02 Helper pool and build-on-first-use](phase-3-helpers/03-02-helper-pool.md) · M
 - [ ] [03-03 Helper-run path with fallback](phase-3-helpers/03-03-helper-run.md) · S
 - [ ] [03-04 Python plugin and reference helper](phase-3-helpers/03-04-python-plugin.md) · M

@@ -12,6 +12,7 @@
 
 pub mod env;
 mod error;
+pub mod helper;
 mod manifest;
 mod os;
 pub mod placeholders;
@@ -22,6 +23,10 @@ mod suggest;
 pub mod toolchain;
 
 pub use error::{Location, ManifestError, Problem, ProblemKind, Syntax, Unknown};
+pub use helper::{
+    HelperClient, HelperError, HelperEvent, HelperRun, HelperStart, HookRequest, HookResult,
+    RunRequest,
+};
 pub use os::Os;
 pub use plugin::{
     CommandSpec, DepsSpec, HelperSpec, IdleShutdown, Kind, LspSpec, MANIFEST_FILE, OutputSpec,
