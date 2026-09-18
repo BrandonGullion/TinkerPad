@@ -437,6 +437,8 @@ Tabs (`ui/src/tabs.ts`, work item 01-12):
   | `F2` or double-click | Rename. |
   | `F8`, `Shift+F8` | Go to the next or previous error or warning — from the last run (01-13) or from the language server (02-04). |
   | `Mod+K Mod+I` | Hover documentation at the cursor (02-04). |
+  | `F12`, `Mod`+click | Go to definition; `Mod+F12` for the type (02-09). |
+  | `Alt+Left` | Back to where the last jump started. |
   | `Tab`, `Enter` | Accept the highlighted completion. |
 
 - Names, languages, and kinds always come from the library listing, never from

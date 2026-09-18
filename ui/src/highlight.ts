@@ -47,6 +47,23 @@ export function highlighters(): string[] {
   return Object.keys(LANGUAGES).sort();
 }
 
+/** File extensions, for a file with no plugin behind it (peek tabs, 02-09). */
+const BY_EXTENSION: Record<string, string> = {
+  ts: "typescript", mts: "typescript", cts: "typescript", tsx: "typescript",
+  js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "jsx",
+  rs: "rust", py: "python", go: "go", json: "json", jsonc: "json",
+  md: "markdown", markdown: "markdown", sql: "sql", yaml: "yaml", yml: "yaml",
+  toml: "toml", c: "cpp", h: "cpp", cc: "cpp", cpp: "cpp", hpp: "cpp",
+  java: "java", cs: "csharp", kt: "kotlin", kts: "kotlin", scala: "scala",
+  sh: "shell", bash: "shell", zsh: "shell", lua: "lua", swift: "swift",
+  rb: "ruby",
+};
+
+/** The highlighter for a file extension, without the dot. */
+export function highlighterFor(extension: string): Promise<Extension | null> {
+  return highlighter(BY_EXTENSION[extension.toLowerCase().replace(/^./, "")]);
+}
+
 const loaded = new Map<string, Promise<Extension | null>>();
 
 /**

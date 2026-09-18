@@ -22,7 +22,7 @@ import { LOCKED_HINT, MISMATCH_NOTE, openPlayground } from "./playground";
 import type { OutputPane } from "./output";
 import type { LanguageToolchain, Listing, Playground, PluginsStatus, RunEvent, Session } from "./protocol";
 import type { RunController } from "./run";
-import type { TabManager } from "./tabs";
+import { MAX_PEEKS, type TabManager } from "./tabs";
 
 export interface SelftestContext {
   editor: Editor;
@@ -38,7 +38,7 @@ export interface SelftestContext {
 const isMac = navigator.platform.toLowerCase().includes("mac");
 
 /** A keydown as the user would press it, with Mod mapped per platform. */
-function key(k: string, mods: { mod?: boolean; shift?: boolean } = {}): KeyboardEvent {
+function key(k: string, mods: { mod?: boolean; shift?: boolean; alt?: boolean } = {}): KeyboardEvent {
   return new KeyboardEvent("keydown", {
     key: k,
     bubbles: true,
@@ -46,6 +46,7 @@ function key(k: string, mods: { mod?: boolean; shift?: boolean } = {}): Keyboard
     ctrlKey: !isMac && !!mods.mod,
     metaKey: isMac && !!mods.mod,
     shiftKey: !!mods.shift,
+    altKey: !!mods.alt,
   });
 }
 
@@ -2120,6 +2121,41 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify({ cursor: line, diagnostics: markedLines }),
   );
 
+  // F12 into the standard library: a definition in a file that is nobody's
+  // playground, opened read-only (02-09). Needs rust-src, which rustup
+  // installs by default but a slim toolchain may not have.
+  view.dispatch({
+    changes: {
+      from: 0,
+      to: view.state.doc.length,
+      insert: ["fn main() {", "    let s = String::new();", "    let _ = s;", "}", ""].join("\n"),
+    },
+    // On `Stri` of `String::new()`, which is where a person would press F12.
+    selection: { anchor: ["fn main() {", "    let s = Stri"].join("\n").length },
+  });
+  runScopeHandlers(view, key("F12"), "editor");
+  const jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 60_000);
+  const landed = tabs.tabs.find((t) => t.peek)?.peek?.path ?? "";
+  if (jumped) {
+    await check(
+      "F12 opens the standard library source read-only",
+      landed.endsWith(".rs") && landed.includes("library"),
+      landed,
+    );
+    await tabs.close(tabs.activeTab!);
+    ctx.handleGlobalKey(key("ArrowLeft", { alt: true }));
+    await frame();
+  } else {
+    await report("INFO no definition for String::new; rust-src may be missing");
+  }
+
+  // Back to something worth completing after that excursion.
+  const completable = ["fn main() {", "    let s = String::new();", "    s.", "}", ""].join("\n");
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: completable },
+    selection: { anchor: completable.indexOf("    s.") + "    s.".length },
+  });
+
   // A restart under a live tab: the documents are opened again by the core
   // (02-05), so the editor carries on without touching anything itself.
   const rustServer = (await invoke<ServerStatus[]>("server_status")).find(
@@ -2407,6 +2443,25 @@ async function lspTypescriptScenario(ctx: SelftestContext, check: Check) {
   );
   closeCompletion(view);
 
+  // F12 into the TypeScript that ships with the server: a definition in
+  // someone else's file, opened read-only (02-09).
+  view.dispatch({
+    changes: {
+      from: 0,
+      to: view.state.doc.length,
+      insert: "const names: string[] = [];\nnames.map;\n",
+    },
+    selection: { anchor: "const names: string[] = [];\nnames.m".length },
+  });
+  runScopeHandlers(view, key("F12"), "editor");
+  const jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 60_000);
+  const landed = tabs.tabs.find((t) => t.peek)?.peek?.path ?? "";
+  await check(
+    "F12 opens the TypeScript typings read-only",
+    jumped && landed.endsWith(".d.ts"),
+    landed,
+  );
+
   await tabs.close(tab);
   try {
     await invoke("delete_playground", { id: playground.id });
@@ -2517,6 +2572,128 @@ async function serversScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: playground.id }).catch(() => {});
 }
 
+/**
+ * Go to definition, and the read-only tabs it opens (02-09).
+ *
+ * The test plugin's server answers definitions by a rule the source can ask
+ * for: a line saying "away" points at the server's own file, "many" gives two
+ * places to choose from, and anything else points at the top of the same
+ * document.
+ */
+async function definitionScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs } = ctx;
+  const view = editor.view;
+  const peeks = () => tabs.tabs.filter((tab) => tab.peek);
+  const source = [
+    "const first = 1;",
+    "const here = first;",
+    "const away = first;",
+    "const many = first;",
+    "",
+  ].join("\n");
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const playground = await openTestPlayground(ctx, "Definition Test");
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: source } });
+  const tab = tabs.activeTab!;
+  const connected = await until(() => tab.lsp !== null, 60_000);
+  if (!connected) {
+    await report("INFO the test server did not connect; skipping");
+    return;
+  }
+
+  // A definition in this file moves the cursor, and Alt+Left comes back.
+  const at = (line: number, col: number) => view.state.doc.line(line).from + col;
+  view.dispatch({ selection: { anchor: at(2, 8) } });
+  runScopeHandlers(view, key("F12"), "editor");
+  const moved = await until(
+    () => view.state.doc.lineAt(view.state.selection.main.head).number === 1,
+    30_000,
+  );
+  await check(
+    "F12 goes to a definition in the same file",
+    moved,
+    `line ${view.state.doc.lineAt(view.state.selection.main.head).number}`,
+  );
+
+  ctx.handleGlobalKey(key("ArrowLeft", { alt: true }));
+  const back = await until(
+    () => view.state.doc.lineAt(view.state.selection.main.head).number === 2,
+    10_000,
+  );
+  await check(
+    "Alt+Left comes back to where the jump started",
+    back,
+    `line ${view.state.doc.lineAt(view.state.selection.main.head).number}`,
+  );
+
+  // A definition in someone else's file opens read-only.
+  view.dispatch({ selection: { anchor: at(3, 8) } });
+  runScopeHandlers(view, key("F12"), "editor");
+  const opened = await until(() => peeks().length === 1, 30_000);
+  const peek = peeks()[0];
+  await check(
+    "a definition in another file opens a read-only tab",
+    opened && (peek?.peek?.path ?? "").endsWith("server.js"),
+    peek?.peek?.path ?? "none",
+  );
+  await check(
+    "which shows the file, locked, and is not a playground",
+    view.state.readOnly &&
+      (peek?.element.querySelector(".tab-lang")?.textContent ?? "") === "🔒" &&
+      view.state.doc.toString().includes("language server for the self-tests"),
+    view.state.doc.line(1).text.slice(0, 60),
+  );
+  await check(
+    "and the run command has nothing to run there",
+    tabs.activePlayground() === null,
+    String(tabs.activePlayground()),
+  );
+
+  // Back to the playground, then a definition with two answers.
+  ctx.handleGlobalKey(key("ArrowLeft", { alt: true }));
+  await until(() => tabs.activeId === playground.id, 10_000);
+  view.dispatch({ selection: { anchor: at(4, 8) } });
+  runScopeHandlers(view, key("F12"), "editor");
+  const asked = await until(() => document.querySelector(".picker") !== null, 30_000);
+  const options = [...document.querySelectorAll(".picker-item")].map((i) => i.textContent ?? "");
+  await check("two definitions are offered as a list", asked && options.length === 2, JSON.stringify(options));
+  await choosePicked("server.js");
+  const chose = await until(() => tabs.activeTab?.peek !== undefined, 30_000);
+  await check("choosing one opens it", chose, tabs.activeTab?.peek?.title ?? "none");
+
+  // Ten is enough of them.
+  const dir = `${tabs.summary(playground.id)?.dir ?? ""}/peeks`;
+  for (let n = 0; n < MAX_PEEKS + 2; n++) {
+    const file = `${dir}/file-${n}.txt`;
+    await invoke("selftest_write_file", { path: file, text: `file number ${n}\n` });
+    await tabs.openReadOnly(file);
+  }
+  await check(
+    "at most ten read-only tabs are kept",
+    peeks().length === MAX_PEEKS,
+    `${peeks().length}`,
+  );
+  await check(
+    "and the oldest are the ones that went",
+    peeks().every((p) => !(p.peek?.path ?? "").endsWith("server.js")),
+    JSON.stringify(peeks().map((p) => p.peek?.title)),
+  );
+
+  // A file too big to show says so instead of freezing the editor.
+  const huge = `${dir}/huge.txt`;
+  await invoke("selftest_write_file", { path: huge, text: "x".repeat(5 * 1024 * 1024) });
+  await tabs.openReadOnly(huge);
+  await check(
+    "a file too large to open says so",
+    view.state.doc.toString().includes("more than TinkerPad will open"),
+    view.state.doc.line(3).text.slice(0, 60),
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: playground.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -2549,6 +2726,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "lsp-typescript": lspTypescriptScenario,
   prewarm: prewarmScenario,
   servers: serversScenario,
+  definition: definitionScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
 };

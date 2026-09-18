@@ -100,6 +100,7 @@ class TauriTransport implements Transport {
 export async function connect(
   playground: string,
   languageId: string,
+  extras: Extension = [],
 ): Promise<LspSession | null> {
   const transport = new TauriTransport(playground);
   let uri: string;
@@ -127,7 +128,13 @@ export async function connect(
     uri,
     // The client's own extensions bring completion, hover on the mouse,
     // signature help, and diagnostics; the rest is this app's keyboard.
-    extensions: [client.plugin(uri, languageId), lintGutter(), hoverKeymap, acceptWithTab],
+    extensions: [
+      client.plugin(uri, languageId),
+      lintGutter(),
+      hoverKeymap,
+      acceptWithTab,
+      extras,
+    ],
     async close() {
       transport.stop();
       client.disconnect();
@@ -238,10 +245,11 @@ export async function languageExtensions(
   playground: string,
   highlighterName: string | null,
   hasServer: boolean,
+  extras: Extension = [],
 ): Promise<{ extensions: Extension; session: LspSession | null }> {
   const [syntax, session] = await Promise.all([
     highlighter(highlighterName),
-    hasServer ? connect(playground, highlighterName ?? "plaintext") : Promise.resolve(null),
+    hasServer ? connect(playground, highlighterName ?? "plaintext", extras) : Promise.resolve(null),
   ]);
   return {
     extensions: [syntax ?? [], session?.extensions ?? []],

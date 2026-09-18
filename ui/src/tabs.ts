@@ -8,9 +8,10 @@
 // The core is the source of truth for playground metadata: names, languages,
 // and kinds are read from the library listing, never kept per tab.
 
-import { Compartment, type EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
+import { definitionKeymap } from "./definition";
 import { annotationsExtension, annotationsOf, type EditorAnnotation, setAnnotations } from "./annotations";
 
 import type { Editor } from "./editor";
@@ -27,6 +28,7 @@ import type {
   AddPackage,
   Annotation,
   Listing,
+  Peek,
   Playground,
   PlaygroundSummary,
   PluginsStatus,
@@ -81,7 +83,24 @@ export interface Tab {
   lsp: LspSession | null;
   /// Set while the connection is being made, so closing the tab can wait.
   connecting: Promise<void> | null;
+  /// A file that isn't a playground, opened read-only (work item 02-09).
+  /// Set on peek tabs and undefined on every other kind.
+  peek?: PeekTab;
 }
+
+/** What a peek tab is showing. */
+export interface PeekTab {
+  /** The file on disk. */
+  path: string;
+  /** What the tab strip calls it: `folder/file.rs`. */
+  title: string;
+  /** Bytes on disk, and whether that was too many to load. */
+  bytes: number;
+  tooLarge: boolean;
+}
+
+/** How many read-only tabs are kept before the oldest is closed. */
+export const MAX_PEEKS = 10;
 
 export class TabManager implements RunHost {
   readonly tabs: Tab[] = [];
@@ -140,7 +159,8 @@ export class TabManager implements RunHost {
   // ---- RunHost -------------------------------------------------------------
 
   activePlayground(): string | null {
-    return this.activeId;
+    // A read-only file is not a playground, so there is nothing to run (02-09).
+    return this.active?.peek ? null : this.activeId;
   }
 
   outputFor(playground: string): OutputPane | null {
@@ -296,7 +316,7 @@ export class TabManager implements RunHost {
   async libraryChanged(): Promise<void> {
     await this.refreshListing();
     for (const tab of [...this.tabs]) {
-      if (this.listing.has(tab.id)) continue;
+      if (tab.peek || this.listing.has(tab.id)) continue;
       toast("warning", "A playground that was open was removed from the library, so its tab was closed.");
       await this.close(tab, { save: false });
     }
@@ -354,6 +374,85 @@ export class TabManager implements RunHost {
     return opened;
   }
 
+  /**
+   * Open a file that isn't a playground, read-only: a dependency's source, a
+   * generated file, later a stack frame (work item 02-09, DEBUGGING.md D15).
+   *
+   * The tab has no playground behind it, so nothing saves, runs, or attaches a
+   * language server to it; closing it costs nothing. Ten of them is plenty, and
+   * the oldest goes when an eleventh arrives.
+   */
+  async openReadOnly(path: string, line?: number, col?: number): Promise<Tab | null> {
+    const existing = this.tabs.find((tab) => tab.peek?.path === path);
+    if (existing) {
+      this.activate(existing);
+      if (line) this.goTo(line, col ?? null);
+      return existing;
+    }
+
+    let peek: Peek;
+    try {
+      peek = await invoke<Peek>("open_readonly", { path });
+    } catch {
+      return null;
+    }
+
+    // Room for one more.
+    const peeks = this.tabs.filter((tab) => tab.peek);
+    for (const old of peeks.slice(0, Math.max(0, peeks.length - (MAX_PEEKS - 1)))) {
+      await this.close(old, { save: false });
+    }
+
+    const element = document.createElement("div");
+    const tab: Tab = {
+      id: `peek:${path}`,
+      element,
+      output: new OutputPane(() => this.ui.editor.focus()),
+      state: this.ui.editor.createState(""),
+      savedText: peek.text,
+      dirty: false,
+      conflict: false,
+      scrollTop: 0,
+      note: null,
+      opened: { prelude: null, postlude: null, lock: "none" },
+      saveTimer: 0,
+      saving: null,
+      language: new Compartment(),
+      lsp: null,
+      connecting: null,
+      peek: {
+        path: peek.path,
+        title: peek.title,
+        bytes: peek.bytes,
+        tooLarge: peek.tooLarge,
+      },
+    };
+
+    const text = peek.tooLarge
+      ? `${peek.path}\n\nThis file is ${Math.round(peek.bytes / (1024 * 1024))} MB, which is more than TinkerPad will open for reading. Open it in your editor instead.\n`
+      : peek.text;
+    tab.state = this.ui.editor.createState(text, [
+      // Read-only, and visibly so: this is someone else's file.
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      tab.language.of([]),
+    ]);
+
+    this.buildTabElement(tab);
+    this.tabs.push(tab);
+    this.ui.tabStrip.replaceChildren(...this.tabs.map((t) => t.element), this.newButton);
+    this.renderTab(tab);
+    this.activate(tab);
+    if (line && !peek.tooLarge) this.goTo(line, col ?? null);
+
+    // The highlighter comes from the extension, since there is no plugin.
+    void import("./highlight").then(async ({ highlighterFor }) => {
+      const syntax = await highlighterFor(peek.extension);
+      if (syntax && this.tabs.includes(tab)) this.reconfigure(tab, syntax);
+    });
+    return tab;
+  }
+
   /** What `open` reports for an already open tab. */
   private openedFromTab(tab: Tab): OpenedPlayground {
     const summary = this.listing.get(tab.id);
@@ -402,6 +501,8 @@ export class TabManager implements RunHost {
           tab.id,
           plugin?.highlighter ?? null,
           plugin?.lsp ?? false,
+          // F12 and friends only mean anything with a server behind them.
+          definitionKeymap(this),
         ),
       )
       .then(({ extensions, session }) => {
@@ -731,7 +832,7 @@ export class TabManager implements RunHost {
   async save(tab: Tab): Promise<void> {
     clearTimeout(tab.saveTimer);
     tab.saveTimer = 0;
-    if (!this.tabs.includes(tab) || tab.conflict) return;
+    if (!this.tabs.includes(tab) || tab.conflict || tab.peek) return;
     if (tab.saving) await tab.saving;
     const text = this.textOf(tab);
     if (text === tab.savedText) {
@@ -855,11 +956,13 @@ export class TabManager implements RunHost {
 
   snapshot(): Session {
     return {
-      tabs: this.tabs.map((t) => ({
-        playground: t.id,
-        scrollTop: t === this.active ? this.ui.editor.view.scrollDOM.scrollTop : t.scrollTop,
-      })),
-      active: this.activeId,
+      tabs: this.tabs
+        .filter((t) => !t.peek)
+        .map((t) => ({
+          playground: t.id,
+          scrollTop: t === this.active ? this.ui.editor.view.scrollDOM.scrollTop : t.scrollTop,
+        })),
+      active: this.active?.peek ? null : this.activeId,
       lastLanguage: this.lastLanguage,
     };
   }
@@ -966,6 +1069,18 @@ export class TabManager implements RunHost {
   }
 
   private renderTab(tab: Tab): void {
+    if (tab.peek) {
+      const el = tab.element;
+      el.querySelector<HTMLElement>(".tab-name")!.textContent = tab.peek.title;
+      el.querySelector<HTMLElement>(".tab-lang")!.textContent = "🔒";
+      el.querySelector<HTMLElement>(".tab-dirty")!.hidden = true;
+      el.querySelector<HTMLElement>(".tab-running")!.hidden = true;
+      el.classList.toggle("active", tab === this.active);
+      el.classList.add("peek");
+      el.setAttribute("aria-selected", String(tab === this.active));
+      el.title = `${tab.peek.path} · read-only`;
+      return;
+    }
     const summary = this.listing.get(tab.id);
     const plugin = summary ? this.plugin(summary.language) : undefined;
     const el = tab.element;
@@ -992,6 +1107,12 @@ export class TabManager implements RunHost {
     );
     const tab = this.active;
     if (!tab) return;
+    if (tab.peek) {
+      this.ui.status.setLanguage("Read-only");
+      this.ui.status.setNote(tab.peek.path);
+      this.ui.status.setRun({ kind: "idle" });
+      return;
+    }
     const summary = this.listing.get(tab.id);
     this.ui.status.setLanguage(summary ? `${summary.language} · ${summary.kind}` : "…");
     this.ui.status.setNote(tab.note);

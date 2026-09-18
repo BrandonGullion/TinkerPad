@@ -4,6 +4,7 @@ import { invoke, ready, subscribe } from "./ipc";
 import { createLayout } from "./layout";
 import { BottomPanel } from "./panels";
 import { openCommandPalette } from "./commands";
+import { jumpBack } from "./definition";
 import { pickerOpen } from "./picker";
 import { setTabManager } from "./playground";
 import { RunController } from "./run";
@@ -77,6 +78,12 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
   }
   if (e.key === "F2" && !mod && !inTextField) {
     tabs.startRename();
+    return true;
+  }
+  // Alt+Left returns from a go-to-definition jump, including out of a
+  // read-only tab, which has no editor keymap of its own (02-09).
+  if (e.key === "ArrowLeft" && e.altKey && !mod) {
+    jumpBack(tabs);
     return true;
   }
   // F8 walks the last run's errors and warnings (01-13).
