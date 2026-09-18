@@ -14,3 +14,7 @@ Thumbs.db
 *.log
 # The Rust plugin's dump crate is built inside each playground, never locked here
 plugins/rust/dump/Cargo.lock
+
+# Python bytecode from a plugin's dump library or helper.
+__pycache__/
+*.pyc

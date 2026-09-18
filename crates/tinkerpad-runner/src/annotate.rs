@@ -13,7 +13,12 @@ use tinkerpad_core::{Annotation, Level};
 use tinkerpad_plugin::OutputSpec;
 
 /// How many lines a multi-line pattern can span.
-pub const WINDOW: usize = 3;
+///
+/// Rust needs two (message, then location). Python needs more: a traceback is
+/// a frame line, the source line under it, sometimes a `~~^~~` marker, and
+/// then the exception — and it is the *last* frame that matters, so the window
+/// has to still hold it when the exception arrives (work item 03-04).
+pub const WINDOW: usize = 6;
 
 #[derive(Debug)]
 pub struct Annotator {
@@ -145,6 +150,33 @@ mod tests {
         // The same match must not be reported again as the window slides.
         assert_eq!(a.line("   |"), None);
         assert_eq!(a.line("3 |     let s: String = n;"), None);
+    }
+
+    /// The Python plugin's pattern, against a real traceback: the frame that
+    /// matters is the one nearest the message, not the first.
+    #[test]
+    fn python_traceback_points_at_the_deepest_frame() {
+        let mut a = annotator(
+            r#"(?m)^  File "(?<file>[^"]+)", line (?<line>\d+)(?:, in [^\n]*)?\n(?:    [^\n]*\n)*(?<message>[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Exit|Warning|Interrupt)[^\n]*)$"#,
+            true,
+        );
+        assert_eq!(a.line("before"), None);
+        assert_eq!(a.line("Traceback (most recent call last):"), None);
+        assert_eq!(
+            a.line(r#"  File "C:\play\main.py", line 8, in <module>"#),
+            None
+        );
+        assert_eq!(a.line("    boom()"), None);
+        assert_eq!(a.line("    ~~~~^^"), None);
+        assert_eq!(a.line(r#"  File "C:\play\main.py", line 5, in boom"#), None);
+        assert_eq!(a.line("    return 1 / 0"), None);
+        assert_eq!(a.line("           ~~^~~"), None);
+        let found = a
+            .line("ZeroDivisionError: division by zero")
+            .expect("matched");
+        assert_eq!(found.file.as_deref(), Some(r"C:\play\main.py"));
+        assert_eq!(found.line, 5, "the frame the error happened in");
+        assert_eq!(found.message, "ZeroDivisionError: division by zero");
     }
 
     #[test]
