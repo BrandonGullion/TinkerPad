@@ -22,14 +22,10 @@ pub const TEMPLATES_DIR: &str = "templates";
 /// The manifest `api` version this build reads.
 pub const SUPPORTED_API: i64 = 1;
 
-/// Hook names a helper may declare (docs/PLUGINS.md §5).
-const KNOWN_HOOKS: &[&str] = &[
-    "run",
-    "playground_created",
-    "playground_opened",
-    "playground_closed",
-    "add_dependency",
-];
+/// Hook names a helper may declare: the protocol's own list, so a manifest
+/// can't be validated against one set of names and served by another
+/// (docs/PLUGINS.md §5).
+const KNOWN_HOOKS: &[&str] = &crate::helper::protocol::HOOKS;
 
 /// Highlighters the UI bundles (docs/PLUGINS.md §9). Kept in step with
 /// `ui/src/highlight.ts`, which is where each one is actually loaded.

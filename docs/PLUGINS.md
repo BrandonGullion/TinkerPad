@@ -309,10 +309,20 @@ If registration means writing a file (gopls's `go.work`), that is a helper hook
 
 ## 5. Helper protocol: `tinkerpad-plugin-v1`
 
-A helper is any executable speaking JSON lines on stdin/stdout. stderr goes to the
-log. The core starts it lazily on first need, keeps it alive under the same rules as
-LSP servers, and restarts it on crash. `hooks` in the manifest lists which messages
-it implements; the core never sends the others.
+A helper is any executable speaking JSON lines on stdin/stdout. The core starts
+it lazily on first need, keeps it alive under the same rules as LSP servers, and
+restarts it on crash. `hooks` in the manifest lists which messages it implements;
+the core never sends the others.
+
+**The transport.** One JSON object per line, terminated by `\n`. A trailing `\r`
+is stripped, so a runtime whose `println` ends lines the Windows way needs no
+special care. A line that isn't a message is logged (its first 200 bytes) and
+skipped, never fatal: helpers print banners, warnings, and progress, and many
+runtimes announce themselves before they have said a word of protocol. Lines
+longer than 16 MiB are dropped rather than buffered; send large output in chunks.
+The helper's **stderr goes to the log** and is never shown as program output — a
+*run's* stderr arrives as a `stderr` message instead, and only that reaches the
+results pane.
 
 Every message has `type` and, for requests, `id`. Replies carry the same `id`.
 
@@ -324,16 +334,38 @@ Every message has `type` and, for requests, `id`. Replies carry the same `id`.
 → {"type":"shutdown"}
 ```
 
+`plugin_dir` is the plugin folder, for the helper's own resources.
+`scratch_dir` is a folder private to this plugin that the helper may write to;
+it is the only place it should. Both are absolute. `name` and `version` are
+optional and are shown in the log and the status strip.
+
 **Execution** (`hooks = ["run"]`)
 
 ```json
 → {"type":"run","id":"r1","main":"C:/.../main.cs","dir":"C:/...","kind":"statements"}
-← {"type":"stdout","id":"r1","data":"SGVsbG8K"}              // base64, chunked; may contain dump sentinels
+← {"type":"stdout","id":"r1","data":"SGVsbG8K"}              // base64, chunked
 ← {"type":"stderr","id":"r1","data":"..."}
 ← {"type":"exited","id":"r1","code":0,"duration_ms":41}
-← {"type":"failed","id":"r1","message":"...","diagnostics":[{"file":"...","line":3,"col":9,"message":"..."}]}
+← {"type":"failed","id":"r1","message":"...","diagnostics":[{"file":"...","line":3,"col":9,"message":"...","severity":"error"}]}
 → {"type":"cancel","id":"r1"}
 ```
+
+`data` is base64 of the raw bytes the program wrote, chunked however suits the
+helper: the core reassembles them in order and hands the program's output on
+untouched, so a `tinkerpad-dump-v1` sentinel (§6) or a UTF-8 character may be
+split across two messages without harm. Don't decode, re-encode, or line-buffer
+program output; a partial line is still output.
+
+`code` may be `null` when the platform has no code to give. `duration_ms` is the
+helper's own timing and is used when present; otherwise the core times the round
+trip itself. A run ends with exactly one of `exited` or `failed` — `failed` is
+for a program that never ran (a compile error, a missing toolchain), and its
+`diagnostics` land in the editor's gutter the same way a regex-matched error from
+a per-run tool does. In a diagnostic, only `message` is required; `line` is
+one-based, `severity` is `error` unless it says `warning` or `info`.
+
+`cancel` asks the helper to stop the program; report `exited` (with `code: null`)
+once it has. The helper stays alive.
 
 **Hooks** (each optional; declare in `hooks`)
 
@@ -351,23 +383,49 @@ Every message has `type` and, for requests, `id`. Replies carry the same `id`.
 ← {"type":"result","id":"h4","files":[...]}
 ```
 
+A `playground` is the object the UI uses, camelCase and absolute:
+
+```json
+{"id":"7f3c","name":"Scratch","language":"csharp","kind":"statements",
+ "dir":"C:/Users/me/TinkerPad/scratch","mainFile":"C:/Users/me/TinkerPad/scratch/main.cs",
+ "createdMs":1700000000000,"tags":["sql"]}
+```
+
+`open` is every playground open in the app, this one included. Every hook
+answers with `result`, even when there is nothing to say. `files` paths are
+relative to the playground folder; `version` on `add_dependency` is absent when
+the user didn't pin one, and the helper picks. `lsp_config` is merged into what
+`[lsp.register]` sends for that playground (§4).
+
+**Timeouts**
+
+| Wait | How long | What happens then |
+|---|---|---|
+| `hello` to `ready` | 10 s | kill, fall back to `[run]`, warn |
+| `cancel` to `exited` | 2 s | kill and respawn; warm state is lost, which is fine |
+| a hook to its `result` | 5 s | carry on as if it returned nothing |
+| `shutdown` to exit | 2 s | kill |
+| a `run` | never | a program runs until it exits or the user cancels it |
+
 Rules:
 
-- One `run` at a time per helper. Run while running = cancel the old one first.
-- No `ready` within 10s of spawn → kill, fall back to `[run]`, show a warning.
-- No response to `cancel` within 2s → kill and respawn. Warm state is lost; fine.
-- Hooks must reply within 5s or the core proceeds as if the hook returned nothing.
+- One `run` at a time per helper. A second `run` cancels the first, and the
+  first run is reported as cancelled rather than abandoned.
 - **Forward compatibility:** helpers must ignore fields they don't recognise in
-  any message, and the core ignores unknown fields from helpers. New optional
-  fields (a future `debug` flag on `run`, for example) are added without a
-  protocol version bump; only removed or re-typed fields bump it.
-- `run` has no timeout. A program runs until it exits or the user cancels.
+  any message, and the core ignores unknown fields from helpers. A message type
+  the other side has never heard of is logged and ignored, not an error. New
+  optional fields (a future `debug` flag on `run`, for example) are added without
+  a protocol version bump; only removed or re-typed fields bump it.
 - The helper isolates runs as well as the language allows (collectible
   `AssemblyLoadContext`, fresh module scope, fresh globals). Perfect isolation is
   not required; the restart button exists.
 - If `[helper.build]` is present, the core runs it on first use and whenever the
   helper source folder changes. This is how a C# helper ships as source and a
   contributor never has to publish binaries.
+
+The Rust side of all this is `tinkerpad_plugin::helper`, and
+`src/bin/fakehelper.rs` in that crate is a small working implementation to read
+or copy.
 
 ## 6. Rich output: `tinkerpad-dump-v1`
 
