@@ -395,6 +395,21 @@ mod commands {
         crate::lsp::server_log(&state, &language, root.as_deref().map(std::path::Path::new))
     }
 
+    /// Keep runs off plugin helpers for the rest of this session, or let them
+    /// back on. The command palette's "Force per-run execution" (03-03): what
+    /// you reach for when you suspect the warm runner of hiding something.
+    /// Returns what the setting is now.
+    #[tauri::command]
+    pub fn force_per_run(state: State<'_, AppState>, forced: Option<bool>) -> bool {
+        match forced {
+            Some(forced) => {
+                state.runs.force_per_run(forced);
+                forced
+            }
+            None => state.runs.forced_per_run(),
+        }
+    }
+
     /// Every plugin helper the pool holds, running or not (03-02).
     #[tauri::command]
     pub fn helper_status(state: State<'_, AppState>) -> Vec<crate::helpers::HelperStatus> {
@@ -657,7 +672,6 @@ pub fn run() {
             let playgrounds = library::open(library_root, &data_dir, &mut startup_notices);
             let library_watcher = library::watch(&playgrounds, bus.clone());
 
-            let runs = Runs::new(bus.clone(), data_dir.join("scratch"), toolchains.clone());
             let lsp = lsp::pool(bus.clone());
             let proxy = lsp::proxy(bus.clone());
             let settings_text =
@@ -665,6 +679,15 @@ pub fn run() {
             let service_settings = service_settings::ServiceSettings::load(&settings_text);
             let helper_settings = service_settings::ServiceSettings::helpers(&settings_text);
             let helpers = helpers::pool(bus.clone());
+            // Runs go to a plugin's helper when it has one (03-03), so the run
+            // path holds the pool.
+            let runs = Runs::new(
+                bus.clone(),
+                data_dir.clone(),
+                toolchains.clone(),
+                helpers.clone(),
+                helper_settings.clone(),
+            );
             app.manage(AppState {
                 events: bus,
                 runs,
@@ -708,6 +731,7 @@ pub fn run() {
             commands::lsp_close,
             commands::restart_server,
             commands::server_status,
+            commands::force_per_run,
             commands::helper_status,
             commands::helper_log,
             commands::stop_helper,

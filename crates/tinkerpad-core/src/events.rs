@@ -173,7 +173,18 @@ impl ServerState {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RunEvent {
-    Started,
+    /// The program is going. `warm` when a plugin helper is running it rather
+    /// than a process started for this run (work item 03-03); the only thing
+    /// that tells the two paths apart.
+    Started {
+        warm: bool,
+    },
+    /// Nothing is running yet, and this is what it is waiting for: another
+    /// playground's run on the same helper, or a helper being built. The run
+    /// starts by itself when the wait is over.
+    Waiting {
+        message: String,
+    },
     /// Output text. Decoded lossily from bytes at this boundary, after the
     /// runner has taken out any dumped values.
     Stdout {

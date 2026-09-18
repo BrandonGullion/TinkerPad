@@ -417,7 +417,11 @@ the user didn't pin one, and the helper picks. `lsp_config` is merged into what
 Rules:
 
 - One `run` at a time per helper. A second `run` cancels the first, and the
-  first run is reported as cancelled rather than abandoned.
+  first run is reported as cancelled rather than abandoned. The core only sends
+  one when it means it: two playgrounds of the same language *queue* on the
+  helper, and the waiting one is told so (work item 03-03). A helper therefore
+  sees a second `run` mid-run only when the same playground was run again,
+  which is a person pressing Run twice.
 - **Forward compatibility:** helpers must ignore fields they don't recognise in
   any message, and the core ignores unknown fields from helpers. A message type
   the other side has never heard of is logged and ignored, not an error. New

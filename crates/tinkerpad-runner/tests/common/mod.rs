@@ -249,6 +249,7 @@ pub async fn run_scaffolded(
                 out.code = code;
             }
             RunEvent::Cancelled { .. } => panic!("cancelled"),
+            RunEvent::Failed { message, .. } => panic!("failed: {message}"),
             RunEvent::Started { .. } => {}
         }
     }

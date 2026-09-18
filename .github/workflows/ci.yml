@@ -173,7 +173,7 @@ jobs:
       - name: Language servers (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -190,6 +190,9 @@ jobs:
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
           grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
+          grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
+          grep -q "selftest: PASS a second playground waits for the helper" lsp.log
+          grep -q "selftest: PASS and the user is told what is being used instead" lsp.log
 
       - name: Session restore across two launches (Linux)
         if: runner.os == 'Linux'
@@ -230,7 +233,7 @@ jobs:
       - name: Language servers (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -247,6 +250,9 @@ jobs:
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
           grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
+          grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
+          grep -q "selftest: PASS a second playground waits for the helper" lsp.log
+          grep -q "selftest: PASS and the user is told what is being used instead" lsp.log
 
       - name: Session restore across two launches (macOS)
         if: runner.os == 'macOS'

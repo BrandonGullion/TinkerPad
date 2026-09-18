@@ -41,6 +41,9 @@ impl RunSpec {
 pub enum RunEvent {
     Started {
         pid: u32,
+        /// A plugin helper is running it, rather than a process started for
+        /// this run (work item 03-03).
+        warm: bool,
     },
     Stdout(Bytes),
     Stderr(Bytes),
@@ -53,6 +56,13 @@ pub enum RunEvent {
     Cancelled {
         duration: Duration,
     },
+    /// The program never ran: a helper reporting a compile error, with
+    /// somewhere to point (03-01). The per-run path has no equivalent — a
+    /// command that fails to start is a `RunError` instead.
+    Failed {
+        message: String,
+        diagnostics: Vec<tinkerpad_plugin::helper::Diagnostic>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -63,29 +73,67 @@ pub enum RunError {
     Spawn(#[from] SpawnError),
 }
 
+/// How to stop a run, whichever way it is being run.
+///
+/// Cloneable and cheap, so a caller can keep one beside the run's slot and
+/// cancel from anywhere. Both arms are non-blocking: killing a tree and asking
+/// a helper to stop are both "say so and let the stream report it".
+#[derive(Clone, Debug)]
+pub enum Cancel {
+    /// A process of this run's own: kill the tree.
+    Process(KillHandle),
+    /// A run on a plugin helper: the driver sends `cancel` and, if the helper
+    /// ignores it, kills the helper (03-01).
+    Helper(mpsc::Sender<()>),
+}
+
+impl Cancel {
+    pub fn cancel(&self) {
+        match self {
+            Cancel::Process(kill) => kill.kill(),
+            // Capacity 1, and asking twice is the same as asking once.
+            Cancel::Helper(tx) => {
+                let _ = tx.try_send(());
+            }
+        }
+    }
+}
+
 /// A run in progress. Dropping it does not stop the program; call
 /// [`RunHandle::cancel`].
 #[derive(Debug)]
 pub struct RunHandle {
+    /// The process doing the work: the program itself, or the helper running
+    /// it.
     pub pid: u32,
     events: mpsc::Receiver<RunEvent>,
-    kill: KillHandle,
+    cancel: Cancel,
 }
 
 impl RunHandle {
-    /// Next event. `None` after the final `Exited` or `Cancelled`.
+    /// A handle over a stream someone else is filling, for a run that isn't a
+    /// process of its own (03-03).
+    pub fn over(pid: u32, events: mpsc::Receiver<RunEvent>, cancel: Cancel) -> Self {
+        Self {
+            pid,
+            events,
+            cancel,
+        }
+    }
+
+    /// Next event. `None` after the final `Exited`, `Cancelled` or `Failed`.
     pub async fn recv(&mut self) -> Option<RunEvent> {
         self.events.recv().await
     }
 
     /// Stop the program and everything it started.
     pub fn cancel(&self) {
-        self.kill.kill();
+        self.cancel.cancel();
     }
 
     /// A cloneable way to cancel from elsewhere.
-    pub fn canceller(&self) -> KillHandle {
-        self.kill.clone()
+    pub fn canceller(&self) -> Cancel {
+        self.cancel.clone()
     }
 }
 
@@ -101,7 +149,11 @@ pub fn run(spec: RunSpec) -> Result<RunHandle, RunError> {
     let (tx, rx) = mpsc::channel(256);
 
     tokio::spawn(async move {
-        if tx.send(RunEvent::Started { pid }).await.is_err() {
+        if tx
+            .send(RunEvent::Started { pid, warm: false })
+            .await
+            .is_err()
+        {
             return;
         }
         while let Some(event) = child.recv().await {
@@ -126,6 +178,6 @@ pub fn run(spec: RunSpec) -> Result<RunHandle, RunError> {
     Ok(RunHandle {
         pid,
         events: rx,
-        kill,
+        cancel: Cancel::Process(kill),
     })
 }

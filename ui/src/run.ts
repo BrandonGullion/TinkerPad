@@ -66,8 +66,10 @@ export class RunController {
     return active !== null && this.isRunning(active);
   }
 
+  /** Running, or waiting for a helper to be free — either way, cancellable. */
   isRunning(playground: string): boolean {
-    return this.stateOf(playground).kind === "running";
+    const kind = this.stateOf(playground).kind;
+    return kind === "running" || kind === "waiting";
   }
 
   stateOf(playground: string): RunState {
@@ -215,8 +217,20 @@ export class RunController {
     const output = this.host.outputFor(playground);
     const latest = record.token === this.latestToken;
     switch (event.kind) {
-      case "started":
+      case "started": {
+        // The run was already showing as running (optimistically, from the
+        // click); this is where it learns a helper is doing it.
+        const since = record.state.kind === "running" || record.state.kind === "waiting"
+          ? record.state.since
+          : performance.now();
+        this.setState(playground, record, { kind: "running", since, warm: event.warm });
         break;
+      }
+      case "waiting": {
+        const since = record.state.kind === "running" ? record.state.since : performance.now();
+        this.setState(playground, record, { kind: "waiting", message: event.message, since });
+        break;
+      }
       case "stdout":
       case "stderr":
         if (latest) this.firstOutputAt ??= performance.now();

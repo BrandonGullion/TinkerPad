@@ -6,11 +6,15 @@
 // It speaks `tinkerpad-plugin-v1` JSON lines over stdio (docs/PLUGINS.md §5):
 //   hello     replies `ready`, after writing what it was told to hello.json
 //             in its scratch folder so a test can see what arrived
-//   run       runs the main file in this process and streams what it prints
+//   run       runs the main file and streams its output back
 //   cancel    ends that run
 //   shutdown  stops
 //
-// `run` is here so 03-03 has something to drive; until then nothing sends one.
+// `run` starts `node <main>` rather than evaluating the file in this process.
+// That is not what a real warm runner would do — the whole point of one is to
+// skip the process start — but it makes this helper behave *exactly* like the
+// plugin's `[run]` command, which is what the self-tests need to check: the
+// two paths must be indistinguishable from above (work item 03-03).
 
 "use strict";
 
@@ -48,22 +52,23 @@ function hello(message) {
 
 // One run at a time, as the protocol says.
 let running = null;
+let child = null;
 
 function run(message) {
   const started = Date.now();
   running = message.id;
-  let out = "";
-  const log = console.log;
-  console.log = (...args) => {
-    out += `${args.join(" ")}\n`;
-  };
-  try {
-    const source = fs.readFileSync(message.main, "utf8");
-    // eslint-disable-next-line no-new-func
-    new Function(source)();
-  } catch (e) {
-    console.log = log;
-    if (out) chunk(message.id, "stdout", out);
+  const { spawn } = require("child_process");
+  child = spawn(process.execPath, [message.main], {
+    cwd: message.dir,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", (bytes) => {
+    send({ type: "stdout", id: message.id, data: bytes.toString("base64") });
+  });
+  child.stderr.on("data", (bytes) => {
+    send({ type: "stderr", id: message.id, data: bytes.toString("base64") });
+  });
+  child.on("error", (e) => {
     send({
       type: "failed",
       id: message.id,
@@ -71,17 +76,19 @@ function run(message) {
       diagnostics: [],
     });
     running = null;
-    return;
-  }
-  console.log = log;
-  if (out) chunk(message.id, "stdout", out);
-  send({
-    type: "exited",
-    id: message.id,
-    code: 0,
-    duration_ms: Date.now() - started,
+    child = null;
   });
-  running = null;
+  child.on("close", (code) => {
+    if (running !== message.id) return;
+    send({
+      type: "exited",
+      id: message.id,
+      code,
+      duration_ms: Date.now() - started,
+    });
+    running = null;
+    child = null;
+  });
 }
 
 let buffer = "";
@@ -108,8 +115,11 @@ process.stdin.on("data", (bytes) => {
         break;
       case "cancel":
         if (running === message.id) {
-          send({ type: "exited", id: message.id, code: null, duration_ms: 0 });
           running = null;
+          if (child) child.kill();
+          child = null;
+          // A cancelled program has no exit code of its own (§5).
+          send({ type: "exited", id: message.id, code: null, duration_ms: 0 });
         }
         break;
       case "shutdown":

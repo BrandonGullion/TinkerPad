@@ -12,6 +12,7 @@
 
 pub mod annotate;
 pub mod dump;
+pub mod helper_run;
 pub mod helpers;
 mod output;
 mod run;
@@ -20,8 +21,9 @@ mod utf8;
 
 pub use annotate::Annotator;
 pub use dump::{DumpParser, Dumped};
+pub use helper_run::Waiting;
 pub use helpers::{HelperConfig, HelperHandle, HelperPool, Unavailable, Use};
 pub use output::OutputDecoder;
-pub use run::{RunError, RunEvent, RunHandle, RunSpec, run};
+pub use run::{Cancel, RunError, RunEvent, RunHandle, RunSpec, run};
 pub use spec::{Package, RunContext, SpecError, deps_command, deps_directive, run_spec};
 pub use utf8::Utf8Stream;

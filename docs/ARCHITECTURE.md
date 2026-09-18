@@ -364,6 +364,19 @@ and for reporting when it can't (e.g. a run that hangs forever → the core kill
 respawns the helper). If a plugin declares both `[run]` and `[helper]`, the helper is
 preferred and `[run]` is the fallback when the helper is unavailable.
 
+**Choosing, and falling back** (03-03). A run goes to the helper when the plugin has
+one whose `hooks` include `run`. Nothing waits for it before the run exists: getting a
+helper can mean building it or waiting for another playground's turn, so the run is
+registered first and says what it is waiting for (`RunEvent::Waiting`), with the
+build's own output arriving as the run's. Both paths then produce the same
+`RunEvent` stream through the same decoder and dump parser; the only difference the
+UI can see is `warm` on `started`, which the status bar shows as "· warm". A helper
+that can't be built or started, or that the pool has given up on, drops the run to
+`[run]` and says so in a toast — once per plugin per session, since the fallback
+works and repeating it is nagging. The command palette's **Force per-run execution**
+turns helpers off for the session, which is how you find out whether the helper is
+the problem.
+
 ### 5.2 Warm compile without a helper
 
 Some languages get most of the win from the filesystem, no helper required:

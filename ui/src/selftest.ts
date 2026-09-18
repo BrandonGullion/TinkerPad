@@ -199,6 +199,12 @@ async function runScenario(ctx: SelftestContext, check: Check) {
   const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
   const status = () => document.querySelector(".status-run")?.textContent ?? "";
 
+  // The test plugin has a helper, and a run that has to build one first shows
+  // the build in its output (03-03). That is checked in `helper-run`; here it
+  // would only get in the way of comparing a program's output, so the helper
+  // is built and warm before the first run.
+  await invoke("start_helper", { plugin: "node-check" }).catch(() => {});
+
   // console.log(1) end to end.
   let end = runs.waitForEnd();
   runCode(ctx, "console.log(1)\n");
@@ -274,7 +280,11 @@ async function runScenario(ctx: SelftestContext, check: Check) {
     (await invoke<string>("read_source", { id: main.id })) === 'console.log("B")\n',
   );
 
-  // Different playgrounds can run at the same time.
+  // Different playgrounds can run at the same time, on the per-run path. The
+  // test plugin has a helper, and a helper runs one program at a time, so two
+  // playgrounds of its language queue instead — which is what the `helper-run`
+  // scenario checks (03-03).
+  await invoke("force_per_run", { forced: true });
   const ended = new Map<number, string>();
   const unsubscribe = subscribe(({ scope, event }) => {
     if (event.type === "run" && ["exited", "cancelled", "failed"].includes(event.kind)) {
@@ -302,6 +312,7 @@ async function runScenario(ctx: SelftestContext, check: Check) {
   await invoke("cancel", { playground: main.id });
   for (let i = 0; i < 100 && !ended.has(longRun); i++) await sleep(50);
   await check("cancel stops only that playground's run", ended.get(longRun) === "cancelled");
+  await invoke("force_per_run", { forced: false });
 
   // A plugin whose toolchain is missing fails with the reason instead of running.
   const plugins = await invoke<PluginsStatus>("list_plugins");
@@ -1483,7 +1494,10 @@ async function tabsScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify({ next, active: tabs.activeId, order }),
   );
 
-  // Output and run state are per tab.
+  // Output and run state are per tab. Two runs at once, so this part goes on
+  // the per-run path: one helper runs one program at a time, and the second
+  // tab would wait for the first rather than show its own output (03-03).
+  await invoke("force_per_run", { forced: true });
   tabEl(first.id)!.click();
   runCode(ctx, 'console.log("first out"); setInterval(() => {}, 1000);\n');
   await until(() => outText().includes("first out"), 15_000);
@@ -1510,6 +1524,7 @@ async function tabsScenario(ctx: SelftestContext, check: Check) {
   await runs.cancel();
   await until(() => !runs.isRunning(first.id), 10_000);
   await check("the running indicator clears when the run ends", tabEl(first.id)?.querySelector<HTMLElement>(".tab-running")?.hidden === true);
+  await invoke("force_per_run", { forced: false });
 
   // Rename with F2 and with a double-click.
   tabEl(created.id)!.click();
@@ -2734,6 +2749,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   prewarm: prewarmScenario,
   servers: serversScenario,
   helpers: helpersScenario,
+  "helper-run": helperRunScenario,
   definition: definitionScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
@@ -2852,6 +2868,148 @@ async function helpersScenario(ctx: SelftestContext, check: Check) {
   await report("INFO shot-ready");
 
   await invoke("delete_playground", { id: playground.id }).catch(() => {});
+}
+
+/**
+ * Runs on a warm helper, and the fall back to per-run when there isn't one
+ * (work item 03-03).
+ *
+ * The test plugin's helper runs the file in a child process, so it behaves
+ * exactly like the plugin's `[run]` command — which is the point: apart from
+ * the word "warm" in the status bar, nothing above the runner can tell the two
+ * apart.
+ */
+async function helperRunScenario(ctx: SelftestContext, check: Check) {
+  const { runs, tabs } = ctx;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+  const status = () => document.querySelector(".status-run")?.textContent ?? "";
+  const toasts: string[] = [];
+  const unsubscribe = subscribe(({ event }) => {
+    if (event.type === "toast") toasts.push(event.message);
+  });
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const dir = plugins.plugins.find((p) => p.id === "node-check")?.dir ?? "";
+  const breaks = `${dir}/break.txt`;
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const main = await openTestPlayground(ctx, "Helper Run");
+
+  // A run that takes long enough to look at while it is going.
+  let end = runs.waitForEnd();
+  runCode(ctx, 'console.log("from the helper"); setTimeout(() => {}, 1500)\n');
+  const warm = await until(() => status().includes("warm"), 30_000);
+  await check("a run on a plugin helper says so in the status bar", warm, status());
+
+  let outcome = await withTimeout(end, 30_000, "helper run");
+  await ctx.output.flushed();
+  await check(
+    // A build may have run first, and its output belongs to this run too, so
+    // what matters is that the program's output is there and is last.
+    "and is otherwise the same run: same output, same exit",
+    outcome.kind === "exited" && outcome.code === 0 && outText().endsWith("from the helper\n"),
+    JSON.stringify({ outcome, out: outText() }),
+  );
+
+  const helper = (await invoke<HelperStatus[]>("helper_status")).find(
+    (h) => h.plugin === "node-check",
+  );
+  await check(
+    "the helper is up and free again afterwards",
+    helper?.state.kind === "ready" && helper.uses === 0,
+    JSON.stringify(helper?.state),
+  );
+
+  // Cancel goes to the helper, not to a process the app started.
+  end = runs.waitForEnd();
+  runCode(ctx, "setInterval(() => {}, 1000)\n");
+  await until(() => status().startsWith("Running"), 30_000);
+  await runs.cancel();
+  outcome = await withTimeout(end, 30_000, "cancel");
+  await check("cancelling a warm run stops it", outcome.kind === "cancelled", JSON.stringify(outcome));
+  const after = (await invoke<HelperStatus[]>("helper_status")).find(
+    (h) => h.plugin === "node-check",
+  );
+  await check(
+    "and leaves the helper warm for the next one",
+    after?.state.kind === "ready",
+    JSON.stringify(after?.state),
+  );
+
+  // Two playgrounds, one helper: the second waits rather than taking it.
+  const other = await openTestPlayground(ctx, "Helper Run Other");
+  await tabs.open(main.id);
+  const longRun = runs.waitForEnd();
+  runCode(ctx, "setInterval(() => {}, 1000)\n");
+  await until(() => status().startsWith("Running"), 30_000);
+  await tabs.open(other.id);
+  const queued = runs.waitForEnd();
+  runCode(ctx, 'console.log("second")\n');
+  const waiting = await until(() => status().startsWith("Waiting for the Node check helper"), 20_000);
+  await check("a second playground waits for the helper", waiting, status());
+
+  await tabs.open(main.id);
+  await runs.cancel();
+  await withTimeout(longRun, 30_000, "first run");
+  await tabs.open(other.id);
+  const second = await withTimeout(queued, 30_000, "queued run");
+  await ctx.output.flushed();
+  await check(
+    "and runs as soon as the helper is free",
+    second.kind === "exited" && second.code === 0 && outText() === "second\n",
+    JSON.stringify({ second, out: outText() }),
+  );
+
+  // Force per-run: the same run, cold, with nothing else different.
+  await invoke("force_per_run", { forced: true });
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("cold"); setTimeout(() => {}, 1200)\n');
+  const cold = await until(() => status().startsWith("Running"), 30_000);
+  await check(
+    "Force per-run keeps runs off the helper",
+    cold && !status().includes("warm"),
+    status(),
+  );
+  outcome = await withTimeout(end, 30_000, "forced per-run");
+  await ctx.output.flushed();
+  await check(
+    "and the run is otherwise unchanged",
+    outcome.kind === "exited" && outText() === "cold\n",
+    JSON.stringify({ outcome, out: outText() }),
+  );
+  await invoke("force_per_run", { forced: false });
+
+  // A helper that can't be built falls back, and says so once.
+  await invoke("selftest_write_file", { path: breaks, text: "yes\n" });
+  await invoke("stop_helper", { plugin: "node-check" });
+  toasts.length = 0;
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("fell back")\n');
+  outcome = await withTimeout(end, 60_000, "fallback run");
+  await ctx.output.flushed();
+  await check(
+    "a helper that can't be built doesn't stop the run",
+    outcome.kind === "exited" && outcome.code === 0 && outText().includes("fell back"),
+    JSON.stringify({ outcome, out: outText() }),
+  );
+  await check(
+    "and the user is told what is being used instead",
+    toasts.some((t) => t.includes("helper isn't available") && t.includes("Running with node")),
+    JSON.stringify(toasts),
+  );
+
+  // Once per session, not once per run.
+  const told = toasts.length;
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("again")\n');
+  await withTimeout(end, 60_000, "second fallback run");
+  await check("said once, not every run", toasts.length === told, JSON.stringify(toasts));
+
+  // Put the plugin back as it was, and leave a warm run on screen.
+  await invoke("selftest_write_file", { path: breaks, text: "" });
+  unsubscribe();
+  await invoke("delete_playground", { id: other.id }).catch(() => {});
+  await invoke("delete_playground", { id: main.id }).catch(() => {});
+  await report("INFO shot-ready");
 }
 
 async function pluginsScenario(_ctx: SelftestContext, check: Check) {
