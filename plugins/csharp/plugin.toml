@@ -50,3 +50,27 @@ directive = "#:package {name}@{version}"
 [output]
 # C:\...\main.cs(3,9): error CS1002: ; expected
 error_regex = '^(?<file>.+?\.cs)\((?<line>\d+),(?<col>\d+)\): (?<severity>error|warning) (?<message>[A-Z]+\d+: .*?)(?: \[[^\]]*\])?$'
+
+[helper]
+# The warm runner (docs/PLUGINS.md §5, work item 03-05): Roslyn, kept up, with
+# each run compiled and loaded into a collectible context. Built on first use
+# by the section below, into the app's data folder rather than the plugin
+# folder — an installed plugin may sit somewhere read-only.
+command = "{toolchain}"
+args = ["{scratch}/helper/TinkerPad.CSharp.Helper.dll"]
+hooks = ["run"]
+env = { DOTNET_NOLOGO = "1", DOTNET_CLI_UI_LANGUAGE = "en", DOTNET_CLI_TELEMETRY_OPTOUT = "1" }
+# Roslyn holds a few hundred MB once it is warm; worth it while you are using
+# C#, not worth it overnight.
+idle_shutdown = "2h"
+
+[helper.build]
+command = "{toolchain}"
+args = [
+  "build",
+  "-c", "Release",
+  "-o", "{scratch}/helper",
+  "-p:BaseIntermediateOutputPath={scratch}/helper-obj/",
+  "-v:minimal",
+]
+cwd = "{plugin_dir}/helper"

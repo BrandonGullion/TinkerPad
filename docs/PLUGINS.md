@@ -537,10 +537,20 @@ The template for each kind already imports the helper, so a new playground can c
 - **Helper (Phase 3):** a Node script that `import()`s the file with a cache-busting
   query. Trivial; worth it mainly to skip Node startup.
 
-### C# (Phase 1, helper in Phase 3)
+### C#
 
-- **Run:** `dotnet run --file main.cs` (.NET 10 file-based apps). `#:package Foo@1.2.3`
-  at the top of the file pulls NuGet packages.
+- **Run:** on the helper below, or `dotnet run --file main.cs` (.NET 10 file-based
+  apps) when there isn't one. `#:package Foo@1.2.3` at the top of the file pulls
+  NuGet packages either way.
+- **Helper (C#):** `helper/`, a .NET console app built on first use
+  (`[helper.build]`) into the app's data folder. It keeps Roslyn warm and runs each
+  playground in-process: the file is parsed with its real path, compiled with
+  portable PDBs so a stack trace says `main.cs:line N`, loaded into a collectible
+  `AssemblyLoadContext`, run on a thread called `tinkerpad-run`, and unloaded.
+  Compile errors come back as `failed` with the compiler's own diagnostics rather
+  than as text for a pattern to match. `#:package` directives are resolved with
+  NuGet into the global packages folder. A rerun costs about 70 ms against about a
+  second for `dotnet run` (work item 03-05).
 - **Dump:** each playground gets a `Directory.Build.props` that compiles
   `$(TINKERPAD_CSHARP_DUMP)` into the build and adds a global `using TinkerPad`.
   `[run].env` points that variable at `{plugin_dir}/dump/TinkerPad.Dump.cs`, so no
@@ -599,7 +609,7 @@ The template for each kind already imports the helper, so a new playground can c
 - **LSP:** `basedpyright-langserver --stdio`, workspace `playground_dir`. `pip`
   puts it in Python's `Scripts`/`bin` folder, which isn't always on `PATH` — the
   install hint says so, and `[toolchains.python]` in settings.toml can point at it.
-- **Helper:** `helper/helper.py`, the reference implementation of §5 and the file
+- **Helper (Python):** `helper/helper.py`, the reference implementation of §5 and the file
   to read before writing one of your own. A run is `exec(compile(src, path,
   "exec"), globals)` on a thread called `tinkerpad-run`, with `sys.stdout` and
   `sys.stderr` replaced by objects that turn writes into protocol messages, and

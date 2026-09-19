@@ -985,7 +985,7 @@ async function runUntilVisible(
 
 /** The bundled C# plugin, end to end in the app (01-10). */
 async function csharpScenario(ctx: SelftestContext, check: Check) {
-  const { editor, status } = ctx;
+  const { editor, status, runs } = ctx;
   const outText = () => (ctx.output.element.querySelector(".output-body")?.textContent ?? "").replaceAll("\r\n", "\n");
   // A cold first build (restore, compiler start) can take a while on CI.
   const LONG = 180_000;
@@ -1039,13 +1039,26 @@ async function csharpScenario(ctx: SelftestContext, check: Check) {
   editor.view.dispatch({
     changes: { from: 0, to: editor.view.state.doc.length, insert: 'using TinkerPad;\n\nConsole.WriteLine("x")\n' },
   });
+  // On the helper a compile error is the compiler's own diagnostic, not a line
+  // of output matched by a pattern: the run `failed`, and the position came
+  // with it (03-05).
   const broken = await runUntilVisible(ctx, ".dump", "C# compile error", LONG);
+  await frame();
+  const marked = document.querySelector<HTMLElement>(".cm-annotation");
   await check(
-    "a compile error is shown and the run fails",
-    broken.outcome.kind === "exited" &&
-      broken.outcome.code !== 0 &&
-      /main\.cs\(3,23\): error CS1002/.test(outText()),
-    JSON.stringify({ outcome: broken.outcome, text: outText().slice(0, 300) }),
+    // The compiler points one past the last character — that is where the
+    // semicolon should have been — so the squiggle goes under what it follows.
+    "a compile error fails the run and marks where the semicolon should be",
+    broken.outcome.kind === "failed" &&
+      broken.outcome.message.includes("CS1002: ; expected") &&
+      marked?.textContent === ")" &&
+      (marked.title ?? "").includes("; expected"),
+    JSON.stringify({
+      outcome: broken.outcome,
+      mark: marked?.textContent,
+      title: marked?.title,
+      text: outText().slice(0, 120),
+    }),
   );
 
   const expression = await invoke<Playground>("create_playground", {
@@ -1079,8 +1092,56 @@ async function csharpScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify({ outcome: prog.outcome, text: outText().slice(0, 200) }),
   );
 
-  // Leave a table on screen for a screenshot.
+  // A NuGet package, resolved by the helper into the same global folder
+  // `dotnet restore` uses (03-05). The first run may download it.
   await openPlayground(editor, status, created.id);
+  editor.view.dispatch({
+    changes: {
+      from: 0,
+      to: editor.view.state.doc.length,
+      insert: '#:package Humanizer@2.14.1\n\nusing Humanizer;\n\nConsole.WriteLine("SomeMethodName".Humanize());\n',
+    },
+  });
+  const packaged = await runUntilVisible(ctx, ".out-stdout", "C# with a package", LONG);
+  if (packaged.outcome.kind === "failed" && /nuget|network|download/i.test(packaged.outcome.message)) {
+    await report(`INFO nuget.org is not reachable; skipping the package check (${packaged.outcome.message})`);
+  } else {
+    await check(
+      "a #:package directive is resolved and used",
+      packaged.outcome.kind === "exited" && outText().trim() === "Some method name",
+      JSON.stringify({ outcome: packaged.outcome, text: outText().slice(0, 200) }),
+    );
+    const again = await runUntilVisible(ctx, ".out-stdout", "C# with a cached package", LONG);
+    await check(
+      "and the second run doesn't fetch it again",
+      again.outcome.kind === "exited" && (again.ms ?? 1e9) < (packaged.ms ?? 0) + 1000,
+      JSON.stringify({ first: packaged.ms, second: again.ms }),
+    );
+  }
+
+  // Cancel reaches code running inside the helper, and leaves it warm.
+  editor.view.dispatch({
+    changes: {
+      from: 0,
+      to: editor.view.state.doc.length,
+      insert: 'Console.WriteLine("looping");\nwhile (true) { Thread.Sleep(20); }\n',
+    },
+  });
+  const cancelling = runs.waitForEnd();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  await until(() => (document.querySelector(".status-run")?.textContent ?? "").startsWith("Running"), LONG);
+  await sleep(300);
+  await runs.cancel();
+  const cancelled = await withTimeout(cancelling, 30_000, "C# cancel");
+  await check("a runaway loop can be cancelled", cancelled.kind === "cancelled", JSON.stringify(cancelled));
+  const helper = (await invoke<HelperStatus[]>("helper_status")).find((h) => h.plugin === "csharp");
+  await check(
+    "and the helper is still warm afterwards",
+    helper?.state.kind === "ready",
+    JSON.stringify(helper?.state ?? null),
+  );
+
+  // Leave a table on screen for a screenshot.
   editor.view.dispatch({
     changes: {
       from: 0,
