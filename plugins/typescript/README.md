@@ -100,6 +100,44 @@ throughout — you lose completions, not the playground.
 
 [typescript-language-server]: https://github.com/typescript-language-server/typescript-language-server
 
+## The helper
+
+TypeScript runs on a **warm helper** (work item 03-06): `helper/helper.mjs`, a
+Node script that stays up between runs. There is no build step — it is started
+with the same Node and the same flags a per-run execution would use, so a
+playground behaves identically either way.
+
+A run is a dynamic `import()` of your file with a cache-busting query, while
+`process.stdout.write` and `process.stderr.write` are borrowed to turn what you
+print into protocol messages. Node's start-up and its first type-strip pass are
+paid for once a session instead of once a keystroke:
+
+| | With the helper | Per-run (`node main.ts`) |
+|---|---|---|
+| Mod+Enter to first output | **about 5 ms** | about 45 ms |
+
+Two limits are worth knowing, because both are visible:
+
+**Cancel restarts the helper.** There is no safe way to stop a module that is
+already running on this thread — no `Thread.Interrupt`, no `KeyboardInterrupt`.
+So the helper says nothing when asked to cancel, and TinkerPad kills it after
+two seconds and starts a fresh one. Your run stops, as it should; what you lose
+is the warmth, for the next run only. (Running each playground in a worker
+thread would make cancel work, at the cost of the sharing this exists for. It is
+a fair trade to revisit if the wait annoys.)
+
+**A playground that leaves something running holds the helper.** A server, an
+interval, an unresolved promise: the process is shared, so they outlive the run
+that started them. The helper notices and says so on its log — visible under
+**Logs** in the status bar — and **Restart** on its chip clears it.
+
+The helper also steps aside by itself every 500 runs, because the cache-busting
+query means Node keeps every module it has ever loaded. You will not notice:
+it says `retiring`, TinkerPad starts another, and no run is interrupted.
+
+To compare against the per-run path, **Force per-run execution** in the command
+palette turns the helper off for the session.
+
 ## Files
 
 | Path | Purpose |
@@ -108,3 +146,4 @@ throughout — you lose completions, not the playground.
 | `templates/` | New playground contents. |
 | `dump/tinkerpad.js`, `dump/tinkerpad.d.ts` | The dump library and its types. |
 | `dump/register.cjs`, `dump/hooks.mjs` | Make `import ... from "tinkerpad"` find the library. `hooks.mjs` is only used on Node 22.7 to 22.14. |
+| `helper/helper.mjs` | The warm runner. |

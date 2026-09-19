@@ -75,3 +75,22 @@ args = [
   "{plugin_dir}/dump/register.cjs",
   "{main}",
 ]
+
+[helper]
+# The warm runner (docs/PLUGINS.md §5, work item 03-06). No build step: it is
+# one file of JavaScript, started with the same Node and the same flags a run
+# gets, so a playground behaves identically either way.
+#
+# Every flag is here rather than inside the script, which is what lets Phase 6
+# add `--inspect=0` without touching the helper (docs/DEBUGGING.md D10).
+command = "{toolchain}"
+args = [
+  "--experimental-transform-types",
+  "--disable-warning=ExperimentalWarning",
+  "--require",
+  "{plugin_dir}/dump/register.cjs",
+  "{plugin_dir}/helper/helper.mjs",
+]
+hooks = ["run"]
+# Node is cheap to start again; half an hour of not being used is enough.
+idle_shutdown = "30m"

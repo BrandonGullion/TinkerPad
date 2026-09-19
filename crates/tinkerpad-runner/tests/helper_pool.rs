@@ -279,6 +279,51 @@ async fn a_build_that_fails_leaves_the_helper_unavailable_rather_than_half_start
 }
 
 #[tokio::test]
+async fn a_helper_that_retires_is_replaced_rather_than_mourned() {
+    let dir = scratch("retire");
+    let pool = HelperPool::default();
+    let mut config = config("fake", &dir);
+    // One run each, so the second `get` is served by a new process.
+    config
+        .spawn
+        .env
+        .push(("FAKEHELPER_RETIRE_AFTER".into(), "1".into()));
+
+    let first = pool.get(&config).await.unwrap();
+    let was = first.pid();
+    let handle = pool.get_handle("fake").unwrap();
+
+    // The fake helper retires after one run, so run something.
+    let main = dir.join("main.fake");
+    std::fs::write(&main, b"unused\n").unwrap();
+    let mut run = first
+        .run(tinkerpad_plugin::helper::RunRequest {
+            main,
+            dir: dir.clone(),
+            kind: tinkerpad_core::KindId::new("echo"),
+        })
+        .await
+        .unwrap();
+    while run.recv().await.is_some() {}
+
+    until(
+        "the replacement to be running",
+        || matches!(handle.state(), ServerState::Ready { pid, .. } if pid != was),
+    )
+    .await;
+    assert_eq!(
+        handle.restarts(),
+        0,
+        "a helper that said it was going is not a helper that crashed",
+    );
+    assert!(
+        pool.get(&config).await.unwrap().is_alive(),
+        "and the pool hands out the new one",
+    );
+    pool.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_helper_nothing_has_used_stops_on_its_own() {
     let dir = scratch("idle");
     let pool = HelperPool::default();

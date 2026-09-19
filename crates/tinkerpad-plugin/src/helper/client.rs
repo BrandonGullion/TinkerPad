@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -199,6 +199,9 @@ impl HelperRun {
 struct Shared {
     run: Mutex<Option<ActiveRun>>,
     hooks: Mutex<HashMap<String, oneshot::Sender<HookResult>>>,
+    /// Set when the helper says it is about to exit on purpose (03-06), so the
+    /// exit that follows isn't mistaken for a crash.
+    retiring: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -329,6 +332,12 @@ impl HelperClient {
     /// Whether the process is still there.
     pub fn is_alive(&self) -> bool {
         self.exit.borrow().as_ref().is_none()
+    }
+
+    /// Whether the helper said it was stepping aside for a fresh one, rather
+    /// than dying (03-06). True only after it has said so.
+    pub fn is_retiring(&self) -> bool {
+        self.shared.retiring.load(Ordering::Relaxed)
     }
 
     /// Whether the manifest says this helper implements a hook.
@@ -704,6 +713,14 @@ async fn dispatch(
                 }
                 None => debug!(hook = %id, "a result arrived for a hook nobody is waiting for"),
             }
+        }
+        FromHelper::Retiring { reason } => {
+            info!(
+                helper = name,
+                reason = reason.as_deref().unwrap_or("no reason given"),
+                "the helper is stepping aside for a fresh one",
+            );
+            shared.retiring.store(true, Ordering::Relaxed);
         }
         FromHelper::Unknown => {
             debug!(

@@ -912,8 +912,35 @@ async function typescriptScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify({ programOutcome, out: outText().slice(0, 120) }),
   );
 
-  // Leave a table and some text on screen for a screenshot.
+  // The helper (03-06): warm, and honest about what it can't do.
   await openPlayground(editor, status, created.id);
+  const runStatus = () => document.querySelector(".status-run")?.textContent ?? "";
+  let ending = runs.waitForEnd();
+  runCode(ctx, 'console.log("warm?");\nawait new Promise((r) => setTimeout(r, 1200));\n');
+  const warm = await until(() => runStatus().includes("warm"), 30_000);
+  await check("TypeScript runs on its helper", warm, runStatus());
+  await withTimeout(ending, 30_000, "warm run");
+
+  const before = (await invoke<HelperStatus[]>("helper_status")).find((h) => h.plugin === "typescript");
+  const wasPid = before?.state.kind === "ready" ? (before.state.pid ?? 0) : 0;
+
+  // Cancel: this helper can't stop a running module, so the core kills it and
+  // starts another. The run ends, which is what was asked for.
+  ending = runs.waitForEnd();
+  runCode(ctx, 'console.log("looping");\nsetInterval(() => {}, 50);\n');
+  await until(() => runStatus().startsWith("Running"), 30_000);
+  await sleep(300);
+  await runs.cancel();
+  const cancelled = await withTimeout(ending, 30_000, "cancel");
+  await check("a run that won't stop is cancelled anyway", cancelled.kind === "cancelled", JSON.stringify(cancelled));
+
+  const back = await untilAsync(async () => {
+    const helper = (await invoke<HelperStatus[]>("helper_status")).find((h) => h.plugin === "typescript");
+    return helper?.state.kind === "ready" && (helper.state.pid ?? 0) !== wasPid;
+  }, 30_000);
+  await check("and the helper comes back as a new process", back, `was ${wasPid}`);
+
+  // Leave a table and some text on screen for a screenshot.
   const last = runs.waitForEnd();
   runCode(
     ctx,
