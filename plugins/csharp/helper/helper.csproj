@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    TinkerPad's C# helper: a console app that keeps Roslyn warm and runs
+    playgrounds in-process (docs/PLUGINS.md §5, work item 03-05).
+
+    It ships as source. TinkerPad builds it on first use with
+    `dotnet build -c Release -o bin`, and again only when this folder changes,
+    so a contributor never has to publish binaries.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>TinkerPad.CSharp.Helper</AssemblyName>
+    <RootNamespace>TinkerPad.CSharp.Helper</RootNamespace>
+    <!-- Deliberately *not* InvariantGlobalization: a playground runs in this
+         process, so that setting would be its setting too, and anything
+         culture-aware (Humanizer, a date format, a culture-aware compare)
+         would behave differently here than under `dotnet run`. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- A helper is started, not shipped: no apphost, no trimming, no AOT. -->
+    <UseAppHost>false</UseAppHost>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The playground's own code is compiled at runtime, so warnings from
+         this project are the only ones worth seeing. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- TinkerPad builds this with its intermediate folder elsewhere (the
+         plugin folder may be read-only), and MSBuild's default globs only skip
+         the *current* one. A `bin`/`obj` left by someone's local build would
+         otherwise be compiled in, and generated assembly attributes would
+         collide with the new ones (CS0579). -->
+    <Compile Remove="bin/**;obj/**" />
+    <None Remove="bin/**;obj/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Roslyn: the compiler the helper keeps warm. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <!-- NuGet: resolving `#:package` directives into the user's global
+         packages folder, so a playground can use a library. -->
+    <PackageReference Include="NuGet.Protocol" Version="7.9.0" />
+    <PackageReference Include="NuGet.Resolver" Version="7.9.0" />
+  </ItemGroup>
+
+</Project>

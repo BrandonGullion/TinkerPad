@@ -85,21 +85,72 @@ The props file also:
 - sets nullable to annotations only, so `string?` works without warnings on
   every run.
 
+## The helper
+
+C# runs on a **warm helper** (work item 03-05): a small .NET console app that
+keeps Roslyn in memory and runs each playground in this process instead of
+starting a compiler and a runtime every time.
+
+TinkerPad builds it the first time you run C#, with
+`dotnet build -c Release`, into your app data folder rather than the plugin
+folder — an installed plugin may live somewhere read-only. The build takes a
+few seconds and happens once; you see its output in the results pane of the run
+that triggered it, and it runs again only when something in this folder
+changes. If the build fails — a machine with the .NET runtime but no SDK, for
+example — the run falls back to `dotnet run --file` and says so once.
+
+What a run does, in `helper/`:
+
+| File | What it is |
+|---|---|
+| `Program.cs` | The protocol loop: `hello`, `run`, `cancel`, `shutdown`. |
+| `Protocol.cs` | JSON lines in and out. Nothing here knows what a run is. |
+| `Runner.cs` | Parse, compile, load into a collectible context, run, unload. |
+| `References.cs` | The .NET reference set, read once and kept. |
+| `Packages.cs` | `#:package` directives, resolved with NuGet. |
+| `Sources.cs` | Reading `main.cs`, blanking `#:` lines without moving any. |
+| `Diagnostics.cs` | Roslyn's errors, in the shape the protocol wants. |
+
+Three things are worth knowing:
+
+**Your code runs in the helper's process.** Each run gets a collectible
+`AssemblyLoadContext`, so types, statics and loaded assemblies go when the run
+does. What doesn't go is anything your code started and left running — a
+`Task.Run` that never finishes, a timer — which keeps its context alive; the
+helper says so on its log and the memory stays until you **Restart** it from
+the status bar chip.
+
+**Errors point at your file.** The compilation emits portable PDBs and is
+parsed with the real path of `main.cs`, so an unhandled exception's stack trace
+reads `main.cs:line 7`, exactly as it does under `dotnet run`. A compile error
+comes back as the compiler's own diagnostic — file, line, column — rather than
+text a pattern had to match, and lands as a squiggle in the editor.
+
+**Packages are resolved, not restored.** `#:package Humanizer@2.14.1` is
+downloaded into the same global packages folder `dotnet restore` uses
+(`~/.nuget/packages`), with its dependencies, and kept in memory for the rest of
+the session. A package you already have is not fetched again. What this does
+*not* do is resolve version conflicts the way a full restore would: if two
+packages want different versions of the same thing, the higher one wins.
+
 ## Speed
 
-Every run compiles `main.cs`, because TinkerPad saves the file before running it.
-How long that takes depends mostly on whether .NET's compiler server is already
-running.
+Every run compiles `main.cs`, because TinkerPad saves the file before running
+it. On the helper that compile is tens of milliseconds, because the compiler,
+the .NET reference set and the dump library are already in memory.
 
-| Run | Compiler server already running | Cold compiler server |
+| Run | With the helper | Per-run (`dotnet run --file`) |
 |---|---|---|
-| First run of a new playground | about 1 s | about 2.7 s |
-| Rerun or small edit | about 0.3 s | about 1.9 s |
+| First run of a new playground | about 1.5 s (starting the helper) | about 2.2 s |
+| Rerun, unchanged | **76 ms** | about 1.0 s |
+| Run after an edit | **104 ms** | about 1.2 s |
 
-These were measured on Windows 11. On Windows today, a compiler server that
-TinkerPad starts ends with the run that started it, so runs inside TinkerPad
-usually see the cold numbers. A warm helper (work item 03-05) will remove the
-compile step.
+Measured on Windows 11 with .NET 10.0.201, from Mod+Enter to the output being
+on screen. The helper's own figure — compile, load, run — is about 50 ms of
+that.
+
+To compare for yourself, **Force per-run execution** in the command palette
+turns the helper off for the session.
 
 ## Files
 
@@ -108,3 +159,4 @@ compile step.
 | `plugin.toml` | The manifest. |
 | `templates/` | New playground contents, including `Directory.Build.props`. |
 | `dump/TinkerPad.Dump.cs` | The dump library. |
+| `helper/` | The warm runner, built on first use. |

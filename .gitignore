@@ -18,3 +18,8 @@ plugins/rust/dump/Cargo.lock
 # Python bytecode from a plugin's dump library or helper.
 __pycache__/
 *.pyc
+
+# The C# helper is built on first use, into the app's data folder; these are
+# what a local `dotnet build` in the plugin folder leaves behind.
+plugins/csharp/helper/bin/
+plugins/csharp/helper/obj/

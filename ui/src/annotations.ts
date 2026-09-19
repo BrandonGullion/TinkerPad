@@ -43,11 +43,15 @@ function build(list: EditorAnnotation[], state: EditorState): DecorationSet {
     const lineNumber = Math.min(Math.max(annotation.line, 1), state.doc.lines);
     const line = state.doc.line(lineNumber);
     const indent = line.text.length - line.text.trimStart().length;
-    const from = annotation.col
+    let from = annotation.col
       ? Math.min(line.from + annotation.col - 1, line.to)
       : line.from + indent;
     const to = line.to;
-    if (to <= from) continue;
+    // A compiler reporting something *missing* points one past the last
+    // character — `; expected` on a line of 22 characters is column 23. There
+    // is nothing there to underline, so underline what it followed.
+    if (from >= to) from = Math.max(line.from + indent, to - 1);
+    if (to <= from) continue; // A blank line: nothing to mark.
     const title = annotation.note ? `${annotation.note}\n${annotation.message}` : annotation.message;
     ranges.push(
       Decoration.mark({
