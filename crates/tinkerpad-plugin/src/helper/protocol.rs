@@ -135,6 +135,15 @@ pub enum FromHelper {
         #[serde(default)]
         lsp_config: Option<serde_json::Value>,
     },
+    /// The helper is about to exit on purpose, and would like to be started
+    /// again: its process has accumulated something it can only shed by
+    /// restarting — Node's module cache, a leaked handle, a memory figure it
+    /// doesn't like. The core starts a fresh one without counting a crash
+    /// (work item 03-06).
+    Retiring {
+        #[serde(default)]
+        reason: Option<String>,
+    },
     /// A message type this build has never heard of. Logged and ignored, so a
     /// newer helper talking to an older TinkerPad still works.
     #[serde(other)]

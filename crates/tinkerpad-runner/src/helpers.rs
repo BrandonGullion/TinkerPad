@@ -431,6 +431,18 @@ impl HelperHandle {
                 handle.life.set_state(ServerState::stopped());
                 return;
             }
+            // Nor is one the helper announced: it is stepping aside for a
+            // fresh process, so give it one straight away — no backoff, no
+            // crash count, and nothing said to the user, who didn't ask for
+            // this and doesn't need to know (03-06).
+            if client.is_retiring() {
+                info!(plugin = %handle.config.plugin, "replacing the helper that retired");
+                handle.life.set_state(ServerState::stopped());
+                if let Err(e) = handle.client().await {
+                    debug!(error = %e, "the replacement helper did not start");
+                }
+                return;
+            }
             let reason = "the helper exited".to_owned();
             match handle.life.note_crash() {
                 Crash::GiveUp { count } => {

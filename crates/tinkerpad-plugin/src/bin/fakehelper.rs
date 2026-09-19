@@ -27,6 +27,7 @@
 //! | `FAKEHELPER_HANG_ON_CANCEL` | ignores `cancel` completely |
 //! | `FAKEHELPER_IGNORE_SHUTDOWN` | ignores `shutdown`, so it has to be killed |
 //! | `FAKEHELPER_NO_BANNER` | skips the pre-`ready` noise |
+//! | `FAKEHELPER_RETIRE_AFTER` | says `retiring` and exits after this many runs |
 //!
 //! It also stands in for a plugin's `[helper.build]` command: with
 //! `FAKEHELPER_BUILD_INTO` set it appends a line to that file, says so on
@@ -52,6 +53,9 @@ fn main() {
     let mut line = String::new();
     // The run the helper is pretending to be busy with.
     let mut running: Option<String> = None;
+    // Runs finished, for the helper that steps aside after a few.
+    let mut finished = 0u32;
+    let retire_after = env("FAKEHELPER_RETIRE_AFTER").and_then(|v| v.parse::<u32>().ok());
 
     loop {
         line.clear();
@@ -77,6 +81,15 @@ fn main() {
                     std::process::exit(3);
                 }
                 running = run(&id, &message).then(|| id.clone());
+                if running.is_none() {
+                    finished += 1;
+                    // A helper that knows it should be replaced says so before
+                    // it goes, so the core doesn't call this a crash (03-06).
+                    if retire_after.is_some_and(|after| finished >= after) {
+                        send(&json!({"type": "retiring", "reason": "that is enough runs"}));
+                        std::process::exit(0);
+                    }
+                }
             }
             "cancel" => {
                 if env("FAKEHELPER_HANG_ON_CANCEL").is_some() {

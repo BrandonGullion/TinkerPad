@@ -372,7 +372,21 @@ a per-run tool does. In a diagnostic, only `message` is required; `line` is
 one-based, `severity` is `error` unless it says `warning` or `info`.
 
 `cancel` asks the helper to stop the program; report `exited` (with `code: null`)
-once it has. The helper stays alive.
+once it has. The helper stays alive. A helper that *can't* stop a running program
+— a Node helper importing a module on its own thread, say — should say nothing,
+and the core kills and restarts it after the two seconds below. That is a real
+answer; pretending to cancel is not.
+
+**Stepping aside**
+
+```json
+← {"type":"retiring","reason":"500 runs; Node's module cache keeps every one"}
+```
+
+A helper that has accumulated something it can only shed by restarting says
+this and then exits 0. The core starts a fresh one immediately — no backoff, no
+crash counted, nothing said to the user, who didn't ask for it. Send it when
+nothing is running: a run in flight when the process goes is a failed run.
 
 **Hooks** (each optional; declare in `hooks`)
 
@@ -409,6 +423,7 @@ the user didn't pin one, and the helper picks. `lsp_config` is merged into what
 | Wait | How long | What happens then |
 |---|---|---|
 | `hello` to `ready` | 10 s | kill, fall back to `[run]`, warn |
+| `retiring` to exit | 2 s | kill; either way a fresh helper is started |
 | `cancel` to `exited` | 2 s | kill and respawn; warm state is lost, which is fine |
 | a hook to its `result` | 5 s | carry on as if it returned nothing |
 | `shutdown` to exit | 2 s | kill |
@@ -515,10 +530,19 @@ The template for each kind already imports the helper, so a new playground can c
 
 ## 7. Per-language notes
 
-### TypeScript / JavaScript (Phase 1)
+### TypeScript / JavaScript
 
-- **Run:** `node --experimental-transform-types --disable-warning=ExperimentalWarning
-  --require {plugin_dir}/dump/register.cjs main.ts`, which needs Node 22.7 or later.
+- **Run:** on the helper below, or `node --experimental-transform-types
+  --disable-warning=ExperimentalWarning --require {plugin_dir}/dump/register.cjs
+  main.ts` when there isn't one. Needs Node 22.7 or later.
+- **Helper (JavaScript):** `helper/helper.mjs`, no build step, started with the
+  same flags a run gets. A run is `await import(file + "?t=…")`, with
+  `process.stdout.write` borrowed for the duration, so Node's start-up and the
+  first type-strip pass are paid once a session rather than once a run: about
+  5 ms against about 45 ms (work item 03-06). Two honest limits: it cannot
+  cancel a running module, so it says nothing and lets the core kill it; and the
+  cache-busting query keeps every module it has ever loaded, so it `retiring`s
+  after 500 runs.
   - The transform flag adds `enum`, `namespace`, and parameter properties to
     Node's type stripping. Line numbers still match the file, so stack traces and
     future breakpoints land correctly.
