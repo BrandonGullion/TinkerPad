@@ -66,7 +66,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [03-05 C# Roslyn helper](phase-3-helpers/03-05-csharp-helper.md) · L
 - [x] [03-06 TypeScript Node helper](phase-3-helpers/03-06-typescript-helper.md) · S
 - [x] [03-07 Hooks](phase-3-helpers/03-07-hooks.md) · M
-- [ ] [03-08 Run timing and history](phase-3-helpers/03-08-run-history.md) · S
+- [x] [03-08 Run timing and history](phase-3-helpers/03-08-run-history.md) · S
 
 ## Phase 4 — Polish
 

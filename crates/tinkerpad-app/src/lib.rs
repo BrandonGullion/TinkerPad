@@ -354,6 +354,21 @@ mod commands {
         Ok(())
     }
 
+    /// What a playground's last runs did, newest first (work item 03-08).
+    /// Read from its `runs.jsonl`; a playground that has never run, or whose
+    /// history has been deleted, has none.
+    #[tauri::command(async)]
+    pub fn run_history(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+        limit: Option<usize>,
+    ) -> Vec<tinkerpad_library::RunRecord> {
+        match state.library.get(&playground) {
+            Some(p) => tinkerpad_library::history::recent(&p.dir, limit.unwrap_or(20)),
+            None => Vec::new(),
+        }
+    }
+
     /// Open the folder containing TinkerPad's log files.
     #[tauri::command]
     pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> {
@@ -738,6 +753,7 @@ pub fn run() {
             commands::ping,
             commands::run,
             commands::cancel,
+            commands::run_history,
             commands::open_log_folder,
             commands::list_plugins,
             commands::toolchain_status,

@@ -17,6 +17,7 @@ use tinkerpad_core::{
     Scope, ToolchainState,
 };
 use tinkerpad_library::Library;
+use tinkerpad_library::history::{Outcome, RunRecord, Runner};
 use tinkerpad_plugin::Plugin;
 use tinkerpad_plugin::helper::RunRequest;
 use tinkerpad_runner::helper_run::{self, Waiting};
@@ -227,7 +228,14 @@ impl Runs {
             }
         }
 
-        match self.spawn(&mut active, id, playground_id, &plugin, spec) {
+        match self.spawn(
+            &mut active,
+            id,
+            playground_id,
+            &plugin,
+            spec,
+            Some(playground.dir.clone()),
+        ) {
             Ok(id) => Ok(id),
             Err(message) => fail(message),
         }
@@ -249,7 +257,9 @@ impl Runs {
             let _ = prev.forwarder.await;
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        match self.spawn(&mut active, id, playground_id, &plugin, spec) {
+        // A `[deps]` command is not a run of the playground, so it is not one
+        // of its runs (work item 03-08).
+        match self.spawn(&mut active, id, playground_id, &plugin, spec, None) {
             Ok(id) => Ok(id),
             Err(message) => {
                 warn!(run = id, playground = %playground_id, %message, "command failed to start");
@@ -318,6 +328,7 @@ impl Runs {
         };
 
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+        let dir = playground.dir.clone();
         let helpers = self.helpers.clone();
         let events = self.events.clone();
         let told = self.told.clone();
@@ -365,7 +376,16 @@ impl Runs {
                 }
             };
 
-            forward(handle, Some(cancel_rx), events, scope, id, output_spec).await;
+            forward(
+                handle,
+                Some(cancel_rx),
+                events,
+                scope,
+                id,
+                output_spec,
+                Some(dir),
+            )
+            .await;
         });
 
         *active = Some(Active {
@@ -391,10 +411,11 @@ impl Runs {
         playground_id: &PlaygroundId,
         plugin: &Plugin,
         spec: tinkerpad_runner::RunSpec,
+        history: Option<PathBuf>,
     ) -> Result<u64, String> {
         let handle = run(spec).map_err(|error| error.to_string())?;
         info!(run = id, pid = handle.pid, playground = %playground_id, plugin = %plugin.id, "run started");
-        Ok(self.attach(active, id, playground_id, plugin, handle))
+        Ok(self.attach(active, id, playground_id, plugin, handle, history))
     }
 
     /// Forward a run's output to the UI and make it this playground's current
@@ -407,6 +428,7 @@ impl Runs {
         playground_id: &PlaygroundId,
         plugin: &Plugin,
         handle: RunHandle,
+        history: Option<PathBuf>,
     ) -> u64 {
         debug!(run = id, playground = %playground_id, plugin = %plugin.id, "streaming run output");
         let cancel = handle.canceller();
@@ -417,6 +439,7 @@ impl Runs {
             Scope::Run(id),
             id,
             plugin.output.clone(),
+            history,
         ));
 
         *active = Some(Active {
@@ -498,6 +521,119 @@ fn fell_back(
     );
 }
 
+/// What a run is remembered by: enough of [`RunRecord`] to be filled in as the
+/// run goes, and written when it ends (work item 03-08).
+struct Timing {
+    started_ms: u64,
+    runner: Runner,
+    outcome: Option<Outcome>,
+    code: Option<i32>,
+    error: Option<String>,
+    /// The first line the run said on stderr, kept in case it ends badly and
+    /// the plugin's `[output]` pattern found nothing to point at.
+    first_stderr: Option<String>,
+    first_output_ms: Option<u64>,
+    reported_ms: Option<u64>,
+}
+
+impl Timing {
+    fn starting() -> Self {
+        Self {
+            started_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_millis() as u64)
+                .unwrap_or_default(),
+            // Until `started` says otherwise: a helper says so, a process is
+            // one by definition.
+            runner: Runner::PerRun,
+            outcome: None,
+            code: None,
+            error: None,
+            first_stderr: None,
+            first_output_ms: None,
+            reported_ms: None,
+        }
+    }
+
+    fn first_output(&mut self, began: &std::time::Instant) {
+        self.first_output_ms
+            .get_or_insert_with(|| began.elapsed().as_millis() as u64);
+    }
+
+    fn ended(&mut self, outcome: Outcome, code: Option<i32>, reported: Option<Duration>) {
+        self.outcome.get_or_insert(outcome);
+        self.code = code;
+        self.reported_ms = reported.map(|d| d.as_millis() as u64);
+    }
+
+    /// The first line of stderr, which is what a run that ends badly is
+    /// remembered by when its plugin found nothing to point at.
+    fn said_on_stderr(&mut self, bytes: &[u8]) {
+        if self.first_stderr.is_some() {
+            return;
+        }
+        let text = String::from_utf8_lossy(bytes);
+        let Some(line) = text.lines().find(|line| !line.trim().is_empty()) else {
+            return;
+        };
+        self.first_stderr = Some(line.trim().chars().take(200).collect());
+    }
+
+    /// The first thing that went wrong, which is the one worth showing in a
+    /// list: a later error is usually the same mistake said again.
+    fn went_wrong(&mut self, message: &str) {
+        if self.error.is_none() && !message.trim().is_empty() {
+            let line = message.lines().next().unwrap_or(message).trim();
+            self.error = Some(line.chars().take(200).collect());
+        }
+    }
+
+    /// Append the run to the playground's `runs.jsonl`, on a thread where
+    /// blocking is allowed. A run that never ended (the app is closing, the
+    /// stream just stopped) is not a run to remember.
+    async fn record(self, id: u64, dir: PathBuf, elapsed: Duration) {
+        let Some(outcome) = self.outcome else { return };
+        let duration_ms = elapsed.as_millis() as u64;
+        if let Some(reported) = self.reported_ms {
+            // The difference is what it cost to get there and back: a pipe and
+            // a protocol for a helper, process start and reaping for a command.
+            debug!(
+                run = id,
+                duration_ms,
+                reported,
+                overhead_ms = duration_ms.saturating_sub(reported),
+                runner = ?self.runner,
+                "run timing",
+            );
+        }
+        // A run that ended badly and said nothing the plugin could point at is
+        // remembered by what it did say.
+        let went_badly = outcome != Outcome::Exited || self.code != Some(0);
+        let error = self
+            .error
+            .or(if went_badly { self.first_stderr } else { None });
+        let record = RunRecord {
+            run: id,
+            started_ms: self.started_ms,
+            duration_ms,
+            outcome,
+            code: self.code,
+            runner: self.runner,
+            error,
+            first_output_ms: self.first_output_ms,
+            reported_ms: self.reported_ms,
+        };
+        let written =
+            tokio::task::spawn_blocking(move || tinkerpad_library::history::append(&dir, &record))
+                .await;
+        match written {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(run = id, %error, "could not record the run"),
+            Err(error) => warn!(run = id, %error, "recording the run panicked"),
+        }
+    }
+}
+
 /// Stream one run's output to the UI until it ends, whichever way it is being
 /// run.
 ///
@@ -511,12 +647,18 @@ async fn forward(
     scope: Scope,
     id: u64,
     output_spec: Option<tinkerpad_plugin::OutputSpec>,
+    history: Option<PathBuf>,
 ) {
     // Text, dumped values, warnings, and positions found by the plugin's
     // `[output]` pattern, decoded from the output bytes.
     let mut decoder = OutputDecoder::with_output(output_spec);
     let mut out = Vec::new();
     let (mut dumps, mut malformed, mut annotations) = (0u32, 0u32, 0u32);
+    // What this run will be remembered by (work item 03-08). The clock starts
+    // here, which for a helper run is after the waiting: the time recorded is
+    // the run, not the queue.
+    let began = std::time::Instant::now();
+    let mut timing = Timing::starting();
 
     loop {
         let event = match cancel.as_mut() {
@@ -532,11 +674,22 @@ async fn forward(
         let Some(event) = event else { break };
 
         match event {
-            RunEvent::Started { warm, .. } => out.push(UiRunEvent::Started { warm }),
-            RunEvent::Stdout(b) => decoder.stdout(&b, &mut out),
-            RunEvent::Stderr(b) => decoder.stderr(&b, &mut out),
+            RunEvent::Started { warm, .. } => {
+                timing.runner = if warm { Runner::Helper } else { Runner::PerRun };
+                out.push(UiRunEvent::Started { warm });
+            }
+            RunEvent::Stdout(b) => {
+                timing.first_output(&began);
+                decoder.stdout(&b, &mut out);
+            }
+            RunEvent::Stderr(b) => {
+                timing.first_output(&began);
+                timing.said_on_stderr(&b);
+                decoder.stderr(&b, &mut out);
+            }
             RunEvent::Exited { code, duration } => {
                 decoder.finish(&mut out);
+                timing.ended(Outcome::Exited, code, Some(duration));
                 out.push(UiRunEvent::Exited {
                     code,
                     duration_ms: duration.as_millis() as u64,
@@ -544,6 +697,7 @@ async fn forward(
             }
             RunEvent::Cancelled { duration } => {
                 decoder.finish(&mut out);
+                timing.ended(Outcome::Cancelled, None, Some(duration));
                 out.push(UiRunEvent::Cancelled {
                     duration_ms: duration.as_millis() as u64,
                 });
@@ -555,6 +709,8 @@ async fn forward(
                 diagnostics,
             } => {
                 decoder.finish(&mut out);
+                timing.ended(Outcome::Failed, None, None);
+                timing.went_wrong(&message);
                 for diagnostic in diagnostics {
                     out.push(UiRunEvent::Annotation(diagnostic.into_annotation()));
                 }
@@ -567,6 +723,7 @@ async fn forward(
                 UiRunEvent::Rich { .. } => dumps += 1,
                 UiRunEvent::Annotation(a) => {
                     annotations += 1;
+                    timing.went_wrong(&a.message);
                     debug!(run = id, line = a.line, file = ?a.file, "annotation");
                 }
                 UiRunEvent::Warning { message } => {
@@ -579,4 +736,7 @@ async fn forward(
         }
     }
     info!(run = id, dumps, malformed, annotations, "run finished");
+    if let Some(dir) = history {
+        timing.record(id, dir, began.elapsed()).await;
+    }
 }

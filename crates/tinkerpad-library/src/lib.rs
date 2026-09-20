@@ -12,12 +12,14 @@
 
 mod error;
 mod fsutil;
+pub mod history;
 mod library;
 mod meta;
 mod platform;
 mod slug;
 
 pub use error::LibraryError;
+pub use history::{RunRecord, Runner as RunRunner};
 pub use library::{
     Claimed, DEBOUNCE, Library, LibraryEvent, Listing, NewPlayground, Scaffold, Watcher,
 };

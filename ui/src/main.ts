@@ -1,6 +1,7 @@
 import { renderExamples } from "./dump/examples";
 import { Editor } from "./editor";
 import { invoke, ready, subscribe } from "./ipc";
+import { RunHistory } from "./history";
 import { createLayout } from "./layout";
 import { BottomPanel } from "./panels";
 import { openCommandPalette } from "./commands";
@@ -41,7 +42,10 @@ const runs = new RunController(tabs);
 tabs.runs = runs;
 setTabManager(tabs);
 
+const history = new RunHistory(tabs, runs);
+
 statusBar.onCancel = () => void runs.cancel();
+statusBar.onShowHistory = (anchor) => void history.toggle(anchor);
 statusBar.onOpenLogs = () => void invoke("open_log_folder").catch(() => {});
 
 // Dev builds only: Mod+Shift+E renders one dump of every kind (01-08).

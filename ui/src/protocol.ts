@@ -54,6 +54,27 @@ export type AddPackage =
   | ({ kind: "directive" } & Directive)
   | { kind: "handled"; files: string[] };
 
+/**
+ * One run of a playground, from its `runs.jsonl` (work item 03-08).
+ *
+ * `run` is the id the run had in the session that recorded it, so output this
+ * window still holds can be matched to it; it means nothing across restarts.
+ */
+export interface RunRecord {
+  run: number;
+  startedMs: number;
+  /** What the user waited for, measured in the core. */
+  durationMs: number;
+  outcome: "exited" | "cancelled" | "failed";
+  code?: number;
+  runner: "perRun" | "helper";
+  /** The first thing that went wrong. */
+  error?: string;
+  firstOutputMs?: number;
+  /** What the runner itself measured; the gap to `durationMs` is overhead. */
+  reportedMs?: number;
+}
+
 /** A file opened read-only in a peek tab (work item 02-09). */
 export interface Peek {
   path: string;

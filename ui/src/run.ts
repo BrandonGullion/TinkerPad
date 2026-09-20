@@ -11,6 +11,30 @@ import type { RunState } from "./layout";
 import type { OutputPane } from "./output";
 import type { Annotation, Envelope, RunEvent } from "./protocol";
 
+/**
+ * A finished run this window still has the output of (work item 03-08). The
+ * events, replayed, are exactly what the pane showed; nothing is persisted, so
+ * a restart leaves the run in `runs.jsonl` with its output gone.
+ */
+export interface RetainedRun {
+  /** The core's run id, which is what `runs.jsonl` records it under. */
+  id: number;
+  outcome: RunOutcome;
+  events: RunEvent[];
+  /** Whether the output was longer than this window keeps. */
+  clipped: boolean;
+}
+
+/** How many runs of a playground keep their output. */
+const KEEP_OUTPUTS = 5;
+
+/**
+ * How many events one of them keeps. A run that prints a hundred thousand
+ * lines is not one whose output is worth holding five copies of; past this it
+ * is remembered as having happened, and the pane says so when it is shown.
+ */
+const KEEP_EVENTS = 5000;
+
 export type RunOutcome =
   | { kind: "exited"; code: number | null; durationMs: number }
   | { kind: "cancelled"; durationMs: number }
@@ -46,6 +70,15 @@ interface PlaygroundRun {
   /** Identifies the latest start, so a superseded start can tell. */
   token: number;
   state: RunState;
+  /** The events of the run going on now, for when it becomes a past one. */
+  events: RunEvent[];
+  /** Whether that list stopped growing at `KEEP_EVENTS`. */
+  clipped: boolean;
+  /** Finished runs whose output is still here, newest first. */
+  past: RetainedRun[];
+  /** How long the run before the current one took, for the comparison in the
+   * status bar. */
+  previousMs: number | null;
 }
 
 export class RunController {
@@ -94,6 +127,8 @@ export class RunController {
     const token = ++this.latestToken;
     record.token = token;
     record.current = null;
+    record.events = [];
+    record.clipped = false;
     this.clickedAt = performance.now();
     this.firstOutputAt = null;
     if (CLEAR_OUTPUT_ON_RUN) this.host.outputFor(playground)?.clear();
@@ -174,6 +209,55 @@ export class RunController {
     return new Promise((resolve) => this.waiters.push(resolve));
   }
 
+  /**
+   * The finished runs of a playground whose output this window still has,
+   * newest first (work item 03-08).
+   */
+  retained(playground: string): RetainedRun[] {
+    return this.runs.get(playground)?.past ?? [];
+  }
+
+  /**
+   * Show a retained run's output in the playground's pane again. The events
+   * are replayed into it exactly as they arrived, so a dump is a dump and an
+   * annotation is still clickable.
+   */
+  replay(playground: string, run: RetainedRun): void {
+    const output = this.host.outputFor(playground);
+    if (!output) return;
+    output.clear();
+    for (const event of run.events) {
+      switch (event.kind) {
+        case "stdout":
+        case "stderr":
+          output.append(event.kind, event.text);
+          break;
+        case "rich":
+          output.appendRich(event.value);
+          break;
+        case "warning":
+          output.append("info", `⚠ ${event.message}\n`);
+          break;
+        case "annotation": {
+          const { kind: _kind, ...annotation } = event;
+          output.markAnnotation(annotation, () =>
+            this.host.revealAnnotation(playground, annotation),
+          );
+          break;
+        }
+        case "failed":
+          output.append("stderr", `${event.message}\n`);
+          break;
+        case "cancelled":
+          output.append("info", "\n[cancelled]\n");
+          break;
+      }
+    }
+    if (run.clipped) {
+      output.append("info", "\n[the rest of this run's output wasn't kept]\n");
+    }
+  }
+
   /** A playground's tab closed: forget its run. */
   forget(playground: string): void {
     this.runs.delete(playground);
@@ -202,7 +286,15 @@ export class RunController {
   private record(playground: string): PlaygroundRun {
     let record = this.runs.get(playground);
     if (!record) {
-      record = { current: null, token: 0, state: { kind: "idle" } };
+      record = {
+        current: null,
+        token: 0,
+        state: { kind: "idle" },
+        events: [],
+        clipped: false,
+        past: [],
+        previousMs: null,
+      };
       this.runs.set(playground, record);
     }
     return record;
@@ -216,6 +308,8 @@ export class RunController {
   private apply(playground: string, record: PlaygroundRun, event: RunEvent): void {
     const output = this.host.outputFor(playground);
     const latest = record.token === this.latestToken;
+    if (record.events.length < KEEP_EVENTS) record.events.push(event);
+    else record.clipped = true;
     switch (event.kind) {
       case "started": {
         // The run was already showing as running (optimistically, from the
@@ -262,11 +356,18 @@ export class RunController {
   }
 
   private finish(playground: string, record: PlaygroundRun, outcome: RunOutcome): void {
+    const id = record.current;
     record.current = null;
     const output = this.host.outputFor(playground);
+    const previousMs = record.previousMs;
     switch (outcome.kind) {
       case "exited":
-        this.setState(playground, record, { kind: "done", code: outcome.code, ms: outcome.durationMs });
+        this.setState(playground, record, {
+          kind: "done",
+          code: outcome.code,
+          ms: outcome.durationMs,
+          previousMs,
+        });
         break;
       case "cancelled":
         output?.append("info", "\n[cancelled]\n");
@@ -277,6 +378,19 @@ export class RunController {
         this.setState(playground, record, { kind: "failed" });
         break;
     }
+    if (id !== null) {
+      record.past.unshift({
+        id,
+        outcome,
+        events: record.events,
+        clipped: record.clipped,
+      });
+      record.past.length = Math.min(record.past.length, KEEP_OUTPUTS);
+      record.events = [];
+      record.clipped = false;
+    }
+    if (outcome.kind !== "failed") record.previousMs = outcome.durationMs;
+
     if (record.token !== this.latestToken) return;
     const waiters = this.waiters;
     this.waiters = [];

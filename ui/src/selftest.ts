@@ -25,6 +25,7 @@ import type {
   Listing,
   Peek,
   Playground,
+  RunRecord,
   PluginsStatus,
   RunEvent,
   Session,
@@ -2977,6 +2978,153 @@ async function hooksScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: second.id }).catch(() => {});
 }
 
+/**
+ * Run timing and history (work item 03-08): every run recorded beside its
+ * playground, the last few still showable, and the status bar saying how this
+ * one compares with the last.
+ */
+async function historyScenario(ctx: SelftestContext, check: Check) {
+  const { runs, tabs } = ctx;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+  const status = () => document.querySelector(".status-run")?.textContent ?? "";
+  const popover = () => document.querySelector(".history-popover");
+  const rows = () => [...document.querySelectorAll<HTMLElement>(".history-row")];
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const main = await openTestPlayground(ctx, "History Test");
+  // The helper's first use builds it, and that belongs to the first run; get
+  // it out of the way so the times being compared are the program's.
+  await invoke("start_helper", { plugin: "node-check" }).catch(() => {});
+
+  const history = async (): Promise<RunRecord[]> =>
+    invoke<RunRecord[]>("run_history", { playground: main.id });
+  await check("a playground that has never run has no history", (await history()).length === 0);
+
+  // A slow run, then a fast one, so the comparison has something to say.
+  let end = runs.waitForEnd();
+  runCode(ctx, 'console.log("one"); setTimeout(() => {}, 400)\n');
+  await withTimeout(end, 30_000, "the first run");
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("two")\n');
+  await withTimeout(end, 30_000, "the second run");
+
+  let records = await history();
+  const [second, first] = records;
+  await check(
+    "each run is recorded, newest first, with what it did",
+    records.length === 2 &&
+      first !== undefined &&
+      second !== undefined &&
+      first.outcome === "exited" &&
+      first.code === 0 &&
+      first.durationMs >= 400 &&
+      second.durationMs < first.durationMs &&
+      second.startedMs >= first.startedMs,
+    JSON.stringify(records),
+  );
+  await check(
+    "with the runner that ran it and where its time went",
+    second?.runner === "helper" &&
+      second?.reportedMs !== undefined &&
+      second.reportedMs <= second.durationMs &&
+      second?.firstOutputMs !== undefined,
+    JSON.stringify(second),
+  );
+
+  await check(
+    "the status bar compares this run with the one before it",
+    document.querySelector(".status-delta")?.textContent?.startsWith("▼") === true,
+    JSON.stringify({ status: status(), delta: document.querySelector(".status-delta")?.textContent }),
+  );
+
+  // A run that ends badly is remembered by what went wrong.
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.error("it went wrong"); process.exit(3)\n');
+  await withTimeout(end, 30_000, "the failing run");
+  records = await history();
+  await check(
+    "a run that ends badly records its code and the first thing it said",
+    records[0]?.code === 3 && records[0]?.error === "it went wrong",
+    JSON.stringify(records[0]),
+  );
+
+  // The list itself.
+  const runButton = document.querySelector<HTMLElement>(".status-run");
+  runButton?.click();
+  await until(() => popover() !== null, 5000);
+  await check(
+    "clicking the run indicator lists the recent runs, newest first",
+    rows().length === 3 && rows()[0]?.textContent?.includes("Exit 3") === true,
+    JSON.stringify(rows().map((r) => r.textContent)),
+  );
+
+  // Selecting one shows its output again.
+  const firstRun = rows()[2];
+  firstRun?.click();
+  await until(() => popover() === null, 3000);
+  await ctx.output.flushed();
+  await check(
+    "selecting a run shows the output it had",
+    outText() === "one\n",
+    JSON.stringify({ out: outText() }),
+  );
+
+  // Only the last five runs keep their output; older ones are their numbers.
+  for (let n = 0; n < 4; n++) {
+    end = runs.waitForEnd();
+    runCode(ctx, `console.log(${n})\n`);
+    await withTimeout(end, 30_000, `run ${n}`);
+  }
+  runButton?.click();
+  await until(() => popover() !== null, 5000);
+  const kept = rows().filter((r) => r.tagName === "BUTTON").length;
+  const gone = rows().filter((r) => r.classList.contains("history-gone")).length;
+  await check(
+    "the last five runs keep their output; the ones before are metadata only",
+    rows().length === 7 && kept === 5 && gone === 2,
+    JSON.stringify({ total: rows().length, kept, gone }),
+  );
+  runButton?.click();
+  await until(() => popover() === null, 3000);
+
+  // The file is the playground's own business: it is not a playground, and
+  // writing it is not a change to the source.
+  const listing = await invoke<Listing>("list_playgrounds");
+  await check(
+    "runs.jsonl is not listed as a playground, and does not disturb the tab",
+    listing.playgrounds.filter((p) => p.id === main.id).length === 1 &&
+      listing.broken.length === 0 &&
+      tabs.activeTab?.dirty === false &&
+      document.querySelector<HTMLElement>(".conflict-bar")?.hidden === true,
+    JSON.stringify({
+      mine: listing.playgrounds.filter((p) => p.id === main.id).length,
+      broken: listing.broken.length,
+      dirty: tabs.activeTab?.dirty,
+      conflict: !document.querySelector<HTMLElement>(".conflict-bar")?.hidden,
+    }),
+  );
+
+  // The same run without a helper: what ran it is recorded too, and the
+  // process's own time sits inside the time the user waited.
+  await invoke("force_per_run", { forced: true });
+  end = runs.waitForEnd();
+  runCode(ctx, 'console.log("cold")\n');
+  await withTimeout(end, 60_000, "the per-run run");
+  await invoke("force_per_run", { forced: false });
+  const cold = (await history())[0];
+  await check(
+    "a run with no helper is recorded as per-run, with its own time and first byte",
+    cold?.runner === "perRun" &&
+      cold?.firstOutputMs !== undefined &&
+      cold?.reportedMs !== undefined &&
+      cold.reportedMs <= cold.durationMs,
+    JSON.stringify(cold),
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: main.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -3013,6 +3161,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   helpers: helpersScenario,
   "helper-run": helperRunScenario,
   definition: definitionScenario,
+  history: historyScenario,
   hooks: hooksScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,

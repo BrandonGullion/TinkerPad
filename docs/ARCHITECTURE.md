@@ -429,6 +429,10 @@ with a marker so a `dump(hugeList)` doesn't freeze the UI).
 - The main file name is `main.<ext>` where the plugin declares `<ext>`. Deps manifests
   (`package.json`, `Cargo.toml`, `#:package` directives inside `main.cs`) are
   plugin-owned and live next to it.
+- `runs.jsonl`, beside the main file, is what each run of that playground did:
+  one JSON object per line, appended when a run ends, capped at the last 200
+  (work item 03-08). It is not part of the playground — the index ignores it,
+  the watcher doesn't react to it, and deleting it loses only the history.
 - An in-memory index (name, tags, first line of code) is built at startup and kept
   fresh by `notify`. No database. If it ever needs one, SQLite via `rusqlite`, but a
   few thousand folders don't.
