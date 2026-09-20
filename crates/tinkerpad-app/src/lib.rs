@@ -10,6 +10,7 @@
 
 pub mod events;
 mod helpers;
+mod hooks;
 mod library;
 mod logging;
 mod lsp;
@@ -23,6 +24,7 @@ mod session;
 mod settings;
 mod toolchains;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Instant;
@@ -69,6 +71,9 @@ pub struct AppState {
     library: Arc<Library>,
     /// Keeps the library watcher running; `None` if it couldn't start.
     _library_watcher: Mutex<Option<tinkerpad_library::Watcher>>,
+    /// The playgrounds with a tab open, for the hooks that are told about
+    /// them (work item 03-07).
+    open: Mutex<BTreeSet<tinkerpad_core::PlaygroundId>>,
     /// Notices raised before the UI was listening, delivered on its first `ping`.
     startup_notices: Mutex<Vec<(Level, String)>>,
 }
@@ -150,7 +155,7 @@ mod commands {
     /// (with `{{name}}` and `{{date}}` filled in), and postlude; the plugin's
     /// scaffold files are written alongside it.
     #[tauri::command(async)]
-    pub fn create_playground(
+    pub async fn create_playground(
         state: State<'_, AppState>,
         name: String,
         language: String,
@@ -182,7 +187,7 @@ mod commands {
         let display_name = name.trim().to_owned();
         let date = scaffold::today_utc();
         let scratch = tinkerpad_runner::spec::scratch_dir(&state.data_dir.join("scratch"), &plugin);
-        state
+        let created = state
             .library
             .create_with(
                 tinkerpad_library::NewPlayground {
@@ -212,16 +217,35 @@ mod commands {
                     })
                 },
             )
-            .map_err(crate::library::to_command_error)
+            .map_err(crate::library::to_command_error)?;
+
+        // The plugin's own say in what a new playground contains, after the
+        // manifest's scaffold and before anyone opens it (03-07).
+        crate::hooks::created(&state, &plugin, &created).await;
+        Ok(created)
     }
 
     /// A playground's source and which of its lines are locked.
     #[tauri::command(async)]
     pub fn open_playground(
         state: State<'_, AppState>,
+        app: tauri::AppHandle,
         id: tinkerpad_core::PlaygroundId,
     ) -> Result<crate::playgrounds::OpenedPlayground, CommandError> {
-        crate::playgrounds::open(&state, &id)
+        let opened = crate::playgrounds::open(&state, &id)?;
+        crate::hooks::tab_opened(&state, &app, &id);
+        Ok(opened)
+    }
+
+    /// A tab closed. The playground stays on disk; what goes is its place in
+    /// the list of open ones, which is what the hooks are told about (03-07).
+    #[tauri::command(async)]
+    pub fn close_playground(
+        state: State<'_, AppState>,
+        app: tauri::AppHandle,
+        id: tinkerpad_core::PlaygroundId,
+    ) {
+        crate::hooks::tab_closed(&state, &app, &id);
     }
 
     /// Rename a playground; its folder follows the new name.
@@ -702,6 +726,7 @@ pub fn run() {
                 plugins: RwLock::new(registry),
                 library: playgrounds,
                 _library_watcher: Mutex::new(library_watcher),
+                open: Mutex::default(),
                 startup_notices: Mutex::new(startup_notices),
             });
 
@@ -720,6 +745,7 @@ pub fn run() {
             commands::list_playgrounds,
             commands::create_playground,
             commands::open_playground,
+            commands::close_playground,
             commands::rename_playground,
             commands::delete_playground,
             commands::read_source,

@@ -45,10 +45,14 @@ export interface Directive {
   prefix: string;
 }
 
-/** What `add_package` did: ran a command, or gave back a line to insert. */
+/**
+ * What `add_package` did: ran a command, gave back a line to insert, or was
+ * handled by the plugin's helper itself, which changed these files (03-07).
+ */
 export type AddPackage =
   | { kind: "command"; run: number; command: string }
-  | ({ kind: "directive" } & Directive);
+  | ({ kind: "directive" } & Directive)
+  | { kind: "handled"; files: string[] };
 
 /** A file opened read-only in a peek tab (work item 02-09). */
 export interface Peek {

@@ -125,6 +125,11 @@ function handle(message) {
       });
       break;
     }
+    case "workspace/didChangeConfiguration":
+      // Say what arrived, so a test can see that a hook's `lsp_config` and
+      // `[lsp.register]` reached the server merged into one object (03-07).
+      process.stderr.write(`config ${JSON.stringify(params.settings ?? null)}\n`);
+      break;
     case "shutdown":
       reply(id, null);
       break;
