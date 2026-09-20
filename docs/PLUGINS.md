@@ -412,11 +412,31 @@ A `playground` is the object the UI uses, camelCase and absolute:
  "createdMs":1700000000000,"tags":["sql"]}
 ```
 
-`open` is every playground open in the app, this one included. Every hook
-answers with `result`, even when there is nothing to say. `files` paths are
-relative to the playground folder; `version` on `add_dependency` is absent when
-the user didn't pin one, and the helper picks. `lsp_config` is merged into what
-`[lsp.register]` sends for that playground (§4).
+`open` is every playground of this language open in the app, this one included.
+Every hook answers with `result`, even when there is nothing to say. `version`
+on `add_dependency` is absent when the user didn't pin one, and the helper
+picks. `lsp_config` is merged into what `[lsp.register]` sends for that
+playground (§4), key by key, and is dropped again when the playground closes.
+
+`files` paths are relative to the playground folder, and stay in it: a path
+that climbs out of it, names a root or a drive, is refused and logged. A helper
+that wants to write elsewhere has its own scratch folder and can write there
+itself. A hook's files may overwrite what `[scaffold]` wrote — the hook is the
+more specific statement.
+
+When each one fires:
+
+| Hook | When |
+|---|---|
+| `playground_created` | after `[scaffold]` has written the new playground's files, before the UI opens it |
+| `playground_opened` | when a tab opens it; not again while that tab stays open |
+| `playground_closed` | when its tab closes; the playground stays on disk |
+| `add_dependency` | the add-package command. Declaring it replaces `[deps]` for this plugin (§2) |
+
+Hooks are best-effort. One that is slow, missing, or broken costs the user
+nothing: it is logged and the operation carries on as if it had answered with
+nothing. The exception is `add_dependency`, where the user asked for something
+specific and is told when it didn't happen.
 
 **Timeouts**
 

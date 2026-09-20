@@ -40,13 +40,20 @@ idle_shutdown = "never"
 command = "{toolchain}"
 args = ["{main}"]
 
+# The `add_dependency` hook takes precedence over this (03-07): with the hook
+# declared, nothing here is ever used, which is what the `hooks` self-test
+# checks by watching this line not appear.
+[deps]
+kind = "inline-directive"
+directive = "// package {name}@{version}"
+
 [helper]
 # A warm runner in helper.js, so the self-tests have one on every machine (and
 # in CI) without installing anything. Built on first use by build.js, which
 # stands in for a real compile step.
 command = "node"
 args = ["{plugin_dir}/helper.js"]
-hooks = ["run"]
+hooks = ["run", "playground_created", "playground_opened", "playground_closed", "add_dependency"]
 idle_shutdown = "never"
 
 [helper.build]

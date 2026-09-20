@@ -294,6 +294,10 @@ pub struct ServerHandle {
     /// What each attached playground contributes to the registered setting,
     /// by document URI (work item 02-07).
     registrations: Mutex<std::collections::BTreeMap<String, Value>>,
+    /// What a plugin's hooks have contributed to this server's settings, by
+    /// document URI (work item 03-07). Merged on top of the registered
+    /// setting, so a plugin can say things `[lsp.register]` has no shape for.
+    hooked: Mutex<std::collections::BTreeMap<String, Value>>,
     next_id: AtomicI64,
     pending: Mutex<HashMap<i64, Pending>>,
     open_docs: Mutex<HashMap<String, DocState>>,
@@ -333,6 +337,7 @@ impl ServerHandle {
             config: config.clone(),
             connection: Mutex::default(),
             registrations: Mutex::default(),
+            hooked: Mutex::default(),
             next_id: AtomicI64::new(1),
             pending: Mutex::default(),
             open_docs: Mutex::default(),
@@ -479,17 +484,50 @@ impl ServerHandle {
     ///
     /// Empty when the plugin registers nothing, which is most of them.
     pub fn configuration(&self) -> Value {
-        let Some(setting) = &self.config.register_setting else {
-            return json!({});
+        let mut settings = match &self.config.register_setting {
+            Some(setting) => {
+                let values: Vec<Value> = self
+                    .registrations
+                    .lock()
+                    .expect("registrations lock")
+                    .values()
+                    .cloned()
+                    .collect();
+                nest(setting, Value::Array(values))
+            }
+            None => json!({}),
         };
-        let values: Vec<Value> = self
-            .registrations
+        // What the plugin's hooks asked for, on top: a hook is more specific
+        // than a manifest, and later playgrounds win over earlier ones only
+        // where they actually overlap (work item 03-07).
+        for value in self.hooked.lock().expect("hooked lock").values() {
+            merge(&mut settings, value);
+        }
+        settings
+    }
+
+    /// Add what a plugin's hook said this server should know, for one
+    /// playground, and tell the server.
+    pub async fn configure(&self, uri: &str, value: Value) {
+        let changed = self
+            .hooked
             .lock()
-            .expect("registrations lock")
-            .values()
-            .cloned()
-            .collect();
-        nest(setting, Value::Array(values))
+            .expect("hooked lock")
+            .insert(uri.to_owned(), value.clone())
+            .as_ref()
+            != Some(&value);
+        if changed {
+            self.push_configuration().await;
+        }
+    }
+
+    /// Forget what a hook said for a playground that has closed.
+    pub fn forget_configuration(&self, uri: &str) -> bool {
+        self.hooked
+            .lock()
+            .expect("hooked lock")
+            .remove(uri)
+            .is_some()
     }
 
     /// Note that the server has asked for its configuration. The proxy calls
@@ -1315,6 +1353,28 @@ fn nest(path: &str, value: Value) -> Value {
         .fold(value, |inner, part| json!({ part: inner }))
 }
 
+/// Fold `extra` into `settings`, objects merged key by key and everything else
+/// replaced.
+///
+/// A settings object is a tree of small objects, and two plugins' hooks (or a
+/// hook and `[lsp.register]`) usually touch different branches of it; merging
+/// rather than replacing is what lets them coexist (work item 03-07).
+fn merge(settings: &mut Value, extra: &Value) {
+    match (settings, extra) {
+        (Value::Object(into), Value::Object(from)) => {
+            for (key, value) in from {
+                match into.get_mut(key) {
+                    Some(existing) => merge(existing, value),
+                    None => {
+                        into.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (into, from) => *into = from.clone(),
+    }
+}
+
 /// What this client can do, which is what the editor client (02-04) supports.
 /// Kept small on purpose: a server should not send what nothing will render.
 fn client_capabilities() -> Value {
@@ -1380,5 +1440,39 @@ mod tests {
             json!({ "rust-analyzer": { "linkedProjects": ["a", "b"] } }),
         );
         assert_eq!(nest("flat", json!(1)), json!({ "flat": 1 }));
+    }
+
+    #[test]
+    fn a_hook_adds_to_the_manifest_instead_of_replacing_it() {
+        let mut settings =
+            json!({ "gopls": { "buildFlags": ["-tags=x"], "usePlaceholders": true } });
+        merge(
+            &mut settings,
+            &json!({ "gopls": { "env": { "GOFLAGS": "-mod=mod" } } }),
+        );
+        assert_eq!(
+            settings,
+            json!({
+                "gopls": {
+                    "buildFlags": ["-tags=x"],
+                    "usePlaceholders": true,
+                    "env": { "GOFLAGS": "-mod=mod" },
+                }
+            }),
+        );
+    }
+
+    #[test]
+    fn a_hook_wins_where_the_two_overlap() {
+        let mut settings = json!({ "a": { "b": 1, "c": [1] }, "d": 1 });
+        merge(&mut settings, &json!({ "a": { "b": 2, "c": [2, 3] } }));
+        assert_eq!(settings, json!({ "a": { "b": 2, "c": [2, 3] }, "d": 1 }));
+    }
+
+    #[test]
+    fn anything_that_is_not_two_objects_is_a_replacement() {
+        let mut settings = json!({ "a": 1 });
+        merge(&mut settings, &json!(["not", "an", "object"]));
+        assert_eq!(settings, json!(["not", "an", "object"]));
     }
 }

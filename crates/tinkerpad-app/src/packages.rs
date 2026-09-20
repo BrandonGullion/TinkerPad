@@ -1,7 +1,12 @@
 //! Adding a package to a playground, the way its plugin's `[deps]` says
-//! (docs/PLUGINS.md §2).
+//! (docs/PLUGINS.md §2), or the way its helper does it (03-07).
 //!
-//! Two shapes. Either a command runs in the playground folder (`cargo add`,
+//! The helper comes first. A plugin that declares an `add_dependency` hook is
+//! saying that adding a package is more than a command line and a line of
+//! text — it may have a lock file to rewrite, or a manifest to parse — and
+//! what it says goes.
+//!
+//! Failing that, two shapes. Either a command runs in the playground folder (`cargo add`,
 //! `npm install`) and its output streams into the tab like a run, or a line is
 //! inserted at the top of the main file (`#:package Foo@1.0`). The line comes
 //! back to the UI rather than being written here, so the editor, the file, and
@@ -22,6 +27,8 @@ pub enum AddPackage {
     /// The UI inserts `line` at the top of the main file. A line already
     /// starting with `prefix` plus this package's name is replaced.
     Directive { line: String, prefix: String },
+    /// The plugin's helper did it, and these files of the playground changed.
+    Handled { files: Vec<String> },
 }
 
 /// Add `name` (optionally at `version`) to a playground.
@@ -49,6 +56,23 @@ pub async fn add(
                 format!("no plugin is loaded for language `{}`", playground.language),
             )
         })?;
+
+    // The hook first, and only if the plugin declared one (03-07).
+    let asked = (!version.is_empty()).then_some(version);
+    if let Some(written) =
+        crate::hooks::add_dependency(state, &plugin, &playground, name, asked).await
+    {
+        let files = written
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&playground.dir)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        return Ok(AddPackage::Handled { files });
+    }
 
     let package = Package { name, version };
     let invalid =

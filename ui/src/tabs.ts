@@ -587,6 +587,8 @@ export class TabManager implements RunHost {
     this.tabs.splice(index, 1);
     tab.element.remove();
     tab.output.clear();
+    // The plugin may want to know (03-07); it is nothing the user waits for.
+    void invoke("close_playground", { id: tab.id }).catch(() => {});
     // Closing the document leaves the server running for the next tab (02-02).
     void this.disconnectLanguage(tab);
     if (this.active === tab) {
@@ -741,6 +743,7 @@ export class TabManager implements RunHost {
     // A push, not a variable, so the result of the callback below is still
     // typed when it's read after the await.
     const directives: Directive[] = [];
+    const handled: string[][] = [];
     tab.output.clear();
     await this.runs
       .adopt(tab.id, async () => {
@@ -753,12 +756,26 @@ export class TabManager implements RunHost {
           directives.push(result);
           return null;
         }
+        if (result.kind === "handled") {
+          handled.push(result.files);
+          return null;
+        }
         tab.output.append("info", `$ ${result.command}\n`);
         return result.run;
       })
       .catch(() => {});
     const directive = directives[0];
     if (directive) this.insertDirective(tab, name, directive);
+    const files = handled[0];
+    if (files) {
+      const what = files.length ? `Added ${name}: ${files.join(", ")}.` : `Added ${name}.`;
+      tab.output.append("info", `${what}
+`);
+      this.ui.status.flashNote(what);
+      // The hook may have rewritten the file itself; don't take the user's
+      // unsaved edits with it. A dirty tab gets the conflict bar instead.
+      if (!tab.dirty) void this.reload(tab);
+    }
   }
 
   /**

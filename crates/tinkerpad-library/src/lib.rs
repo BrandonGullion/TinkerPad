@@ -22,4 +22,7 @@ pub use library::{
     Claimed, DEBOUNCE, Library, LibraryEvent, Listing, NewPlayground, Scaffold, Watcher,
 };
 pub use meta::FILE_NAME as METADATA_FILE;
+// The same rule the library applies to a plugin's scaffold files: a plugin's
+// hooks write into a playground folder and may not escape it (work item 03-07).
+pub use meta::safe_relative;
 pub use slug::slugify;

@@ -20,7 +20,15 @@ import { invoke, subscribe } from "./ipc";
 import type { StatusBar } from "./layout";
 import { LOCKED_HINT, MISMATCH_NOTE, openPlayground } from "./playground";
 import type { OutputPane } from "./output";
-import type { LanguageToolchain, Listing, Playground, PluginsStatus, RunEvent, Session } from "./protocol";
+import type {
+  LanguageToolchain,
+  Listing,
+  Peek,
+  Playground,
+  PluginsStatus,
+  RunEvent,
+  Session,
+} from "./protocol";
 import type { RunController } from "./run";
 import { MAX_PEEKS, type TabManager } from "./tabs";
 
@@ -2804,6 +2812,171 @@ async function definitionScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: playground.id }).catch(() => {});
 }
 
+/**
+ * Plugin hooks (work item 03-07): the four moments in a playground's life
+ * that its plugin's helper is told about.
+ *
+ * The test plugin's helper answers every one of them with a line appended to
+ * `hooks.log` in the playground folder, so what arrived and when is readable
+ * from the file the core wrote on its behalf.
+ */
+async function hooksScenario(ctx: SelftestContext, check: Check) {
+  const { tabs } = ctx;
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+
+  const hooksLog = async (p: Playground): Promise<string[]> => {
+    const peek = await invoke<Peek>("open_readonly", { path: `${p.dir}/hooks.log` }).catch(
+      () => null,
+    );
+    return peek ? peek.text.split("\n").filter((line) => line !== "") : [];
+  };
+  // Hooks other than `playground_created` are answered in the background, so
+  // wait for the line rather than assuming it is already there.
+  const untilLines = async (p: Playground, n: number): Promise<string[]> => {
+    await untilAsync(async () => (await hooksLog(p)).length >= n, 15_000);
+    return hooksLog(p);
+  };
+  // `open=[...]` from a line, as a sorted list: the core keeps the open set in
+  // id order, which is not an order this test should depend on.
+  const open = (line: string): string[] => {
+    const inside = /open=\[(.*)\]/.exec(line)?.[1] ?? "";
+    return inside === "" ? [] : inside.split(",").sort();
+  };
+
+  // playground_created, before the create command has even returned.
+  const first = await invoke<Playground>("create_playground", {
+    name: "Hooks First",
+    language: "node-check",
+    kind: "script",
+  });
+  let lines = await hooksLog(first);
+  await check(
+    "playground_created fires as the playground is made, and its file lands in the folder",
+    lines[0] === "created Hooks First script",
+    JSON.stringify(lines),
+  );
+
+  // playground_opened, with the open list.
+  await openPlayground(ctx.editor, ctx.status, first.id);
+  lines = await untilLines(first, 2);
+  await check(
+    "playground_opened fires when a tab opens it, and says which are open",
+    lines[1] === "opened Hooks First open=[Hooks First]",
+    JSON.stringify(lines),
+  );
+
+  // A second playground of the same language: its hook sees both.
+  const second = await invoke<Playground>("create_playground", {
+    name: "Hooks Second",
+    language: "node-check",
+    kind: "script",
+  });
+  await openPlayground(ctx.editor, ctx.status, second.id);
+  lines = await untilLines(second, 2);
+  await check(
+    "the open list has every open playground of that language, this one included",
+    lines[0] === "created Hooks Second script" &&
+      open(lines[1] ?? "").join(",") === "Hooks First,Hooks Second",
+    JSON.stringify(lines),
+  );
+
+  // What a hook said about the server reaches it, merged into the settings
+  // `[lsp.register]` would have sent (02-07).
+  const configured = async (): Promise<string[]> => {
+    // The pool is keyed by language and root, and this plugin's server is
+    // rooted at the library, so ask which root it has rather than guess.
+    const server = (await invoke<ServerStatus[]>("server_status")).find(
+      (s) => s.language === "node-check",
+    );
+    if (!server) return [];
+    const log = await invoke<string[]>("server_log", {
+      language: "node-check",
+      root: server.root,
+    });
+    return log.filter((line) => line.includes("config "));
+  };
+  const arrived = await untilAsync(
+    async () => (await configured()).some((line) => line.includes('"opened":"Hooks Second"')),
+    20_000,
+  );
+  let configs = await configured();
+  await check(
+    "a hook's lsp_config is pushed to the language server",
+    arrived && configs[configs.length - 1]?.includes('{"open":2,"opened":"Hooks Second"}') === true,
+    JSON.stringify(configs.slice(-2)),
+  );
+
+  // Reopening the same playground is not a second opening.
+  const before = (await hooksLog(first)).length;
+  await openPlayground(ctx.editor, ctx.status, first.id);
+  await frame();
+  await check(
+    "a playground that is already open does not fire the hook again",
+    (await hooksLog(first)).length === before,
+    JSON.stringify(await hooksLog(first)),
+  );
+
+  // playground_closed, with the ones still open.
+  await tabs.close(tabs.tabs.find((t) => t.id === second.id)!);
+  lines = await untilLines(second, 3);
+  await check(
+    "playground_closed fires when the tab closes, and the closed one is no longer open",
+    lines[2] === "closed Hooks Second open=[Hooks First]",
+    JSON.stringify(lines),
+  );
+
+  // Closing it takes its settings back off the server.
+  const gone = await untilAsync(
+    async () => (await configured()).some((line) => line.includes('"opened":"Hooks First"')),
+    20_000,
+  );
+  configs = await configured();
+  await check(
+    "closing a playground drops what its hook told the server",
+    gone && configs[configs.length - 1]?.includes('{"open":1,"opened":"Hooks First"}') === true,
+    JSON.stringify(configs.slice(-2)),
+  );
+
+  // add_dependency: the hook does the work, and `[deps]` is not consulted.
+  const tab = tabs.tabs.find((t) => t.id === first.id)!;
+  tabs.activate(tab);
+  const text = () => ctx.editor.view.state.doc.toString();
+  const unchanged = text();
+  let done = runCommand("Add package");
+  await check("the add-package prompt appears", await fillPrompt(["left-pad", "1.3.0"]));
+  await done;
+  lines = await untilLines(first, 3);
+  await check(
+    "add_dependency goes to the hook, which gets the name and version",
+    lines[2] === "added left-pad@1.3.0",
+    JSON.stringify(lines),
+  );
+  await check(
+    "the hook takes precedence over [deps]: no directive is inserted",
+    text() === unchanged,
+    JSON.stringify(text().split("\n").slice(0, 2)),
+  );
+
+  // A hook that asks to write outside the playground folder is refused, and
+  // the rest of what it sent still lands.
+  done = runCommand("Add package");
+  await fillPrompt(["escape", ""]);
+  await done;
+  lines = await untilLines(first, 4);
+  const escaped = await invoke<Peek>("open_readonly", {
+    path: `${first.dir}/../escaped.txt`,
+  }).catch(() => null);
+  await check(
+    "a hook's file outside the playground folder is refused, and its other files still land",
+    escaped === null && lines[3] === "added escape@latest",
+    JSON.stringify({ escaped: escaped?.path ?? null, lines }),
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: first.id }).catch(() => {});
+  await invoke("delete_playground", { id: second.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -2840,6 +3013,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   helpers: helpersScenario,
   "helper-run": helperRunScenario,
   definition: definitionScenario,
+  hooks: hooksScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
 };

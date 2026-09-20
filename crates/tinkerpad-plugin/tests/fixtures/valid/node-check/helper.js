@@ -8,6 +8,8 @@
 //             in its scratch folder so a test can see what arrived
 //   run       runs the main file and streams its output back
 //   cancel    ends that run
+//   hooks     the four of them, each one appending a line to `hooks.log` in
+//             the playground folder so a test can see exactly what arrived
 //   shutdown  stops
 //
 // `run` starts `node <main>` rather than evaluating the file in this process.
@@ -91,6 +93,54 @@ function run(message) {
   });
 }
 
+// ---- hooks (work item 03-07) ----------------------------------------------
+//
+// Each hook answers with a `hooks.log` to write into the playground folder,
+// one line per call. Appending means reading what is there: a helper is given
+// the folder and may look in it. The writing itself goes through the returned
+// `files` rather than fs, which is the path the core has to get right.
+
+function appended(playground, line) {
+  const file = path.join(playground.dir, "hooks.log");
+  let existing = "";
+  try {
+    existing = fs.readFileSync(file, "utf8");
+  } catch {
+    // The first hook of this playground's life.
+  }
+  return { path: "hooks.log", content: `${existing}${line}\n` };
+}
+
+function hook(message) {
+  const playground = message.playground || {};
+  const open = message.open || [];
+  const names = open.map((p) => p.name).join(",");
+  switch (message.type) {
+    case "playground_created":
+      return { files: [appended(playground, `created ${playground.name} ${playground.kind}`)] };
+    case "playground_opened":
+      return {
+        files: [appended(playground, `opened ${playground.name} open=[${names}]`)],
+        // Something `[lsp.register]` has no shape for: how many are open.
+        lsp_config: { tinkerpad: { open: open.length, opened: playground.name } },
+      };
+    case "playground_closed":
+      return { files: [appended(playground, `closed ${playground.name} open=[${names}]`)] };
+    case "add_dependency": {
+      const version = message.version || "latest";
+      const files = [appended(playground, `added ${message.name}@${version}`)];
+      // A name the self-test uses to check the sandbox: a path that climbs
+      // out of the playground folder has to be refused by the core (§5).
+      if (message.name === "escape") {
+        files.push({ path: "../escaped.txt", content: "this must not be written\n" });
+      }
+      return { files };
+    }
+    default:
+      return {};
+  }
+}
+
 let buffer = "";
 process.stdin.on("data", (bytes) => {
   buffer += bytes.toString("utf8");
@@ -121,6 +171,12 @@ process.stdin.on("data", (bytes) => {
           // A cancelled program has no exit code of its own (§5).
           send({ type: "exited", id: message.id, code: null, duration_ms: 0 });
         }
+        break;
+      case "playground_created":
+      case "playground_opened":
+      case "playground_closed":
+      case "add_dependency":
+        send({ type: "result", id: message.id, ...hook(message) });
         break;
       case "shutdown":
         process.exit(0);

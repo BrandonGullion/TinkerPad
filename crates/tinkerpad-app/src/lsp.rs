@@ -182,6 +182,49 @@ pub async fn open(
     ))
 }
 
+/// The workspace root this plugin's server would be given for a playground:
+/// the playground's own folder, the library, a folder of the app's own, or
+/// none.
+///
+/// Also the key half of the pool's [`ServerKey`](tinkerpad_lsp::ServerKey), so
+/// anything that needs to find a running server — a hook pushing settings
+/// (03-07), the status strip — asks here rather than working it out again.
+pub fn root_for(
+    plugin: &Plugin,
+    playground: Option<&Playground>,
+    library_root: &std::path::Path,
+    scratch_root: &std::path::Path,
+) -> Result<Option<PathBuf>, CommandError> {
+    let Some(lsp) = plugin.lsp.as_ref() else {
+        return Ok(None);
+    };
+    // A server whose workspace is one playground's folder can't be started
+    // before there is a playground; every other strategy can.
+    let playground_dir = || -> Result<PathBuf, CommandError> {
+        playground.map(|p| p.dir.clone()).ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "{} puts its server in each playground's folder, so there is nothing to start until one is open",
+                    plugin.name
+                ),
+            )
+        })
+    };
+    Ok(match lsp.workspace {
+        Workspace::None => None,
+        Workspace::PlaygroundDir => Some(playground_dir()?),
+        Workspace::LibraryRoot => Some(library_root.to_path_buf()),
+        // A folder of the app's own, shared by every playground of this
+        // language, and empty except for whatever the plugin writes there. It
+        // is deliberately *beside* the plugin's scratch folder rather than
+        // inside it: Rust's shared cargo target directory lives there, and a
+        // server rooted above it would index every build artefact in it.
+        // The playgrounds themselves are named through `[lsp.register]`.
+        Workspace::ScratchWorkspace => Some(scratch_root.join(plugin.id.as_str()).join("lsp")),
+    })
+}
+
 /// What the plugin's `[lsp]` section says, as the pool wants it.
 ///
 /// The workspace strategy decides the root: the playground's own folder, or
@@ -203,31 +246,7 @@ fn config(
         )
     })?;
 
-    // A server whose workspace is one playground's folder can't be started
-    // before there is a playground; every other strategy can.
-    let playground_dir = || -> Result<PathBuf, CommandError> {
-        playground.map(|p| p.dir.clone()).ok_or_else(|| {
-            CommandError::new(
-                ErrorCode::InvalidInput,
-                format!(
-                    "{} puts its server in each playground's folder, so there is nothing to start until one is open",
-                    plugin.name
-                ),
-            )
-        })
-    };
-    let root: Option<PathBuf> = match lsp.workspace {
-        Workspace::None => None,
-        Workspace::PlaygroundDir => Some(playground_dir()?),
-        Workspace::LibraryRoot => Some(library_root.to_path_buf()),
-        // A folder of the app's own, shared by every playground of this
-        // language, and empty except for whatever the plugin writes there. It
-        // is deliberately *beside* the plugin's scratch folder rather than
-        // inside it: Rust's shared cargo target directory lives there, and a
-        // server rooted above it would index every build artefact in it.
-        // The playgrounds themselves are named through `[lsp.register]`.
-        Workspace::ScratchWorkspace => Some(scratch_root.join(plugin.id.as_str()).join("lsp")),
-    };
+    let root = root_for(plugin, playground, library_root, scratch_root)?;
     if let Some(root) = &root
         && let Err(error) = std::fs::create_dir_all(root)
     {
