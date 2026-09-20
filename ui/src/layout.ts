@@ -106,7 +106,9 @@ export type RunState =
   | { kind: "waiting"; message: string; since: number }
   /** `warm` when a plugin helper is running it. */
   | { kind: "running"; since: number; warm?: boolean }
-  | { kind: "done"; code: number | null; ms: number }
+  /** `previousMs` is what the run before this one took, for the comparison
+   * beside the time (work item 03-08). */
+  | { kind: "done"; code: number | null; ms: number; previousMs?: number | null }
   | { kind: "cancelled"; ms: number }
   | { kind: "failed" };
 
@@ -116,7 +118,9 @@ export class StatusBar {
   readonly servers = new ServerStrip();
   private readonly language: HTMLElement;
   private readonly note: HTMLElement;
-  private readonly run: HTMLElement;
+  private readonly run: HTMLButtonElement;
+  private readonly runLabel: HTMLElement;
+  private readonly delta: HTMLElement;
   private readonly cancelButton: HTMLButtonElement;
   private timer = 0;
   private noteTimer = 0;
@@ -126,6 +130,8 @@ export class StatusBar {
   onCancel: () => void = () => {};
   /** Called when the user clicks Logs. */
   onOpenLogs: () => void = () => {};
+  /** Called when the user clicks the run indicator: the run history (03-08). */
+  onShowHistory: (anchor: HTMLElement) => void = () => {};
 
   constructor() {
     this.element = document.createElement("footer");
@@ -138,8 +144,18 @@ export class StatusBar {
     this.note.hidden = true;
     const spacer = document.createElement("span");
     spacer.className = "status-spacer";
-    this.run = document.createElement("span");
+    // A button, because it opens the history of this playground's runs; it
+    // still reads as the run indicator it has always been.
+    this.run = document.createElement("button");
     this.run.className = "status-run";
+    this.run.title = "Recent runs of this playground";
+    this.run.addEventListener("click", () => this.onShowHistory(this.run));
+    this.runLabel = document.createElement("span");
+    this.runLabel.className = "status-run-label";
+    this.delta = document.createElement("span");
+    this.delta.className = "status-delta";
+    this.delta.hidden = true;
+    this.run.append(this.runLabel, this.delta);
     this.cancelButton = document.createElement("button");
     this.cancelButton.className = "status-cancel";
     this.cancelButton.textContent = "Cancel";
@@ -193,16 +209,19 @@ export class StatusBar {
     clearInterval(this.timer);
     this.timer = 0;
     this.run.className = `status-run run-${state.kind}`;
+    this.delta.hidden = true;
+    this.delta.textContent = "";
+    this.delta.title = "";
     this.cancelButton.hidden = state.kind !== "running" && state.kind !== "waiting";
     switch (state.kind) {
       case "idle":
-        this.run.textContent = "Ready";
+        this.runLabel.textContent = "Ready";
         break;
       case "waiting": {
         // Still the user's run, so the clock keeps going; it just isn't the
         // program's time yet.
         const tick = () => {
-          this.run.textContent = `${state.message} ${formatMs(performance.now() - state.since)}`;
+          this.runLabel.textContent = `${state.message} ${formatMs(performance.now() - state.since)}`;
         };
         tick();
         this.timer = window.setInterval(tick, 100);
@@ -213,26 +232,44 @@ export class StatusBar {
         // rather than a process started for it (work item 03-03).
         const warm = state.warm ? " · warm" : "";
         const tick = () => {
-          this.run.textContent = `Running ${formatMs(performance.now() - state.since)}${warm}`;
+          this.runLabel.textContent = `Running ${formatMs(performance.now() - state.since)}${warm}`;
         };
         tick();
         this.timer = window.setInterval(tick, 100);
         break;
       }
       case "done":
-        this.run.textContent =
+        this.runLabel.textContent =
           state.code === 0
             ? `Exit 0 · ${formatMs(state.ms)}`
             : `Exit ${state.code ?? "?"} · ${formatMs(state.ms)}`;
         this.run.classList.toggle("run-error", state.code !== 0);
+        this.showDelta(state.ms, state.previousMs ?? null);
         break;
       case "cancelled":
-        this.run.textContent = `Cancelled · ${formatMs(state.ms)}`;
+        this.runLabel.textContent = `Cancelled · ${formatMs(state.ms)}`;
         break;
       case "failed":
-        this.run.textContent = "Failed to start";
+        this.runLabel.textContent = "Failed to start";
         break;
     }
+  }
+
+  /**
+   * How this run compares with the one before it. Shown only when the
+   * difference is big enough to mean something: machines are noisy, and an
+   * arrow that flickers on every run is worse than none (work item 03-08).
+   */
+  private showDelta(ms: number, previousMs: number | null): void {
+    if (previousMs === null || previousMs <= 0) return;
+    const change = (ms - previousMs) / previousMs;
+    if (Math.abs(change) < 0.15 || Math.abs(ms - previousMs) < 3) return;
+    const slower = change > 0;
+    this.delta.textContent = `${slower ? "▲" : "▼"} ${Math.abs(Math.round(change * 100))}%`;
+    this.delta.title = `${slower ? "Slower" : "Faster"} than the previous run (${formatMs(previousMs)})`;
+    this.delta.classList.toggle("delta-slower", slower);
+    this.delta.classList.toggle("delta-faster", !slower);
+    this.delta.hidden = false;
   }
 }
 

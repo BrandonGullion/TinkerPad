@@ -3999,6 +3999,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tinkerpad-core",
  "toml 0.8.23",

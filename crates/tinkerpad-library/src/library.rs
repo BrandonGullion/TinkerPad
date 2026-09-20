@@ -15,7 +15,7 @@ use tinkerpad_core::{
 use tracing::{debug, info, warn};
 
 use crate::error::LibraryError;
-use crate::{fsutil, meta, platform, slug};
+use crate::{fsutil, history, meta, platform, slug};
 
 /// How long file events are collected before being handled, so one save
 /// (which some platforms report several times) is handled once.
@@ -35,6 +35,7 @@ safe to keep under version control or to share.
     fizz-buzz/
       playground.toml   id, name, language, kind, main file, created, tags
       main.cs           the code
+      runs.jsonl        what each run did; delete it and you lose only that
 
 You can rename, copy, or delete folders here while TinkerPad is running; it
 notices. Copying a folder duplicates its `id`, so give the copy a new one (or
@@ -470,7 +471,9 @@ impl Library {
         let mut folders = BTreeSet::new();
         let mut touched_files = BTreeSet::new();
         for path in paths {
-            if fsutil::is_tmp(&path) {
+            if fsutil::is_tmp(&path) || path.ends_with(history::HISTORY_FILE) {
+                // A run recording itself is not a change to the library
+                // (work item 03-08).
                 continue;
             }
             let rel = path

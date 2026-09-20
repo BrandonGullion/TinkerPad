@@ -163,6 +163,12 @@ export class TabManager implements RunHost {
     return this.active?.peek ? null : this.activeId;
   }
 
+  /** What to call the active playground: the run history's title (03-08). */
+  activeName(): string | null {
+    const id = this.activePlayground();
+    return id === null ? null : (this.listing.get(id)?.name ?? null);
+  }
+
   outputFor(playground: string): OutputPane | null {
     return this.find(playground)?.output ?? null;
   }
