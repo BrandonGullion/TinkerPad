@@ -8,6 +8,7 @@
 //! main = "main.cs"                     # relative to the folder
 //! created = 2026-09-14T20:11:00Z
 //! tags = ["experiments"]
+//! pinned = true                        # optional; top of the library panel
 //!
 //! [plugin.rust]                        # optional, owned by that plugin
 //! plugin_dir = "C:/Program Files/TinkerPad/plugins/rust"
@@ -34,6 +35,10 @@ struct Meta {
     created: Option<toml::value::Datetime>,
     #[serde(default)]
     tags: Vec<String>,
+    /// Kept at the top of the library panel (work item 04-01). Absent when
+    /// false, so an unpinned playground's file looks as it always did.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pinned: bool,
     /// Plugin-owned values, one table per plugin id: `[plugin.rust]`. The
     /// library keeps them but never interprets them.
     #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
@@ -87,6 +92,7 @@ pub fn read(dir: &Path) -> Result<Playground, String> {
         main_file: dir.join(main),
         created_ms,
         tags: meta.tags,
+        pinned: meta.pinned,
     })
 }
 
@@ -128,6 +134,7 @@ pub fn write_with(p: &Playground, plugin: toml::Table) -> std::io::Result<()> {
         main,
         created,
         tags: p.tags.clone(),
+        pinned: p.pinned,
         plugin,
     };
     let text = toml::to_string(&meta).map_err(std::io::Error::other)?;
@@ -174,6 +181,7 @@ mod tests {
             main_file: dir.join("src").join("main.rs"),
             created_ms: 1_789_000_000_000,
             tags: vec!["a".into(), "b".into()],
+            pinned: true,
         };
         write(&p).unwrap();
         let text = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();

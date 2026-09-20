@@ -16,6 +16,7 @@ pub mod history;
 mod library;
 mod meta;
 mod platform;
+mod search;
 mod slug;
 
 pub use error::LibraryError;
@@ -24,6 +25,7 @@ pub use library::{
     Claimed, DEBOUNCE, Library, LibraryEvent, Listing, NewPlayground, Scaffold, Watcher,
 };
 pub use meta::FILE_NAME as METADATA_FILE;
+pub use search::{MatchField, SearchHit};
 // The same rule the library applies to a plugin's scaffold files: a plugin's
 // hooks write into a playground folder and may not escape it (work item 03-07).
 pub use meta::safe_relative;

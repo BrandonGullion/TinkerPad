@@ -51,6 +51,7 @@ fn playground(dir: &Path, name: &str) -> Playground {
         main_file: dir.join("main.fake"),
         created_ms: 1_700_000_000_000,
         tags: Vec::new(),
+        pinned: false,
     }
 }
 

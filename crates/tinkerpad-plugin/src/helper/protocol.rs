@@ -300,6 +300,7 @@ mod tests {
             main_file: PathBuf::from("/tmp/scratch/main.cs"),
             created_ms: 1_700_000_000_000,
             tags: Vec::new(),
+            pinned: false,
         }
     }
 

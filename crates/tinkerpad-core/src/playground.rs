@@ -79,6 +79,8 @@ pub struct Playground {
     /// Milliseconds since the Unix epoch.
     pub created_ms: u64,
     pub tags: Vec<String>,
+    /// Kept at the top of the library panel (work item 04-01).
+    pub pinned: bool,
 }
 
 /// A playground as listed in the library.

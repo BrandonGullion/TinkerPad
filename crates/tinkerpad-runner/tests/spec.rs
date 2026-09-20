@@ -81,6 +81,7 @@ fn playground(root: &Path) -> Playground {
         dir,
         created_ms: 0,
         tags: Vec::new(),
+        pinned: false,
     }
 }
 

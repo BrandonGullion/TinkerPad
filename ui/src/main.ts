@@ -2,6 +2,7 @@ import { renderExamples } from "./dump/examples";
 import { Editor } from "./editor";
 import { invoke, ready, subscribe } from "./ipc";
 import { RunHistory } from "./history";
+import { LibraryPanel } from "./library";
 import { createLayout } from "./layout";
 import { BottomPanel } from "./panels";
 import { openCommandPalette } from "./commands";
@@ -15,7 +16,8 @@ import { toast } from "./toast";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
-const { tabStrip, conflictBar, editorHost, emptyState, panelHost, statusBar } = createLayout(root);
+const layout = createLayout(root);
+const { tabStrip, conflictBar, editorHost, emptyState, panelHost, statusBar } = layout;
 
 const outputHost = document.createElement("div");
 outputHost.className = "output-host";
@@ -43,6 +45,15 @@ tabs.runs = runs;
 setTabManager(tabs);
 
 const history = new RunHistory(tabs, runs);
+const library = new LibraryPanel(layout.sidebar, {
+  open: (id) => tabs.open(id),
+  activePlayground: () => tabs.activePlayground(),
+  recent: () => tabs.recent(),
+  closed: (id) => tabs.closed(id),
+  languageName: (id) => tabs.languageName(id),
+});
+
+window.addEventListener("tinkerpad:toggle-library", () => library.toggle());
 
 statusBar.onCancel = () => void runs.cancel();
 statusBar.onShowHistory = (anchor) => void history.toggle(anchor);
@@ -97,6 +108,11 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
   }
   if (!mod || e.altKey) return false;
   switch (key) {
+    // The library panel (work item 04-01).
+    case "b":
+      if (e.shiftKey) return false;
+      library.toggle();
+      return true;
     case "n":
       void (e.shiftKey ? tabs.pickAndCreate() : tabs.newPlayground());
       return true;

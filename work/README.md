@@ -70,7 +70,7 @@ time passes, or by a later item); the item file says why each one is open.
 
 ## Phase 4 — Polish
 
-- [ ] [04-01 Library search, tags, recents](phase-4-polish/04-01-library-search.md) · M
+- [x] [04-01 Library search, tags, recents](phase-4-polish/04-01-library-search.md) · M
 - [ ] [04-02 Settings](phase-4-polish/04-02-settings.md) · M
 - [ ] [04-03 Command palette and keybindings](phase-4-polish/04-03-command-palette.md) · M
 - [ ] [04-04 Themes](phase-4-polish/04-04-themes.md) · S

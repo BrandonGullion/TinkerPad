@@ -432,3 +432,254 @@ fn writing_identical_source_leaves_the_file_alone() {
     assert!(lib.write_source(&p.id, "two\n").unwrap());
     assert_eq!(std::fs::read_to_string(&p.main_file).unwrap(), "two\n");
 }
+
+// ---- search, tags, pinning, duplicating (work item 04-01) -----------------
+
+/// A playground with source in it, so there is something to search.
+fn with_source(
+    lib: &Library,
+    name: &str,
+    tags: &[&str],
+    source: &str,
+) -> tinkerpad_core::Playground {
+    let p = lib.create(new(name)).unwrap();
+    lib.write_source(&p.id, source).unwrap();
+    if !tags.is_empty() {
+        let tags: Vec<String> = tags.iter().map(|t| (*t).to_owned()).collect();
+        lib.set_tags(&p.id, &tags).unwrap();
+    }
+    lib.get(&p.id).unwrap()
+}
+
+fn found(lib: &Library, query: &str) -> Vec<String> {
+    lib.search(query, 20)
+        .into_iter()
+        .map(|hit| hit.summary.playground.name)
+        .collect()
+}
+
+#[test]
+fn search_finds_a_playground_by_name_tag_or_source() {
+    let s = Scratch::new("search");
+    let lib = Library::open(&s.0).unwrap();
+    with_source(
+        &lib,
+        "Fizz Buzz",
+        &["katas"],
+        "for (var i = 1; i < 100; i++) { }
+",
+    );
+    with_source(
+        &lib,
+        "Shapes",
+        &["json"],
+        "var doc = Parse(fizzy);
+",
+    );
+    with_source(
+        &lib,
+        "Empty",
+        &[],
+        "var x = 1;
+",
+    );
+
+    assert_eq!(
+        found(&lib, "fizz"),
+        ["Fizz Buzz", "Shapes"],
+        "name before source"
+    );
+    assert_eq!(found(&lib, "katas"), ["Fizz Buzz"]);
+    assert_eq!(found(&lib, "json"), ["Shapes"]);
+    assert_eq!(found(&lib, "var").len(), 3, "all three have `var` in them");
+    assert!(found(&lib, "nothing at all").is_empty());
+
+    let hit = lib.search("fizzy", 10).remove(0);
+    assert_eq!(hit.field, Some(tinkerpad_library::MatchField::Source));
+    assert_eq!(hit.snippet.as_deref(), Some("var doc = Parse(fizzy);"));
+}
+
+#[test]
+fn a_saved_edit_is_searchable_at_once() {
+    let s = Scratch::new("search-edit");
+    let lib = Library::open(&s.0).unwrap();
+    let p = with_source(
+        &lib,
+        "Notes",
+        &[],
+        "nothing here
+",
+    );
+    assert!(found(&lib, "lighthouse").is_empty());
+    lib.write_source(
+        &p.id,
+        "// lighthouse
+",
+    )
+    .unwrap();
+    assert_eq!(found(&lib, "lighthouse"), ["Notes"], "no rescan needed");
+}
+
+#[test]
+fn tags_are_tidied_and_kept_in_the_file() {
+    let s = Scratch::new("tags");
+    let lib = Library::open(&s.0).unwrap();
+    let p = lib.create(new("Tagged")).unwrap();
+    let tags = [
+        "json".to_owned(),
+        "  ".to_owned(),
+        "JSON".to_owned(),
+        " api ".to_owned(),
+    ];
+    let tagged = lib.set_tags(&p.id, &tags).unwrap();
+    assert_eq!(
+        tagged.tags,
+        ["json", "api"],
+        "blank dropped, duplicate collapsed, trimmed"
+    );
+
+    let text = std::fs::read_to_string(p.dir.join(METADATA_FILE)).unwrap();
+    assert!(text.contains("tags = [\"json\", \"api\"]"), "{text}");
+    lib.rescan();
+    assert_eq!(lib.get(&p.id).unwrap().tags, ["json", "api"]);
+}
+
+#[test]
+fn pinning_survives_a_rescan_and_sorts_first() {
+    let s = Scratch::new("pinned");
+    let lib = Library::open(&s.0).unwrap();
+    let first = lib.create(new("Aaa")).unwrap();
+    let second = lib.create(new("Zzz")).unwrap();
+    lib.set_pinned(&second.id, true).unwrap();
+    lib.rescan();
+
+    assert!(lib.get(&second.id).unwrap().pinned);
+    assert!(!lib.get(&first.id).unwrap().pinned);
+    assert_eq!(found(&lib, "")[0], "Zzz", "pinned first");
+
+    let text = std::fs::read_to_string(first.dir.join(METADATA_FILE)).unwrap();
+    assert!(
+        !text.contains("pinned"),
+        "unpinned stays out of the file: {text}"
+    );
+
+    lib.set_pinned(&second.id, false).unwrap();
+    lib.rescan();
+    assert!(!lib.get(&second.id).unwrap().pinned);
+}
+
+#[test]
+fn duplicating_copies_the_code_and_not_the_mess() {
+    let s = Scratch::new("duplicate");
+    let lib = Library::open(&s.0).unwrap();
+    let p = with_source(
+        &lib,
+        "Notes",
+        &["keep"],
+        "// the code
+",
+    );
+    std::fs::write(
+        p.dir.join("runs.jsonl"),
+        "{}
+",
+    )
+    .unwrap();
+    std::fs::write(
+        p.dir.join("helper.json"),
+        "{}
+",
+    )
+    .unwrap();
+    std::fs::create_dir_all(p.dir.join("node_modules").join("left-pad")).unwrap();
+    std::fs::write(
+        p.dir.join("node_modules").join("left-pad").join("index.js"),
+        "x",
+    )
+    .unwrap();
+
+    let copy = lib.duplicate(&p.id).unwrap();
+    assert_eq!(copy.name, "Notes copy");
+    assert_ne!(copy.id, p.id);
+    assert_ne!(copy.dir, p.dir);
+    assert_eq!(copy.tags, ["keep"], "tags come along");
+    assert_eq!(
+        lib.read_source(&copy.id).unwrap(),
+        "// the code
+"
+    );
+    assert!(
+        copy.dir.join("helper.json").is_file(),
+        "other files come along"
+    );
+    assert!(
+        !copy.dir.join("runs.jsonl").exists(),
+        "the history does not"
+    );
+    assert!(
+        !copy.dir.join("node_modules").exists(),
+        "nor what a toolchain filled in"
+    );
+
+    // A copy of a copy counts up rather than nesting "copy copy".
+    assert_eq!(lib.duplicate(&copy.id).unwrap().name, "Notes copy 2");
+    assert_eq!(lib.search("", 20).len(), 3);
+}
+
+#[test]
+fn search_of_a_big_library_is_quick() {
+    let s = Scratch::new("search-speed");
+    let lib = Library::open(&s.0).unwrap();
+    // 2,000 playgrounds of a few lines each, as the work item asks for. Built
+    // by hand: `create` for each would spend the test's time on the file
+    // system rather than on what is being measured.
+    let source = "using System;
+var total = 0;
+for (var i = 0; i < 100; i++) total += i;
+Console.WriteLine(total);
+";
+    for n in 0..2_000u32 {
+        let dir = s.0.join(format!("playground-{n}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("main.cs"),
+            format!(
+                "// playground {n}
+{source}"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(METADATA_FILE),
+            format!(
+                "id = \"{}\"
+name = \"Playground {n}\"
+language = \"csharp\"
+kind = \"statements\"
+main = \"main.cs\"
+tags = [\"generated\"]
+",
+                ulid_like(n)
+            ),
+        )
+        .unwrap();
+    }
+    lib.rescan();
+    assert_eq!(lib.search("", 5_000).len(), 2_000);
+
+    for query in ["console", "playground 1999", "generated", "nothing"] {
+        let started = Instant::now();
+        let hits = lib.search(query, 50);
+        let took = started.elapsed();
+        println!("search {query:?}: {} hits in {:?}", hits.len(), took);
+        // Twenty milliseconds is the budget; debug builds are a few times
+        // slower than what ships, so the assertion is loose and the number
+        // printed above is the measurement.
+        assert!(took < Duration::from_millis(200), "{query:?} took {took:?}");
+    }
+}
+
+/// A valid ULID per number, so the fixtures above are readable ids.
+fn ulid_like(n: u32) -> String {
+    format!("01M30D7HT6YP8ESCX8XR4{:05}", n)
+}

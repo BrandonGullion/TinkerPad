@@ -20,6 +20,9 @@ pub struct Session {
     pub active: Option<String>,
     /// The language `Mod+N` uses when no tab is open.
     pub last_language: Option<String>,
+    /// Playgrounds opened lately, most recent first (work item 04-01). The
+    /// window keeps the list; the core only stores it.
+    pub recent: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -97,6 +100,7 @@ mod tests {
             ],
             active: Some("B".into()),
             last_language: Some("rust".into()),
+            recent: vec!["B".into(), "A".into()],
         };
         save(&path, &session).unwrap();
         assert_eq!(load(&path), session);

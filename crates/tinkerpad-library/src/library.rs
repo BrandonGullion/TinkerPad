@@ -15,16 +15,12 @@ use tinkerpad_core::{
 use tracing::{debug, info, warn};
 
 use crate::error::LibraryError;
-use crate::{fsutil, history, meta, platform, slug};
+use crate::search::{Indexed, SearchHit};
+use crate::{fsutil, history, meta, platform, search, slug};
 
 /// How long file events are collected before being handled, so one save
 /// (which some platforms report several times) is handled once.
 pub const DEBOUNCE: Duration = Duration::from_millis(100);
-
-/// Longest preview line, in characters.
-const PREVIEW_CHARS: usize = 120;
-/// How much of a main file is read to find the preview line.
-const PREVIEW_BYTES: usize = 16 * 1024;
 
 const README: &str = "# TinkerPad library
 
@@ -97,13 +93,32 @@ pub struct Listing {
 #[derive(Default)]
 struct Index {
     by_id: BTreeMap<PlaygroundId, Playground>,
+    /// What each playground can be found by: its name, tags, and the text of
+    /// its main file (work item 04-01). Read once, when the folder is
+    /// indexed, and kept in step by the watcher.
+    searchable: BTreeMap<PlaygroundId, Indexed>,
     /// Keyed by folder.
     broken: BTreeMap<PathBuf, BrokenPlayground>,
 }
 
 impl Index {
+    /// Add or replace a playground, reading what it can be searched by.
+    fn insert(&mut self, p: Playground) {
+        self.searchable.insert(p.id.clone(), Indexed::of(&p));
+        self.by_id.insert(p.id.clone(), p);
+    }
+
     fn remove_dir(&mut self, dir: &Path) {
-        self.by_id.retain(|_, p| p.dir != dir);
+        let gone: Vec<PlaygroundId> = self
+            .by_id
+            .iter()
+            .filter(|(_, p)| p.dir == dir)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in gone {
+            self.by_id.remove(&id);
+            self.searchable.remove(&id);
+        }
         self.broken.remove(dir);
     }
 
@@ -286,6 +301,7 @@ impl Library {
                 // in-memory copy equals what a re-read produces.
                 created_ms: meta::to_ms(std::time::SystemTime::now()) / 1000 * 1000,
                 tags: Vec::new(),
+                pinned: false,
             };
             // Metadata last, so a watcher never sees a half-made playground.
             let mut plugin = toml::Table::new();
@@ -305,9 +321,7 @@ impl Library {
             Ok(playground) => {
                 self.remember_source(&playground.main_file);
                 index.remove_dir(&dir);
-                index
-                    .by_id
-                    .insert(playground.id.clone(), playground.clone());
+                index.insert(playground.clone());
                 info!(id = %playground.id, dir = %dir.display(), "playground created");
                 Ok(playground)
             }
@@ -360,7 +374,7 @@ impl Library {
 
         index.remove_dir(&old_dir);
         index.remove_dir(&p.dir);
-        index.by_id.insert(p.id.clone(), p.clone());
+        index.insert(p.clone());
         info!(id = %p.id, from = %old_dir.display(), to = %p.dir.display(), "playground renamed");
         Ok(p)
     }
@@ -407,8 +421,15 @@ impl Library {
             .expect("known lock")
             .insert(p.main_file.clone(), hash_bytes(text.as_bytes()));
         fsutil::write_atomic(&p.main_file, text.as_bytes())
-            .map(|()| true)
-            .map_err(|e| LibraryError::io(&p.main_file, e))
+            .map_err(|e| LibraryError::io(&p.main_file, e))?;
+        // The text the user just saved is what a search should find, without
+        // waiting for the watcher to say so (work item 04-01).
+        self.index
+            .write()
+            .expect("index lock")
+            .searchable
+            .insert(p.id.clone(), Indexed::from_text(&p, text.to_owned()));
+        Ok(true)
     }
 
     /// Every playground, most recently modified first.
@@ -417,10 +438,16 @@ impl Library {
         let mut playgrounds: Vec<PlaygroundSummary> = index
             .by_id
             .values()
-            .map(|p| PlaygroundSummary {
-                modified_ms: modified_ms(p),
-                preview: preview(&p.main_file),
-                playground: p.clone(),
+            .map(|p| {
+                // Both from the index, which the watcher and our own writes
+                // keep in step; a listing that stats every folder is a listing
+                // that costs a disk (work item 04-01).
+                let indexed = index.searchable.get(&p.id);
+                PlaygroundSummary {
+                    modified_ms: indexed.map_or_else(|| modified_ms(p), |i| i.modified_ms),
+                    preview: indexed.map(|i| i.preview.clone()).unwrap_or_default(),
+                    playground: p.clone(),
+                }
             })
             .collect();
         playgrounds.sort_by(|a, b| {
@@ -432,6 +459,107 @@ impl Library {
             root: self.root.clone(),
             playgrounds,
             broken: index.broken.values().cloned().collect(),
+        }
+    }
+
+    /// The playgrounds matching `query`, best first (work item 04-01).
+    ///
+    /// An empty query is every playground, pinned first and then by when it
+    /// was last touched — which is the library panel with nothing typed in it.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        let index = self.index.read().expect("index lock");
+        let entries = index.by_id.values().filter_map(|p| {
+            let indexed = index.searchable.get(&p.id)?;
+            let summary = PlaygroundSummary {
+                modified_ms: indexed.modified_ms,
+                preview: indexed.preview.clone(),
+                playground: p.clone(),
+            };
+            Some((summary, indexed.clone()))
+        });
+        search::rank(entries, query, limit)
+    }
+
+    /// Replace a playground's tags. Blank tags are dropped, duplicates (case
+    /// insensitively) collapse, and the rest are kept in the order given.
+    pub fn set_tags(&self, id: &PlaygroundId, tags: &[String]) -> Result<Playground, LibraryError> {
+        let mut index = self.index.write().expect("index lock");
+        let mut p = index
+            .by_id
+            .get(id)
+            .cloned()
+            .ok_or_else(|| LibraryError::NotFound(id.clone()))?;
+        let mut kept: Vec<String> = Vec::new();
+        for tag in tags {
+            let tag = tag.trim();
+            if tag.is_empty() || kept.iter().any(|k| k.eq_ignore_ascii_case(tag)) {
+                continue;
+            }
+            kept.push(tag.to_owned());
+        }
+        if kept == p.tags {
+            return Ok(p);
+        }
+        p.tags = kept;
+        meta::write(&p).map_err(|e| LibraryError::io(&p.dir, e))?;
+        index.insert(p.clone());
+        info!(id = %p.id, tags = ?p.tags, "tags changed");
+        Ok(p)
+    }
+
+    /// Pin or unpin a playground.
+    pub fn set_pinned(&self, id: &PlaygroundId, pinned: bool) -> Result<Playground, LibraryError> {
+        let mut index = self.index.write().expect("index lock");
+        let mut p = index
+            .by_id
+            .get(id)
+            .cloned()
+            .ok_or_else(|| LibraryError::NotFound(id.clone()))?;
+        if p.pinned == pinned {
+            return Ok(p);
+        }
+        p.pinned = pinned;
+        meta::write(&p).map_err(|e| LibraryError::io(&p.dir, e))?;
+        index.insert(p.clone());
+        info!(id = %p.id, pinned, "playground pinned");
+        Ok(p)
+    }
+
+    /// Copy a playground into a new one: same files, new id, new folder.
+    ///
+    /// What a playground made is not what it is: `runs.jsonl` and the folders
+    /// a toolchain fills (`node_modules`, `target`, `bin`, `obj`) are left
+    /// behind, so a duplicate starts as clean as a new playground with the
+    /// same code in it. Its tags and its `[plugin.*]` tables come along,
+    /// because those are what it is.
+    pub fn duplicate(&self, id: &PlaygroundId) -> Result<Playground, LibraryError> {
+        let source = self.require(id)?;
+        let main_path = source
+            .main_file
+            .strip_prefix(&source.dir)
+            .unwrap_or(Path::new("main"))
+            .to_path_buf();
+        let mut files = Vec::new();
+        copy_into(&source.dir, Path::new(""), &mut files)?;
+        let copy = self.create(NewPlayground {
+            name: copy_name(&source.name),
+            language: source.language.clone(),
+            kind: source.kind.clone(),
+            main_path,
+            files,
+        })?;
+
+        let plugin = meta::plugin_tables(&source.dir);
+        if !plugin.is_empty()
+            && let Err(e) = meta::write_with(&copy, plugin)
+        {
+            warn!(id = %copy.id, error = %e, "could not carry the plugin tables over");
+        }
+        info!(from = %source.id, to = %copy.id, "playground duplicated");
+        if source.tags.is_empty() {
+            Ok(copy)
+        } else {
+            self.set_tags(&copy.id, &source.tags)
         }
     }
 
@@ -558,7 +686,7 @@ fn load_folder(index: &mut Index, dir: &Path) {
                     },
                 );
             } else {
-                index.by_id.insert(p.id.clone(), p);
+                index.insert(p);
             }
         }
         Err(message) => {
@@ -596,31 +724,52 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), LibraryError> {
     }
 }
 
+/// What to call a copy: `Notes` becomes `Notes copy`, and a copy of that
+/// `Notes copy 2`. The user renames it in a second if they care.
+fn copy_name(name: &str) -> String {
+    let base = name
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim_end();
+    match base.strip_suffix("copy") {
+        Some(before) => {
+            let n: u32 = name[base.len()..].trim().parse().unwrap_or(1);
+            format!("{}copy {}", before, n + 1)
+        }
+        None => format!("{name} copy"),
+    }
+}
+
+/// Every file of a playground folder worth copying, as (relative path, bytes).
+fn copy_into(
+    dir: &Path,
+    prefix: &Path,
+    files: &mut Vec<(PathBuf, Vec<u8>)>,
+) -> Result<(), LibraryError> {
+    let entries = std::fs::read_dir(dir).map_err(|e| LibraryError::io(dir, e))?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == meta::FILE_NAME || name == history::HISTORY_FILE {
+            continue; // Written fresh for the copy, or not the copy's.
+        }
+        if path.is_dir() {
+            if matches!(&*name, "node_modules" | "target" | "bin" | "obj" | ".git") {
+                continue;
+            }
+            copy_into(&path, &prefix.join(&*name), files)?;
+        } else if let Ok(bytes) = std::fs::read(&path) {
+            files.push((prefix.join(&*name), bytes));
+        }
+    }
+    Ok(())
+}
+
 fn modified_ms(p: &Playground) -> u64 {
     std::fs::metadata(&p.main_file)
         .or_else(|_| std::fs::metadata(p.dir.join(meta::FILE_NAME)))
         .and_then(|m| m.modified())
         .map_or(p.created_ms, meta::to_ms)
-}
-
-fn preview(main_file: &Path) -> String {
-    use std::io::Read;
-    let mut buf = Vec::new();
-    if let Ok(file) = std::fs::File::open(main_file) {
-        let _ = file.take(PREVIEW_BYTES as u64).read_to_end(&mut buf);
-    }
-    String::from_utf8_lossy(&buf)
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(|l| {
-            let mut s: String = l.chars().take(PREVIEW_CHARS).collect();
-            if l.chars().count() > PREVIEW_CHARS {
-                s.push('…');
-            }
-            s
-        })
-        .unwrap_or_default()
 }
 
 fn hash_bytes(bytes: &[u8]) -> u64 {
