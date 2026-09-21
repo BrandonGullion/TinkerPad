@@ -44,6 +44,9 @@ export const AUTOSAVE_MS = 500;
 /** Session changes are written this long after the last one. */
 const SESSION_SAVE_MS = 400;
 
+/** How many recently opened playgrounds the session remembers (04-01). */
+const RECENT_KEPT = 20;
+
 const isMac = navigator.platform.toLowerCase().includes("mac");
 const MOD = isMac ? "⌘" : "Ctrl+";
 
@@ -112,6 +115,8 @@ export class TabManager implements RunHost {
   private listing = new Map<string, PlaygroundSummary>();
   private plugins: PluginsStatus | null = null;
   private lastLanguage: string | null = null;
+  /** Playgrounds opened lately, most recent first (work item 04-01). */
+  private recentIds: string[] = [];
   private sessionTimer = 0;
   private restoring = false;
   private readonly newButton: HTMLButtonElement;
@@ -144,6 +149,11 @@ export class TabManager implements RunHost {
 
   find(id: string): Tab | undefined {
     return this.tabs.find((t) => t.id === id);
+  }
+
+  /** The plugin's display name for a language id, or the id itself. */
+  languageName(id: string): string {
+    return this.plugin(id)?.name ?? id;
   }
 
   /** The playground's metadata from the library listing. */
@@ -334,8 +344,27 @@ export class TabManager implements RunHost {
 
   // ---- opening, switching, closing ----------------------------------------
 
+  /** Playgrounds opened lately, most recent first (work item 04-01). */
+  recent(): string[] {
+    return this.recentIds;
+  }
+
+  /** A playground is gone: close its tab, if it has one. */
+  closed(id: string): void {
+    this.recentIds = this.recentIds.filter((known) => known !== id);
+    const tab = this.find(id);
+    if (tab) void this.close(tab, { save: false });
+  }
+
+  /** Note that a playground was opened, for the Recent section. */
+  private remember(id: string): void {
+    this.recentIds = [id, ...this.recentIds.filter((known) => known !== id)].slice(0, RECENT_KEPT);
+    this.saveSessionSoon();
+  }
+
   /** Open a playground in a tab (or switch to its tab) and make it active. */
   async open(id: string, activate = true): Promise<OpenedPlayground> {
+    this.remember(id);
     const existing = this.find(id);
     if (existing) {
       if (activate) this.activate(existing);
@@ -987,6 +1016,7 @@ export class TabManager implements RunHost {
         })),
       active: this.active?.peek ? null : this.activeId,
       lastLanguage: this.lastLanguage,
+      recent: this.recentIds.slice(0, RECENT_KEPT),
     };
   }
 
@@ -1010,6 +1040,7 @@ export class TabManager implements RunHost {
       const saved = session ?? (await invoke<Session>("load_session"));
       await this.refresh();
       this.lastLanguage = saved.lastLanguage ?? this.lastLanguage;
+      this.recentIds = saved.recent ?? [];
       for (const entry of saved.tabs) {
         const summary = this.listing.get(entry.playground);
         if (!summary || !this.plugin(summary.language)) {

@@ -30,12 +30,20 @@ export function commands(tabs: TabManager, runs: RunController): Command[] {
     { id: "new", label: "New playground", shortcut: `${MOD}N`, run: () => tabs.newPlayground() },
     { id: "new-pick", label: "New playground…", shortcut: `${MOD}⇧N`, run: () => tabs.pickAndCreate() },
     { id: "open", label: "Open playground…", shortcut: `${MOD}O`, run: () => tabs.quickOpen() },
+    { id: "library", label: "Library panel", shortcut: `${MOD}B`, run: () => toggleLibrary() },
     { id: "rename", label: "Rename playground", shortcut: "F2", run: () => tabs.startRename() },
     { id: "close", label: "Close tab", shortcut: `${MOD}W`, run: () => tabs.closeActive() },
     { id: "force-per-run", label: "Force per-run execution", run: () => forcePerRun() },
     { id: "next-error", label: "Next error or warning", shortcut: "F8", run: () => tabs.cycleAnnotation(1) },
     { id: "previous-error", label: "Previous error or warning", shortcut: "⇧F8", run: () => tabs.cycleAnnotation(-1) },
   ];
+}
+
+/** Show or hide the library panel (work item 04-01). */
+function toggleLibrary(): void {
+  // Through the window rather than an import, so the palette doesn't pull the
+  // panel (and the main module) into a cycle.
+  window.dispatchEvent(new CustomEvent("tinkerpad:toggle-library"));
 }
 
 /**

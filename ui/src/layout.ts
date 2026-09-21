@@ -3,7 +3,10 @@
 import { ServerStrip } from "./servers";
 
 const SPLIT_KEY = "tinkerpad.split";
+const SIDE_KEY = "tinkerpad.sidebar";
 const MIN_PX = 80;
+const SIDE_MIN_PX = 180;
+const SIDE_MAX_PX = 560;
 
 function load(key: string): string | null {
   try {
@@ -22,6 +25,8 @@ function save(key: string, value: string): void {
 }
 
 export interface Layout {
+  /** Where the library panel mounts, to the left of everything (04-01). */
+  sidebar: Sidebar;
   /** The playground tabs. */
   tabStrip: HTMLElement;
   /** A bar shown above the editor when a tab needs a decision. */
@@ -34,7 +39,25 @@ export interface Layout {
   statusBar: StatusBar;
 }
 
+/** The left-hand panel: a host to mount in, and whether it is showing. */
+export interface Sidebar {
+  host: HTMLElement;
+  visible(): boolean;
+  setVisible(visible: boolean): void;
+}
+
 export function createLayout(root: HTMLElement): Layout {
+  const shell = document.createElement("div");
+  shell.className = "shell";
+  const sidebarHost = document.createElement("div");
+  sidebarHost.className = "sidebar";
+  sidebarHost.hidden = true;
+  const sideSplitter = document.createElement("div");
+  sideSplitter.className = "side-splitter";
+  sideSplitter.setAttribute("role", "separator");
+  sideSplitter.setAttribute("aria-orientation", "vertical");
+  sideSplitter.hidden = true;
+
   const workspace = document.createElement("main");
   workspace.className = "workspace";
 
@@ -64,8 +87,48 @@ export function createLayout(root: HTMLElement): Layout {
   panelHost.className = "panel-host";
 
   workspace.append(editorPane, splitter, panelHost);
+  shell.append(sidebarHost, sideSplitter, workspace);
   const statusBar = new StatusBar();
-  root.replaceChildren(workspace, statusBar.element);
+  root.replaceChildren(shell, statusBar.element);
+
+  // The sidebar's width, in pixels, because its contents don't stretch.
+  let sideWidth = Math.min(
+    Math.max(Number(load(SIDE_KEY)) || 280, SIDE_MIN_PX),
+    SIDE_MAX_PX,
+  );
+  const applySide = () => {
+    shell.style.gridTemplateColumns = sidebarHost.hidden
+      ? "1fr"
+      : `${sideWidth}px ${sideSplitter.offsetWidth || 5}px 1fr`;
+  };
+  const sidebar: Sidebar = {
+    host: sidebarHost,
+    visible: () => !sidebarHost.hidden,
+    setVisible(visible) {
+      sidebarHost.hidden = !visible;
+      sideSplitter.hidden = !visible;
+      applySide();
+    },
+  };
+  applySide();
+
+  sideSplitter.addEventListener("pointerdown", (down) => {
+    down.preventDefault();
+    sideSplitter.setPointerCapture(down.pointerId);
+    sideSplitter.classList.add("dragging");
+    const left = shell.getBoundingClientRect().left;
+    const move = (e: PointerEvent) => {
+      sideWidth = Math.min(Math.max(e.clientX - left, SIDE_MIN_PX), SIDE_MAX_PX);
+      applySide();
+    };
+    const up = () => {
+      sideSplitter.removeEventListener("pointermove", move);
+      sideSplitter.classList.remove("dragging");
+      save(SIDE_KEY, String(Math.round(sideWidth)));
+    };
+    sideSplitter.addEventListener("pointermove", move);
+    sideSplitter.addEventListener("pointerup", up, { once: true });
+  });
 
   // The split is stored as the editor's share of the workspace height.
   let ratio = Number(load(SPLIT_KEY)) || 0.62;
@@ -96,7 +159,7 @@ export function createLayout(root: HTMLElement): Layout {
     splitter.addEventListener("pointerup", up, { once: true });
   });
 
-  return { tabStrip, conflictBar, editorHost, emptyState, panelHost, statusBar };
+  return { sidebar, tabStrip, conflictBar, editorHost, emptyState, panelHost, statusBar };
 }
 
 export type RunState =

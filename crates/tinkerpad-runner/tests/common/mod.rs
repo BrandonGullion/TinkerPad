@@ -192,6 +192,7 @@ pub fn scaffold_playground(
         dir,
         created_ms: 0,
         tags: Vec::new(),
+        pinned: false,
     }
 }
 

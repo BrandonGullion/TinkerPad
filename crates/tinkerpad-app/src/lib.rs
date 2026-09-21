@@ -261,6 +261,91 @@ mod commands {
             .map_err(crate::library::to_command_error)
     }
 
+    /// The playgrounds matching `query`, best first (work item 04-01). An
+    /// empty query is the whole library, pinned first.
+    #[tauri::command(async)]
+    pub fn search_playgrounds(
+        state: State<'_, AppState>,
+        query: String,
+        limit: Option<usize>,
+    ) -> Vec<tinkerpad_library::SearchHit> {
+        state.library.search(&query, limit.unwrap_or(200))
+    }
+
+    /// Replace a playground's tags.
+    #[tauri::command(async)]
+    pub fn set_tags(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+        tags: Vec<String>,
+    ) -> Result<tinkerpad_core::Playground, CommandError> {
+        let changed = state
+            .library
+            .set_tags(&id, &tags)
+            .map_err(crate::library::to_command_error)?;
+        state
+            .events
+            .publish(tinkerpad_core::Scope::App, CoreEvent::LibraryChanged);
+        Ok(changed)
+    }
+
+    /// Pin or unpin a playground.
+    #[tauri::command(async)]
+    pub fn set_pinned(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+        pinned: bool,
+    ) -> Result<tinkerpad_core::Playground, CommandError> {
+        let changed = state
+            .library
+            .set_pinned(&id, pinned)
+            .map_err(crate::library::to_command_error)?;
+        state
+            .events
+            .publish(tinkerpad_core::Scope::App, CoreEvent::LibraryChanged);
+        Ok(changed)
+    }
+
+    /// Copy a playground into a new one and return the copy.
+    #[tauri::command(async)]
+    pub fn duplicate_playground(
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+    ) -> Result<tinkerpad_core::Playground, CommandError> {
+        let copy = state
+            .library
+            .duplicate(&id)
+            .map_err(crate::library::to_command_error)?;
+        state
+            .events
+            .publish(tinkerpad_core::Scope::App, CoreEvent::LibraryChanged);
+        Ok(copy)
+    }
+
+    /// Show a playground's folder in the system file manager.
+    #[tauri::command(async)]
+    pub fn reveal_playground(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+        id: tinkerpad_core::PlaygroundId,
+    ) -> Result<(), CommandError> {
+        use tauri_plugin_opener::OpenerExt;
+        let playground = state.library.get(&id).ok_or_else(|| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::NotFound,
+                format!("no playground {id}"),
+            )
+        })?;
+        app.opener()
+            .reveal_item_in_dir(&playground.main_file)
+            .map_err(|e| {
+                CommandError::new(
+                    tinkerpad_core::ErrorCode::Io,
+                    format!("Couldn't show {}: {e}", playground.dir.display()),
+                )
+            })
+    }
+
     /// Move a playground's folder to the OS recycle bin.
     #[tauri::command(async)]
     pub fn delete_playground(
@@ -764,6 +849,11 @@ pub fn run() {
             commands::close_playground,
             commands::rename_playground,
             commands::delete_playground,
+            commands::search_playgrounds,
+            commands::set_tags,
+            commands::set_pinned,
+            commands::duplicate_playground,
+            commands::reveal_playground,
             commands::read_source,
             commands::open_readonly,
             commands::write_source,

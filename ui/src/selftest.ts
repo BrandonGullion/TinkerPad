@@ -26,6 +26,7 @@ import type {
   Peek,
   Playground,
   RunRecord,
+  SearchHit,
   PluginsStatus,
   RunEvent,
   Session,
@@ -3125,6 +3126,173 @@ async function historyScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: main.id }).catch(() => {});
 }
 
+/**
+ * The library panel (work item 04-01): finding a playground by what is in it,
+ * and doing things to it from there.
+ */
+async function libraryPanelScenario(ctx: SelftestContext, check: Check) {
+  const { tabs } = ctx;
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+
+  const panel = () => document.querySelector(".library");
+  const rows = () => [...document.querySelectorAll<HTMLElement>(".library-row")];
+  const names = () => rows().map((r) => r.querySelector(".library-name")?.textContent ?? "");
+  const sections = () =>
+    [...document.querySelectorAll(".library-section")].map((s) => s.textContent ?? "");
+  const search = () => document.querySelector<HTMLInputElement>(".library-search");
+  const type = async (text: string) => {
+    const box = search();
+    if (!box) return;
+    box.value = text;
+    box.dispatchEvent(new Event("input"));
+    await untilAsync(async () => true, 100);
+    await frame();
+    await frame();
+  };
+
+  // Three playgrounds with something to tell them apart by.
+  const made: Playground[] = [];
+  for (const [name, source] of [
+    ["Panel Alpha", 'console.log("lighthouse");\n'],
+    ["Panel Beta", 'console.log("beacon");\n'],
+    ["Panel Gamma", 'console.log("beacon and lighthouse");\n'],
+  ] as [string, string][]) {
+    const p = await invoke<Playground>("create_playground", {
+      name,
+      language: "node-check",
+      kind: "script",
+    });
+    await invoke("write_source", { id: p.id, text: source });
+    made.push(p);
+  }
+  await invoke("set_tags", { id: made[0]!.id, tags: ["panel-test", "alpha"] });
+  await invoke("set_pinned", { id: made[1]!.id, pinned: true });
+
+  // Mod+B opens it.
+  pressKey("b", { mod: true });
+  await until(() => panel() !== null && !!document.querySelector(".library-row"), 5000);
+  await check("Mod+B opens the library panel", panel() !== null && rows().length > 0);
+
+  // A search over the source, not just the name.
+  await type("lighthouse");
+  await until(() => names().filter((n) => n.startsWith("Panel")).length === 2, 5000);
+  await check(
+    "searching finds playgrounds by what is in their code, with the line that matched",
+    names().includes("Panel Alpha") &&
+      names().includes("Panel Gamma") &&
+      !names().includes("Panel Beta") &&
+      (rows()[0]?.querySelector(".library-detail")?.textContent ?? "").includes("lighthouse"),
+    JSON.stringify({ names: names(), detail: rows()[0]?.querySelector(".library-detail")?.textContent }),
+  );
+
+  // A name beats a body, and a tag finds it too.
+  await type("panel alpha");
+  await until(() => names()[0] === "Panel Alpha", 5000);
+  await check("a name ranks above a mention in the code", names()[0] === "Panel Alpha", JSON.stringify(names()));
+  await type("panel-test");
+  await until(() => names().length === 1, 5000);
+  await check("a tag finds its playground", names()[0] === "Panel Alpha", JSON.stringify(names()));
+
+  // Pinned comes first, in its own section.
+  await type("Panel ");
+  await until(() => names().length === 3, 5000);
+  await check(
+    "pinned playgrounds are first, under their own heading",
+    sections()[0] === "Pinned" && names()[0] === "Panel Beta",
+    JSON.stringify({ sections: sections(), names: names() }),
+  );
+
+  // Enter opens the selected one; the arrows move the selection.
+  search()?.focus();
+  pressKey("ArrowDown");
+  const chosen = rows().find((r) => r.classList.contains("selected"))?.dataset.id;
+  pressKey("Enter");
+  await until(() => tabs.activeId === chosen, 10_000);
+  await check(
+    "arrows move through the list and Enter opens what is selected",
+    tabs.activeId === chosen && chosen !== undefined,
+    JSON.stringify({ chosen, active: tabs.activeId }),
+  );
+
+  // What is open is marked, and it turns up under Recent.
+  await type("Panel ");
+  await until(() => document.querySelector(".library-row.open") !== null, 5000);
+  await check(
+    "the playground in the editor is marked, and lately-opened ones have a section",
+    document.querySelector(".library-row.open")?.getAttribute("data-id") === tabs.activeId &&
+      sections().includes("Recent"),
+    JSON.stringify({ sections: sections(), active: tabs.activeId }),
+  );
+
+  // Right-clicking a row offers what can be done to it.
+  rows()[0]?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  await until(() => document.querySelector(".picker") !== null, 5000);
+  const offered = [...document.querySelectorAll(".picker-item")].map((i) => i.textContent ?? "");
+  pressKey("Escape");
+  await until(() => document.querySelector(".picker") === null, 3000);
+  await check(
+    "right-clicking offers open, rename, tags, pin, duplicate, reveal and delete",
+    // A pinned one says Unpin, so match without minding the case.
+    ["open", "rename", "tags", "pin", "duplicate", "file explorer", "recycle bin"].every((label) =>
+      offered.some((item) => item.toLowerCase().includes(label)),
+    ),
+    JSON.stringify(offered),
+  );
+
+  // Duplicating copies the code into a new playground and opens it.
+  const before = (await invoke<SearchHit[]>("search_playgrounds", { query: "Panel " })).length;
+  const copy = await invoke<Playground>("duplicate_playground", { id: made[0]!.id });
+  await until(() => tabs.activeId !== null, 5000);
+  const copied = await invoke<string>("read_source", { id: copy.id });
+  const after = (await invoke<SearchHit[]>("search_playgrounds", { query: "Panel " })).length;
+  await check(
+    "duplicating makes a copy of the code under a new name",
+    copy.name === "Panel Alpha copy" &&
+      copy.id !== made[0]!.id &&
+      copied.includes("lighthouse") &&
+      after === before + 1,
+    JSON.stringify({ name: copy.name, before, after }),
+  );
+
+  // Tags and pinning from the panel's commands reach the file and come back.
+  await invoke("set_tags", { id: copy.id, tags: ["alpha", "alpha", " kept "] });
+  const tagged = (await invoke<SearchHit[]>("search_playgrounds", { query: "kept" }))[0];
+  await check(
+    "tags are tidied and searchable at once",
+    tagged?.id === copy.id && JSON.stringify(tagged?.tags) === JSON.stringify(["alpha", "kept"]),
+    JSON.stringify(tagged?.tags),
+  );
+
+  // Deleting from the panel closes its tab too.
+  await tabs.open(copy.id);
+  await until(() => tabs.activeId === copy.id, 5000);
+  await invoke("delete_playground", { id: copy.id });
+  tabs.closed(copy.id);
+  await until(() => tabs.find(copy.id) === undefined, 5000);
+  await check(
+    "a deleted playground takes its tab with it",
+    tabs.find(copy.id) === undefined &&
+      (await invoke<SearchHit[]>("search_playgrounds", { query: "Panel Alpha copy" })).length === 0,
+    JSON.stringify({ open: tabs.tabs.length }),
+  );
+
+  // Escape clears the search, then closes the panel.
+  await type("Panel ");
+  search()?.focus();
+  pressKey("Escape");
+  await until(() => (search()?.value ?? "x") === "", 3000);
+  await check("Escape clears the search first", (search()?.value ?? "x") === "");
+  pressKey("Escape");
+  await until(() => document.querySelector(".sidebar")?.hasAttribute("hidden") === true, 3000);
+  await check(
+    "and closes the panel next",
+    document.querySelector(".sidebar")?.hasAttribute("hidden") === true,
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  for (const p of made) await invoke("delete_playground", { id: p.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -3161,6 +3329,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   helpers: helpersScenario,
   "helper-run": helperRunScenario,
   definition: definitionScenario,
+  "library-panel": libraryPanelScenario,
   history: historyScenario,
   hooks: hooksScenario,
   packages: packagesScenario,

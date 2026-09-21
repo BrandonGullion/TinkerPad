@@ -230,6 +230,8 @@ export interface Session {
   tabs: { playground: string; scrollTop: number }[];
   active: string | null;
   lastLanguage: string | null;
+  /** Playgrounds opened lately, most recent first (work item 04-01). */
+  recent?: string[];
 }
 
 export interface Playground {
@@ -242,12 +244,23 @@ export interface Playground {
   mainFile: string;
   createdMs: number;
   tags: string[];
+  /** Kept at the top of the library panel (work item 04-01). */
+  pinned: boolean;
 }
 
 export interface PlaygroundSummary extends Playground {
   modifiedMs: number;
   /** First non-empty line of the main file. */
   preview: string;
+}
+
+/** A playground that matched a search, from `search_playgrounds` (04-01). */
+export interface SearchHit extends PlaygroundSummary {
+  /** Where the strongest match was; absent when nothing was typed. */
+  field?: "name" | "tag" | "source";
+  /** The line of code it was found in, when it was found in the code. */
+  snippet?: string;
+  score: number;
 }
 
 /** Reply to `list_playgrounds`. */

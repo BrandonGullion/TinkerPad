@@ -433,15 +433,21 @@ with a marker so a `dump(hugeList)` doesn't freeze the UI).
   one JSON object per line, appended when a run ends, capped at the last 200
   (work item 03-08). It is not part of the playground — the index ignores it,
   the watcher doesn't react to it, and deleting it loses only the history.
-- An in-memory index (name, tags, first line of code) is built at startup and kept
-  fresh by `notify`. No database. If it ever needs one, SQLite via `rusqlite`, but a
-  few thousand folders don't.
+- `pinned` and `tags` in `playground.toml` are what the library panel sorts and
+  filters by (work item 04-01). An unpinned playground has no `pinned` key.
+- An in-memory index (name, tags, first line of code, and the first 64 KiB of the
+  main file) is built at startup and kept fresh by `notify` and by the app's own
+  saves. Searching it is a substring match ranked name > tags > source: 2 ms for
+  2,000 playgrounds, so the panel can search on every keystroke. No database. If
+  it ever needs one, SQLite via `rusqlite`, but a few thousand folders don't.
 
 ## 7. UI shell (ui/)
 
 Keep it small: a tab strip over one CodeMirror view, a resizable output pane, a
-language picker on new tab, a status strip (server states, run timer), and a command
-palette for everything else. No settings pages until Phase 4; settings are a TOML
+library panel on the left (`Mod+B`: search, tags, pinned, recents, and the
+per-playground actions — work item 04-01), a language picker on new tab, a status
+strip (server states, run timer, run history), and a command palette for
+everything else. No settings pages until Phase 4; settings are a TOML
 file until then.
 
 Tabs (`ui/src/tabs.ts`, work item 01-12):
