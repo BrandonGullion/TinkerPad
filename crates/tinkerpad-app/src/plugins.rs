@@ -98,6 +98,11 @@ pub struct PluginSummary {
     pub highlighter: Option<String>,
     /// Whether the plugin declares a language server.
     pub lsp: bool,
+    /// Whether it declares a warm helper (work item 03-02).
+    pub helper: bool,
+    /// The programs its `[toolchain]` probes look for, which are the ones the
+    /// settings window offers a path box for (work item 04-02).
+    pub programs: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,6 +148,17 @@ impl PluginsStatus {
                         .collect(),
                     highlighter: e.plugin.highlighter.clone(),
                     lsp: e.plugin.lsp.is_some(),
+                    helper: e.plugin.helper.is_some(),
+                    programs: {
+                        let mut programs: Vec<String> = e
+                            .plugin
+                            .probes
+                            .iter()
+                            .map(|probe| probe.command.clone())
+                            .collect();
+                        programs.dedup();
+                        programs
+                    },
                 })
                 .collect(),
             failures: r

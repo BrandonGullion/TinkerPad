@@ -27,6 +27,7 @@ import type {
   Playground,
   RunRecord,
   SearchHit,
+  Settings,
   PluginsStatus,
   RunEvent,
   Session,
@@ -3293,6 +3294,148 @@ async function libraryPanelScenario(ctx: SelftestContext, check: Check) {
   for (const p of made) await invoke("delete_playground", { id: p.id }).catch(() => {});
 }
 
+/**
+ * Settings (work item 04-02): one file, a form over it, and one path from a
+ * change to the app whichever way the change was made.
+ */
+async function settingsScenario(ctx: SelftestContext, check: Check) {
+  const { tabs } = ctx;
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+
+  const dialog = () => document.querySelector(".settings");
+  const rows = () => [...document.querySelectorAll<HTMLElement>(".settings-row")];
+  const labelled = (text: string) =>
+    rows().find((row) => row.querySelector(".settings-label")?.textContent === text);
+  const fontSize = () =>
+    getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size").trim();
+  const get = () => invoke<Settings>("get_settings");
+  const toastText = () =>
+    [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" ");
+  const clearToasts = () => document.querySelectorAll(".toast").forEach((t) => t.remove());
+  const file = await invoke<string>("settings_file");
+  const before = await get();
+
+  // Mod+, opens it, and the per-plugin rows come from the registry.
+  pressKey(",", { mod: true });
+  await until(() => dialog() !== null, 5000);
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const withServers = plugins.plugins.filter((p) => p.lsp).map((p) => p.name);
+  const shown = rows().map((row) => row.querySelector(".settings-label")?.textContent ?? "");
+  await check(
+    "Mod+, opens the settings form, with a row per plugin that has a server",
+    dialog() !== null && withServers.every((name) => shown.includes(name)),
+    JSON.stringify({ withServers, shown }),
+  );
+
+  // Changing a setting and saving applies it and writes the file.
+  const size = labelled("Font size")?.querySelector<HTMLInputElement>("input");
+  if (size) {
+    size.value = "19";
+    size.dispatchEvent(new Event("input"));
+  }
+  [...document.querySelectorAll<HTMLButtonElement>(".settings-button")]
+    .find((b) => b.textContent === "Save")
+    ?.click();
+  await until(() => dialog() === null, 5000);
+  await untilAsync(async () => (await get()).editor.font_size === 19, 5000);
+  await check(
+    "saving writes the setting and the editor takes it",
+    (await get()).editor.font_size === 19 && fontSize() === "19px",
+    JSON.stringify({ saved: (await get()).editor.font_size, css: fontSize() }),
+  );
+
+  // The file keeps its comments, and a default stays out of it.
+  const text = (await invoke<Peek>("open_readonly", { path: file })).text;
+  await check(
+    "the file keeps its comments, and only what changed is written",
+    text.includes("# TinkerPad settings.") &&
+      text.includes("font_size = 19") &&
+      !text.includes("\nclear_output"),
+    JSON.stringify({ head: text.slice(0, 60) }),
+  );
+
+  // An edit made outside the app arrives within a second.
+  await invoke("selftest_write_file", {
+    path: file,
+    text: "[editor]\nfont_size = 15\ntab_size = 4\n\n[run]\nclear_output = false\n",
+  });
+  const applied = await untilAsync(async () => (await get()).editor.font_size === 15, 5000);
+  await check(
+    "an edit made in another editor applies on its own",
+    applied && fontSize() === "15px",
+    JSON.stringify({ size: (await get()).editor.font_size, css: fontSize() }),
+  );
+
+  // A tab size of 4 reaches the editor without it being rebuilt.
+  const main = await openTestPlayground(ctx, "Settings Test");
+  await check(
+    "the editor's tab size follows the setting",
+    ctx.editor.view.state.tabSize === 4,
+    JSON.stringify({ tabSize: ctx.editor.view.state.tabSize }),
+  );
+
+  // clear_output = false: the second run's output joins the first.
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+  await invoke("start_helper", { plugin: "node-check" }).catch(() => {});
+  let end = ctx.runs.waitForEnd();
+  runCode(ctx, 'console.log("first")\n');
+  await withTimeout(end, 30_000, "the first run");
+  end = ctx.runs.waitForEnd();
+  runCode(ctx, 'console.log("second")\n');
+  await withTimeout(end, 30_000, "the second run");
+  await ctx.output.flushed();
+  await check(
+    "with clear_output off, a run adds to what is already there",
+    outText().includes("first") && outText().includes("second"),
+    JSON.stringify({ out: outText() }),
+  );
+
+  // Nonsense in the file keeps the last settings that worked, and says where.
+  clearToasts();
+  await invoke("selftest_write_file", {
+    path: file,
+    text: "[editor]\nfont_size = 15\ntab_size = \n",
+  });
+  const complained = await until(() => toastText().includes("line"), 5000);
+  await check(
+    "a broken file keeps the last good settings and says which line",
+    complained && (await get()).editor.font_size === 15 && toastText().includes("line 3"),
+    JSON.stringify({ toast: toastText().slice(0, 160) }),
+  );
+
+  // Reset puts everything back, including the comments.
+  await invoke("reset_settings");
+  await untilAsync(async () => (await get()).editor.font_size === 13, 5000);
+  await check(
+    "Reset to defaults puts the file and the window back",
+    (await get()).editor.font_size === 13 &&
+      (await get()).run.clear_output &&
+      fontSize() === "13px",
+    JSON.stringify(await get()),
+  );
+
+  // Moving the library: only when there is nothing to put back wrongly.
+  if (before.library.root === null) {
+    const temp = `${(await invoke<Listing>("list_playgrounds")).root}-settings-test`;
+    const moved = await invoke<string>("change_library_root", { root: temp });
+    const there = await invoke<Listing>("list_playgrounds");
+    await invoke("change_library_root", { root: null });
+    const back = await invoke<Listing>("list_playgrounds");
+    await check(
+      "the library can be pointed at another folder and back",
+      moved.replace(/\\/g, "/") === temp.replace(/\\/g, "/") &&
+        there.playgrounds.length === 0 &&
+        back.playgrounds.length > 0,
+      JSON.stringify({ moved, there: there.playgrounds.length, back: back.playgrounds.length }),
+    );
+  } else {
+    await report("INFO library.root is set, so the move check was skipped");
+  }
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: main.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -3330,6 +3473,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "helper-run": helperRunScenario,
   definition: definitionScenario,
   "library-panel": libraryPanelScenario,
+  settings: settingsScenario,
   history: historyScenario,
   hooks: hooksScenario,
   packages: packagesScenario,

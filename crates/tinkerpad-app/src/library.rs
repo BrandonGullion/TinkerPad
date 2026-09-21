@@ -14,18 +14,24 @@ use crate::events::EventBus;
 pub const LIBRARY_ENV: &str = "TINKERPAD_LIBRARY";
 
 /// Where playgrounds live: `TINKERPAD_LIBRARY`, else `[library].root` from
-/// settings, else `~/TinkerPad`. Problems reading settings become notices.
-pub fn root(app: &AppHandle, data_dir: &Path, notices: &mut Vec<(Level, String)>) -> PathBuf {
+/// settings, else `~/TinkerPad`.
+pub fn root(
+    app: &AppHandle,
+    data_dir: &Path,
+    settings: &tinkerpad_core::Settings,
+    notices: &mut Vec<(Level, String)>,
+) -> PathBuf {
+    let _ = notices;
     if let Some(dir) = std::env::var_os(LIBRARY_ENV).filter(|v| !v.is_empty()) {
         return PathBuf::from(dir);
     }
-    match crate::settings::library_root(data_dir) {
-        Ok(Some(root)) => return root,
-        Ok(None) => {}
-        Err(message) => notices.push((
-            Level::Warning,
-            format!("Using the default library folder. {message}"),
-        )),
+    if let Some(root) = settings
+        .library
+        .root
+        .as_ref()
+        .filter(|r| !r.as_os_str().is_empty())
+    {
+        return root.clone();
     }
     app.path()
         .home_dir()
@@ -52,6 +58,28 @@ pub fn open(root: PathBuf, data_dir: &Path, notices: &mut Vec<(Level, String)>) 
             Library::open(&fallback).expect("app data folder is writable")
         }
     }
+}
+
+/// Point the library at the folder the settings now name, and watch it there
+/// (work item 04-02).
+///
+/// Returns the folder in use, which is the one asked for unless it couldn't be
+/// opened — in which case the library stays where it was and the caller is
+/// told what happened.
+pub fn change_root(
+    app: &AppHandle,
+    state: &crate::AppState,
+) -> Result<String, tinkerpad_core::CommandError> {
+    let settings = state.settings.get();
+    let mut notices = Vec::new();
+    let root = root(app, &state.data_dir, &settings, &mut notices);
+    // Stop watching the old folder before the library leaves it.
+    *state._library_watcher.lock().expect("watcher lock") = None;
+    state.library.change_root(&root).map_err(to_command_error)?;
+    *state._library_watcher.lock().expect("watcher lock") =
+        watch(&state.library, state.events.clone());
+    state.events.publish(Scope::App, CoreEvent::LibraryChanged);
+    Ok(root.to_string_lossy().into_owned())
 }
 
 /// Start watching the library, forwarding changes to the UI.

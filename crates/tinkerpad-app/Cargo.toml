@@ -29,6 +29,12 @@ serde_json.workspace = true
 tracing-appender = "0.2"
 tauri-plugin-opener = "2"
 toml.workspace = true
+# Saving settings edits the file in place, so comments and anything a newer
+# build wrote survive (work item 04-02).
+toml_edit = "0.22"
+# Watching settings.toml, the same way the library watches its folder.
+notify = "8"
+notify-debouncer-mini = "0.7.0"
 
 [lints]
 workspace = true

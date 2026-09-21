@@ -11,7 +11,8 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
-import { EditorState, type Extension, Prec } from "@codemirror/state";
+import { Compartment, EditorState, type Extension, Prec } from "@codemirror/state";
+import { indentUnit } from "@codemirror/language";
 import {
   drawSelection,
   EditorView,
@@ -20,6 +21,14 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
+
+/** What a font family falls back to when the one asked for isn't installed. */
+const MONO_FALLBACK = '"Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace';
+
+/** Tab width and what pressing Tab inserts, from one number. */
+function indentation(tabSize: number): Extension {
+  return [EditorState.tabSize.of(tabSize), indentUnit.of(" ".repeat(tabSize))];
+}
 
 export interface EditorActions {
   run(): void;
@@ -59,6 +68,9 @@ const theme = EditorView.theme(
 export class Editor {
   readonly view: EditorView;
   private readonly base: Extension;
+  /** Tab size and indent unit, so settings can change them in place (04-02). */
+  private readonly indent = new Compartment();
+  private tabSize = 2;
 
   constructor(parent: HTMLElement, actions: EditorActions, doc = "") {
     // App shortcuts take precedence over CodeMirror defaults (Mod-l would
@@ -83,6 +95,7 @@ export class Editor {
       // grammar looks the same as before (02-04).
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+      this.indent.of(indentation(this.tabSize)),
       theme,
     ];
     this.view = new EditorView({ parent, state: this.createState(doc) });
@@ -96,6 +109,24 @@ export class Editor {
   /** Swap in another state (another tab's document). */
   setState(state: EditorState): void {
     this.view.setState(state);
+    // A state made before the last settings change carries the old indent.
+    this.view.dispatch({ effects: this.indent.reconfigure(indentation(this.tabSize)) });
+  }
+
+  /**
+   * Apply the editor settings (work item 04-02). The fonts are CSS variables,
+   * so they cost a property each; the tab size is state, and goes in through
+   * a compartment rather than a new view.
+   */
+  applySettings(fontSize: number, fontFamily: string | null, tabSize: number): void {
+    const root = document.documentElement;
+    root.style.setProperty("--editor-font-size", `${fontSize}px`);
+    if (fontFamily) root.style.setProperty("--font-mono", `${fontFamily}, ${MONO_FALLBACK}`);
+    else root.style.removeProperty("--font-mono");
+    if (tabSize !== this.tabSize) {
+      this.tabSize = tabSize;
+      this.view.dispatch({ effects: this.indent.reconfigure(indentation(tabSize)) });
+    }
   }
 
   get text(): string {

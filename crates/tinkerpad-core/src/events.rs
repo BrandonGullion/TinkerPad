@@ -75,6 +75,10 @@ pub enum CoreEvent {
     /// Playgrounds were added, removed, renamed, or their metadata changed on
     /// disk. The UI should list them again.
     LibraryChanged,
+    /// `settings.toml` changed, here or in an editor (work item 04-02). The
+    /// window applies what it owns: the editor's font, the theme, whether a
+    /// run clears the pane.
+    Settings(crate::Settings),
     /// A playground's main file was changed outside the app. A clean tab
     /// reloads it; a dirty one asks (work item 01-12).
     SourceChangedOnDisk { playground: crate::PlaygroundId },

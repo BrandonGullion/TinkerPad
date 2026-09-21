@@ -344,7 +344,7 @@ fn server_for(
     let root = crate::lsp::root_for(
         plugin,
         Some(playground),
-        state.library.root(),
+        &state.library.root(),
         &state.scratch_root(),
     )
     .ok()?;

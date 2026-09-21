@@ -57,8 +57,9 @@ pub struct Runs {
     /// The warm runners (03-02). A plugin with a helper that lists `run` gets
     /// its runs sent there instead of a new process each time.
     helpers: Arc<HelperPool>,
-    /// `[helpers]` from settings.toml.
-    helper_settings: ServiceSettings,
+    /// Settings as they are now; the helper section is read per run, so an
+    /// idle change applies to the next helper started (work item 04-02).
+    settings: Arc<crate::settings::Live>,
     /// The "Force per-run" command: the user has said to ignore helpers for
     /// the rest of this session, usually to see what a helper is hiding.
     force_per_run: AtomicBool,
@@ -75,7 +76,7 @@ impl Runs {
         data_dir: PathBuf,
         toolchains: Arc<Toolchains>,
         helpers: Arc<HelperPool>,
-        helper_settings: ServiceSettings,
+        settings: Arc<crate::settings::Live>,
     ) -> Self {
         Self {
             events,
@@ -83,7 +84,7 @@ impl Runs {
             data_dir,
             toolchains,
             helpers,
-            helper_settings,
+            settings,
             force_per_run: AtomicBool::new(false),
             told: Default::default(),
             next_id: AtomicU64::new(1),
@@ -210,7 +211,7 @@ impl Runs {
                 &toolchain,
                 &self.scratch_root,
                 &self.data_dir,
-                &self.helper_settings,
+                &ServiceSettings::helpers_of(&self.settings.get()),
             ) {
                 Ok(config) => {
                     return Ok(self.start_on_helper(

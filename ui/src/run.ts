@@ -7,6 +7,7 @@
 // the `run` command returns).
 
 import { invoke } from "./ipc";
+import { clearOutputOnRun } from "./settings";
 import type { RunState } from "./layout";
 import type { OutputPane } from "./output";
 import type { Annotation, Envelope, RunEvent } from "./protocol";
@@ -40,9 +41,7 @@ export type RunOutcome =
   | { kind: "cancelled"; durationMs: number }
   | { kind: "failed"; message: string };
 
-/** Setting stub: clear the output pane when a run starts. Becomes a real
- * setting in work item 04-02. */
-const CLEAR_OUTPUT_ON_RUN = true;
+
 
 export const NO_PLAYGROUND_NOTE = "Open a playground to run it.";
 
@@ -131,7 +130,7 @@ export class RunController {
     record.clipped = false;
     this.clickedAt = performance.now();
     this.firstOutputAt = null;
-    if (CLEAR_OUTPUT_ON_RUN) this.host.outputFor(playground)?.clear();
+    if (clearOutputOnRun()) this.host.outputFor(playground)?.clear();
     this.host.beforeRun(playground, code);
     this.setState(playground, record, { kind: "running", since: this.clickedAt });
 

@@ -35,6 +35,7 @@ export type CoreEvent =
   | { type: "server"; language: string; root: string; state: ServerState }
   | { type: "helper"; plugin: string; state: ServerState }
   | { type: "libraryChanged" }
+  | ({ type: "settings" } & Settings)
   | { type: "sourceChangedOnDisk"; playground: string };
 
 /** A line a plugin's `[deps]` puts at the top of the main file. */
@@ -223,6 +224,35 @@ export interface PluginSummary {
   highlighter: string | null;
   /** Whether the plugin declares a language server (`[lsp]`). */
   lsp: boolean;
+  /** Whether it declares a warm helper (work item 03-02). */
+  helper: boolean;
+  /** The programs its toolchain probes look for (work item 04-02). */
+  programs: string[];
+}
+
+/**
+ * `settings.toml`, with every default filled in (work item 04-02).
+ *
+ * The keys are the file's own, in snake_case, rather than the camelCase the
+ * rest of this protocol uses: this object is the settings file, it goes
+ * straight back to `save_settings`, and a second spelling of every setting
+ * would be one more thing to keep in step.
+ */
+export interface Settings {
+  theme: string;
+  library: { root: string | null };
+  editor: { font_size: number; font_family: string | null; tab_size: number };
+  run: { clear_output: boolean };
+  /** Plugin id to program name to path. */
+  toolchains: Record<string, Record<string, string>>;
+  /** `prewarm`, plus a `ServiceOverride` per language id. */
+  lsp: { prewarm: string[] } & Record<string, ServiceOverride | string[] | undefined>;
+  helpers: Record<string, ServiceOverride>;
+}
+
+export interface ServiceOverride {
+  /** `never`, or a duration such as `30m`. */
+  idle_shutdown: string | null;
 }
 
 /** `<app-data>/session.json`: the tabs to reopen at launch. */
