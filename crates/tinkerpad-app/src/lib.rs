@@ -62,10 +62,9 @@ pub struct AppState {
     /// Plugin helpers, kept warm between runs (work item 03-02). Empty until
     /// a run or a hook wants one (03-03, 03-07).
     helpers: Arc<tinkerpad_runner::HelperPool>,
-    /// `[lsp]` from settings.toml: pre-warmed languages and idle overrides.
-    service_settings: service_settings::ServiceSettings,
-    /// `[helpers]` from settings.toml: per-plugin idle overrides.
-    helper_settings: service_settings::ServiceSettings,
+    /// `settings.toml` as it is now, watched for changes (work item 04-02).
+    settings: Arc<settings::Live>,
+
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
     library: Arc<Library>,
@@ -79,6 +78,18 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// What `[lsp]` says right now: pre-warm list and idle overrides. Derived
+    /// per call, so a settings change reaches the next server started without
+    /// anything having to be told about it (work item 04-02).
+    fn lsp_settings(&self) -> service_settings::ServiceSettings {
+        service_settings::ServiceSettings::lsp_of(&self.settings.get())
+    }
+
+    /// The same for `[helpers]`.
+    fn helper_settings(&self) -> service_settings::ServiceSettings {
+        service_settings::ServiceSettings::helpers_of(&self.settings.get())
+    }
+
     /// The per-plugin scratch folders: build output, and the shared
     /// language-server workspaces (02-07).
     fn scratch_root(&self) -> PathBuf {
@@ -454,6 +465,90 @@ mod commands {
         }
     }
 
+    /// Everything in `settings.toml`, with the defaults filled in (04-02).
+    #[tauri::command(async)]
+    pub fn get_settings(state: State<'_, AppState>) -> tinkerpad_core::Settings {
+        (*state.settings.get()).clone()
+    }
+
+    /// Write settings to the file. The change then arrives the same way an
+    /// edit in another editor would.
+    #[tauri::command(async)]
+    pub fn save_settings(
+        state: State<'_, AppState>,
+        settings: tinkerpad_core::Settings,
+    ) -> Result<tinkerpad_core::Settings, CommandError> {
+        state.settings.save(&settings).map_err(|e| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::Io,
+                format!("Couldn't save your settings: {e}"),
+            )
+        })?;
+        Ok((*state.settings.get()).clone())
+    }
+
+    /// Put `settings.toml` back to the commented template: every setting at
+    /// its default.
+    #[tauri::command(async)]
+    pub fn reset_settings(
+        state: State<'_, AppState>,
+    ) -> Result<tinkerpad_core::Settings, CommandError> {
+        state.settings.reset().map_err(|e| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::Io,
+                format!("Couldn't reset your settings: {e}"),
+            )
+        })?;
+        Ok((*state.settings.get()).clone())
+    }
+
+    /// Where `settings.toml` is, for the UI to show and for the self-tests to
+    /// edit as an outside editor would.
+    #[tauri::command(async)]
+    pub fn settings_file(state: State<'_, AppState>) -> String {
+        state.settings.file().to_string_lossy().into_owned()
+    }
+
+    /// Open `settings.toml` in whatever edits TOML on this machine.
+    #[tauri::command(async)]
+    pub fn open_settings_file(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+    ) -> Result<(), CommandError> {
+        use tauri_plugin_opener::OpenerExt;
+        let file = state.settings.file().to_path_buf();
+        app.opener()
+            .open_path(file.to_string_lossy(), None::<&str>)
+            .map_err(|e| {
+                CommandError::new(
+                    tinkerpad_core::ErrorCode::Io,
+                    format!("Couldn't open {}: {e}", file.display()),
+                )
+            })
+    }
+
+    /// Point the library at another folder and open it there (04-02). The UI
+    /// asks first: every open tab is closed and the library is read again.
+    #[tauri::command(async)]
+    pub fn change_library_root(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+        root: Option<String>,
+    ) -> Result<String, CommandError> {
+        let mut settings = (*state.settings.get()).clone();
+        settings.library.root = root
+            .map(|r| r.trim().to_owned())
+            .filter(|r| !r.is_empty())
+            .map(std::path::PathBuf::from);
+        state.settings.save(&settings).map_err(|e| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::Io,
+                format!("Couldn't save your settings: {e}"),
+            )
+        })?;
+        crate::library::change_root(&app, &state)
+    }
+
     /// Open the folder containing TinkerPad's log files.
     #[tauri::command]
     pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> {
@@ -682,6 +777,21 @@ mod commands {
             .filter(|s| !s.is_empty())
     }
 
+    /// Remove a folder a scenario made, so a test leaves nothing behind.
+    /// Self-tests only, like its neighbours.
+    #[tauri::command]
+    pub fn selftest_remove_dir(path: String) -> Result<(), CommandError> {
+        use tinkerpad_core::ErrorCode;
+        if selftest_scenario().is_none() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidInput,
+                "only available while self-testing",
+            ));
+        }
+        std::fs::remove_dir_all(&path)
+            .map_err(|e| CommandError::new(ErrorCode::Io, format!("could not remove {path}: {e}")))
+    }
+
     /// Write a file. Self-tests only: a scenario needs files to open that are
     /// not playgrounds.
     #[tauri::command]
@@ -790,18 +900,20 @@ pub fn run() {
             let (registry, mut startup_notices) = plugins::load(app.handle())?;
 
             settings::ensure_exists(&data_dir);
+            let live_settings = settings::Live::open(settings::path(&data_dir), bus.clone());
             let toolchains = Arc::new(Toolchains::default());
 
-            let library_root = library::root(app.handle(), &data_dir, &mut startup_notices);
+            let library_root = library::root(
+                app.handle(),
+                &data_dir,
+                &live_settings.get(),
+                &mut startup_notices,
+            );
             let playgrounds = library::open(library_root, &data_dir, &mut startup_notices);
             let library_watcher = library::watch(&playgrounds, bus.clone());
 
             let lsp = lsp::pool(bus.clone());
             let proxy = lsp::proxy(bus.clone());
-            let settings_text =
-                std::fs::read_to_string(settings::path(&data_dir)).unwrap_or_default();
-            let service_settings = service_settings::ServiceSettings::load(&settings_text);
-            let helper_settings = service_settings::ServiceSettings::helpers(&settings_text);
             let helpers = helpers::pool(bus.clone());
             // Runs go to a plugin's helper when it has one (03-03), so the run
             // path holds the pool.
@@ -810,10 +922,11 @@ pub fn run() {
                 data_dir.clone(),
                 toolchains.clone(),
                 helpers.clone(),
-                helper_settings.clone(),
+                live_settings.clone(),
             );
             app.manage(AppState {
                 events: bus,
+                settings: live_settings,
                 runs,
                 session_path: session::path(&data_dir),
                 data_dir,
@@ -821,8 +934,6 @@ pub fn run() {
                 lsp,
                 proxy,
                 helpers,
-                service_settings,
-                helper_settings,
                 plugins: RwLock::new(registry),
                 library: playgrounds,
                 _library_watcher: Mutex::new(library_watcher),
@@ -840,6 +951,12 @@ pub fn run() {
             commands::cancel,
             commands::run_history,
             commands::open_log_folder,
+            commands::get_settings,
+            commands::save_settings,
+            commands::reset_settings,
+            commands::open_settings_file,
+            commands::settings_file,
+            commands::change_library_root,
             commands::list_plugins,
             commands::toolchain_status,
             commands::recheck_toolchains,
@@ -878,6 +995,7 @@ pub fn run() {
             commands::selftest_report,
             commands::selftest_list_dir,
             commands::selftest_write_file,
+            commands::selftest_remove_dir,
             commands::selftest_touch_source,
         ])
         .build(tauri::generate_context!())

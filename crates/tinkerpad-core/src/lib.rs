@@ -11,6 +11,7 @@ pub mod error;
 pub mod events;
 pub mod language;
 pub mod playground;
+pub mod settings;
 
 pub use dump::{RichNode, RichValue};
 pub use error::{CommandError, ErrorCode};
@@ -19,3 +20,6 @@ pub use events::{
 };
 pub use language::LanguageId;
 pub use playground::{BrokenPlayground, KindId, Playground, PlaygroundId, PlaygroundSummary};
+pub use settings::{
+    EditorSettings, LibrarySettings, LspSettings, RunSettings, ServiceOverride, Settings,
+};

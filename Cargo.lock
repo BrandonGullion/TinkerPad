@@ -3963,6 +3963,8 @@ name = "tinkerpad-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "notify",
+ "notify-debouncer-mini",
  "serde",
  "serde_json",
  "tauri",
@@ -3977,6 +3979,7 @@ dependencies = [
  "tinkerpad-runner",
  "tokio",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -3989,6 +3992,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "toml 0.8.23",
 ]
 
 [[package]]

@@ -162,9 +162,9 @@ pub async fn open(
         &plugin,
         Some(playground),
         &resolver,
-        state.library.root(),
+        &state.library.root(),
         &state.scratch_root(),
-        &state.service_settings,
+        &state.lsp_settings(),
     )?;
     // The editor's own client opens the document; the pool only has to have
     // the server running (02-04). A shared server is told which project this
@@ -398,12 +398,12 @@ fn write_workspace_files(plugin: &Plugin, root: &std::path::Path) {
 /// (one whose server lives in each playground's folder) or isn't installed is
 /// logged and skipped.
 pub fn prewarm(state: &AppState) {
-    let languages = state.service_settings.prewarm.clone();
+    let languages = state.lsp_settings().prewarm;
     if languages.is_empty() {
         return;
     }
     let resolver = state.toolchains.resolver();
-    let library_root = state.library.root().to_path_buf();
+    let library_root = state.library.root();
     let scratch_root = state.scratch_root();
     let plugins = state.plugins.read().expect("plugins lock");
 
@@ -418,7 +418,7 @@ pub fn prewarm(state: &AppState) {
             &resolver,
             &library_root,
             &scratch_root,
-            &state.service_settings,
+            &state.lsp_settings(),
         ) {
             Ok(config) => {
                 tracing::info!(language, "pre-warming a language server");

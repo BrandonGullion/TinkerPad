@@ -259,6 +259,6 @@ pub fn config_for(state: &AppState, plugin_id: &str) -> Result<HelperConfig, Com
         &Toolchain::of(state, plugin_id),
         &state.scratch_root(),
         &state.data_dir,
-        &state.helper_settings,
+        &state.helper_settings(),
     )
 }

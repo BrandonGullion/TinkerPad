@@ -16,7 +16,9 @@
 //! ```
 //!
 //! The two sections have the same shape because the two things have the same
-//! life (`tinkerpad_process::supervise`), so one reader serves both.
+//! life (`tinkerpad_process::supervise`), so one reader serves both. The text
+//! is parsed once into `tinkerpad_core::Settings` (work item 04-02); what is
+//! left here is turning what it says into what a supervisor needs.
 //!
 //! Anything wrong in here is a warning, never a failure to launch: a typo in a
 //! duration should cost you the setting, not the app.
@@ -46,86 +48,32 @@ pub const LSP: &str = "lsp";
 pub const HELPERS: &str = "helpers";
 
 impl ServiceSettings {
-    /// Read `[lsp]` from a settings file, then let [`PREWARM_ENV`] override the
-    /// pre-warm list.
-    pub fn load(text: &str) -> Self {
-        let mut settings = Self::from_settings(text);
+    /// The `[lsp]` part of already-parsed settings (work item 04-02), with
+    /// [`PREWARM_ENV`] still able to override the pre-warm list.
+    pub fn lsp_of(settings: &tinkerpad_core::Settings) -> Self {
+        let mut service = Self {
+            prewarm: settings.lsp.prewarm.clone(),
+            idle_shutdown: idle_of(&settings.lsp.languages, LSP),
+        };
         if let Ok(list) = std::env::var(PREWARM_ENV) {
-            settings.prewarm = list
+            service.prewarm = list
                 .split(',')
                 .map(str::trim)
                 .filter(|id| !id.is_empty())
                 .map(str::to_owned)
                 .collect();
         }
-        settings
+        service
     }
 
-    /// Read `[helpers]` out of a settings file (03-02). Helpers have no
-    /// pre-warm list: a helper is started by the first run that wants it, and
-    /// a language whose server is pre-warmed usually isn't the one you run
-    /// first.
-    pub fn helpers(text: &str) -> Self {
-        Self::from_section(text, HELPERS)
-    }
-
-    /// Read `[lsp]` out of a settings file. A missing section is no settings.
-    pub fn from_settings(text: &str) -> Self {
-        Self::from_section(text, LSP)
-    }
-
-    /// Read one section. The two have the same shape.
-    pub fn from_section(text: &str, section: &str) -> Self {
-        let table: toml::Table = match toml::from_str(text) {
-            Ok(table) => table,
-            Err(error) => {
-                warn!(%error, "settings.toml could not be read; using defaults");
-                return Self::default();
-            }
-        };
-        let Some(entries) = table.get(section).and_then(toml::Value::as_table) else {
-            return Self::default();
-        };
-
-        let mut settings = Self::default();
-        for (key, value) in entries {
-            match (key.as_str(), value) {
-                ("prewarm", toml::Value::Array(languages)) => {
-                    for language in languages {
-                        match language.as_str() {
-                            Some(id) => settings.prewarm.push(id.to_owned()),
-                            None => warn!("[{section}] prewarm should be a list of language ids"),
-                        }
-                    }
-                }
-                ("prewarm", _) => {
-                    warn!(r#"[{section}] prewarm should be a list, e.g. ["typescript"]"#)
-                }
-                // `[<section>.<language>]`, a table of that language's settings.
-                (language, toml::Value::Table(per_language)) => {
-                    for (key, value) in per_language {
-                        match key.as_str() {
-                            "idle_shutdown" => match value.as_str() {
-                                Some(raw) => match parse_idle(raw) {
-                                    Some(idle) => {
-                                        settings.idle_shutdown.insert(language.to_owned(), idle);
-                                    }
-                                    None => warn!(
-                                        language,
-                                        value = raw,
-                                        r#"[{section}.{language}] idle_shutdown should be "never" or a duration like "30m""#
-                                    ),
-                                },
-                                None => warn!(language, "idle_shutdown should be a string"),
-                            },
-                            other => warn!(language, key = other, section, "unknown setting"),
-                        }
-                    }
-                }
-                (other, _) => warn!(key = other, section, "unknown setting"),
-            }
+    /// The `[helpers]` part. Helpers have no pre-warm list: a helper is
+    /// started by the first run that wants it, and a language whose server is
+    /// pre-warmed usually isn't the one you run first.
+    pub fn helpers_of(settings: &tinkerpad_core::Settings) -> Self {
+        Self {
+            prewarm: Vec::new(),
+            idle_shutdown: idle_of(&settings.helpers, HELPERS),
         }
-        settings
     }
 
     /// How long this language's server may idle: the user's setting if there
@@ -140,6 +88,31 @@ impl ServiceSettings {
 
 /// `"never"`, or a duration like `"90s"`, `"30m"`, `"2h"` — the same spellings
 /// a plugin manifest uses.
+/// The idle overrides of one section, complaining about the ones that make no
+/// sense and keeping the rest.
+fn idle_of(
+    overrides: &BTreeMap<String, tinkerpad_core::ServiceOverride>,
+    section: &str,
+) -> BTreeMap<String, Option<Duration>> {
+    let mut idle = BTreeMap::new();
+    for (id, over) in overrides {
+        let Some(raw) = over.idle_shutdown.as_deref() else {
+            continue;
+        };
+        match parse_idle(raw) {
+            Some(parsed) => {
+                idle.insert(id.clone(), parsed);
+            }
+            None => warn!(
+                id,
+                value = raw,
+                r#"[{section}.{id}] idle_shutdown should be "never" or a duration like "30m""#
+            ),
+        }
+    }
+    idle
+}
+
 fn parse_idle(raw: &str) -> Option<Option<Duration>> {
     let raw = raw.trim();
     if raw.eq_ignore_ascii_case("never") {
@@ -158,11 +131,17 @@ fn parse_idle(raw: &str) -> Option<Option<Duration>> {
 
 #[cfg(test)]
 mod tests {
+    use tinkerpad_core::Settings;
+
     use super::*;
+
+    fn settings(text: &str) -> Settings {
+        toml::from_str(text).expect("settings")
+    }
 
     #[test]
     fn reads_prewarm_and_per_language_idle() {
-        let settings = ServiceSettings::from_settings(
+        let service = ServiceSettings::lsp_of(&settings(
             r#"
 [lsp]
 prewarm = ["typescript", "rust"]
@@ -173,19 +152,19 @@ idle_shutdown = "30m"
 [lsp.typescript]
 idle_shutdown = "never"
 "#,
-        );
-        assert_eq!(settings.prewarm, ["typescript", "rust"]);
+        ));
+        assert_eq!(service.prewarm, ["typescript", "rust"]);
         assert_eq!(
-            settings.idle_for("rust", None),
+            service.idle_for("rust", None),
             Some(Duration::from_secs(1800)),
         );
         assert_eq!(
-            settings.idle_for("typescript", Some(Duration::from_secs(60))),
+            service.idle_for("typescript", Some(Duration::from_secs(60))),
             None,
             "an explicit `never` overrides the plugin",
         );
         assert_eq!(
-            settings.idle_for("csharp", Some(Duration::from_secs(60))),
+            service.idle_for("csharp", Some(Duration::from_secs(60))),
             Some(Duration::from_secs(60)),
             "and a language with no setting keeps the plugin's",
         );
@@ -193,25 +172,38 @@ idle_shutdown = "never"
 
     #[test]
     fn a_file_without_an_lsp_section_is_no_settings() {
-        let settings = ServiceSettings::from_settings("[toolchains.csharp]\ndotnet = \"x\"\n");
-        assert_eq!(settings, ServiceSettings::default());
+        let service = ServiceSettings::lsp_of(&settings(
+            "[toolchains.csharp]
+dotnet = \"x\"
+",
+        ));
+        assert_eq!(service, ServiceSettings::default());
+    }
+
+    #[test]
+    fn helpers_are_read_from_their_own_section() {
+        let service = ServiceSettings::helpers_of(&settings(
+            "[helpers.csharp]
+idle_shutdown = \"never\"
+",
+        ));
+        assert!(service.prewarm.is_empty(), "helpers are never pre-warmed");
+        assert_eq!(
+            service.idle_for("csharp", Some(Duration::from_secs(60))),
+            None
+        );
     }
 
     #[test]
     fn nonsense_costs_the_setting_and_nothing_else() {
-        let settings = ServiceSettings::from_settings(
+        let service = ServiceSettings::lsp_of(&settings(
             r#"
-[lsp]
-prewarm = "typescript"
-
 [lsp.rust]
 idle_shutdown = "half an hour"
-mystery = 1
 "#,
-        );
-        assert!(settings.prewarm.is_empty(), "a string is not a list");
+        ));
         assert_eq!(
-            settings.idle_for("rust", Some(Duration::from_secs(5))),
+            service.idle_for("rust", Some(Duration::from_secs(5))),
             Some(Duration::from_secs(5)),
             "the plugin's value stands when the override can't be read",
         );

@@ -441,14 +441,31 @@ with a marker so a `dump(hugeList)` doesn't freeze the UI).
   2,000 playgrounds, so the panel can search on every keystroke. No database. If
   it ever needs one, SQLite via `rusqlite`, but a few thousand folders don't.
 
+### Settings (work item 04-02)
+
+- **One file**, `<app-data>/settings.toml`, written with its comments on first
+  launch. The schema and its defaults are `tinkerpad_core::settings::Settings`;
+  every field has a default, so a missing file, section, or key all mean the
+  same thing.
+- **One path from a change to the app.** The file is watched. The settings form
+  writes it and the watcher applies it, exactly as it would an edit made in
+  another editor; nothing in the window changes the app directly.
+- **Saving keeps the file yours.** Writes go through `toml_edit`, so comments,
+  ordering, and keys a newer build wrote all survive. A setting put back to its
+  default loses its line rather than being written out.
+- **A broken file costs the edit and nothing else**: the last settings that
+  worked stay in force, and a toast says what is wrong and on which line.
+- Per-plugin sections (`[toolchains.<id>]`, `[lsp.<id>]`, `[helpers.<id>]`) are
+  generated in the form from the plugin registry, so a plugin installed
+  tomorrow gets its rows without a line of UI code.
+
 ## 7. UI shell (ui/)
 
 Keep it small: a tab strip over one CodeMirror view, a resizable output pane, a
 library panel on the left (`Mod+B`: search, tags, pinned, recents, and the
 per-playground actions — work item 04-01), a language picker on new tab, a status
-strip (server states, run timer, run history), and a command palette for
-everything else. No settings pages until Phase 4; settings are a TOML
-file until then.
+strip (server states, run timer, run history), a settings form (`Mod+,`), and a
+command palette for everything else.
 
 Tabs (`ui/src/tabs.ts`, work item 01-12):
 

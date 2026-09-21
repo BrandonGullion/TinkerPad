@@ -136,10 +136,12 @@ pub struct Watcher {
 }
 
 pub struct Library {
-    root: PathBuf,
+    /// Where playgrounds are. It can move: the settings window can point the
+    /// library at another folder (work item 04-02).
+    root: RwLock<PathBuf>,
     /// `root` canonicalised, because watchers may report paths in that form
     /// (macOS reports `/private/var/...` for `/var/...`).
-    canonical_root: PathBuf,
+    canonical_root: RwLock<PathBuf>,
     index: RwLock<Index>,
     /// Hash of each main file's contents as last written or seen by the app,
     /// to tell our own saves from edits made elsewhere.
@@ -161,8 +163,8 @@ impl Library {
         }
         let canonical_root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         let library = Arc::new(Library {
-            root,
-            canonical_root,
+            root: RwLock::new(root),
+            canonical_root: RwLock::new(canonical_root),
             index: RwLock::default(),
             known_source: Mutex::default(),
         });
@@ -170,20 +172,43 @@ impl Library {
         Ok(library)
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
+    /// Where playgrounds are kept now.
+    pub fn root(&self) -> PathBuf {
+        self.root.read().expect("root lock").clone()
+    }
+
+    /// Point the library at another folder and index it (work item 04-02).
+    ///
+    /// The caller is expected to have closed what was open: every playground
+    /// the window was showing belongs to the old folder.
+    pub fn change_root(&self, root: impl Into<PathBuf>) -> Result<(), LibraryError> {
+        let root = root.into();
+        std::fs::create_dir_all(&root).map_err(|e| LibraryError::io(&root, e))?;
+        let readme = root.join("README.md");
+        if !readme.exists()
+            && let Err(e) = std::fs::write(&readme, README)
+        {
+            warn!(file = %readme.display(), error = %e, "could not write library README");
+        }
+        let canonical = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        *self.root.write().expect("root lock") = root.clone();
+        *self.canonical_root.write().expect("root lock") = canonical;
+        self.known_source.lock().expect("known lock").clear();
+        self.rescan();
+        info!(root = %root.display(), "library moved");
+        Ok(())
     }
 
     /// Rebuild the index from disk.
     pub fn rescan(&self) {
-        let mut dirs: Vec<PathBuf> = match std::fs::read_dir(&self.root) {
+        let mut dirs: Vec<PathBuf> = match std::fs::read_dir(self.root()) {
             Ok(entries) => entries
                 .filter_map(Result::ok)
                 .map(|e| e.path())
                 .filter(|p| p.is_dir())
                 .collect(),
             Err(e) => {
-                warn!(root = %self.root.display(), error = %e, "could not read library");
+                warn!(root = %self.root().display(), error = %e, "could not read library");
                 Vec::new()
             }
         };
@@ -193,7 +218,7 @@ impl Library {
             load_folder(&mut index, &dir);
         }
         info!(
-            root = %self.root.display(),
+            root = %self.root().display(),
             playgrounds = index.by_id.len(),
             broken = index.broken.len(),
             "library indexed"
@@ -252,8 +277,8 @@ impl Library {
         // name was chosen, in which case try the next name.
         let slug = slug::slugify(name);
         let dir = loop {
-            let folder = slug::unique_folder(&self.root, &slug, None);
-            let dir = self.root.join(&folder);
+            let folder = slug::unique_folder(&self.root(), &slug, None);
+            let dir = self.root().join(&folder);
             match std::fs::create_dir(&dir) {
                 Ok(()) => break dir,
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -356,8 +381,8 @@ impl Library {
 
         let slug = slug::slugify(name);
         if !slug.eq_ignore_ascii_case(&current_folder) {
-            let folder = slug::unique_folder(&self.root, &slug, Some(&current_folder));
-            let new_dir = self.root.join(folder);
+            let folder = slug::unique_folder(&self.root(), &slug, Some(&current_folder));
+            let new_dir = self.root().join(folder);
             std::fs::rename(&old_dir, &new_dir).map_err(|e| LibraryError::io(&old_dir, e))?;
             let old_main = p.main_file.clone();
             let rel = old_main.strip_prefix(&old_dir).unwrap_or(&old_main);
@@ -456,7 +481,7 @@ impl Library {
                 .then_with(|| a.playground.name.cmp(&b.playground.name))
         });
         Listing {
-            root: self.root.clone(),
+            root: self.root(),
             playgrounds,
             broken: index.broken.values().cloned().collect(),
         }
@@ -586,9 +611,9 @@ impl Library {
             .map_err(|e| LibraryError::Watch(e.to_string()))?;
         debouncer
             .watcher()
-            .watch(&self.root, RecursiveMode::Recursive)
+            .watch(&self.root(), RecursiveMode::Recursive)
             .map_err(|e| LibraryError::Watch(e.to_string()))?;
-        info!(root = %self.root.display(), "watching library");
+        info!(root = %self.root().display(), "watching library");
         Ok(Watcher {
             _debouncer: debouncer,
         })
@@ -596,6 +621,8 @@ impl Library {
 
     /// Update the index for changed paths and say what changed.
     fn handle_paths(&self, paths: impl IntoIterator<Item = PathBuf>) -> Vec<LibraryEvent> {
+        let root = self.root();
+        let canonical = self.canonical_root.read().expect("root lock").clone();
         let mut folders = BTreeSet::new();
         let mut touched_files = BTreeSet::new();
         for path in paths {
@@ -605,16 +632,16 @@ impl Library {
                 continue;
             }
             let rel = path
-                .strip_prefix(&self.root)
-                .or_else(|_| path.strip_prefix(&self.canonical_root));
+                .strip_prefix(&root)
+                .or_else(|_| path.strip_prefix(&canonical));
             let Ok(rel) = rel else { continue };
             let mut components = rel.components();
             let Some(first) = components.next() else {
                 continue;
             };
-            let dir = self.root.join(first.as_os_str());
+            let dir = root.join(first.as_os_str());
             if components.next().is_some() {
-                touched_files.insert(self.root.join(rel));
+                touched_files.insert(root.join(rel));
             }
             folders.insert(dir);
         }

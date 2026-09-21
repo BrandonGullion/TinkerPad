@@ -16,5 +16,10 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+# Only the tests need a TOML parser: the schema lives here, the file reading
+# lives in the app, and the template has to be checked against the defaults.
+toml.workspace = true
+
 [lints]
 workspace = true

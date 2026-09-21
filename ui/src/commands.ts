@@ -31,12 +31,19 @@ export function commands(tabs: TabManager, runs: RunController): Command[] {
     { id: "new-pick", label: "New playground…", shortcut: `${MOD}⇧N`, run: () => tabs.pickAndCreate() },
     { id: "open", label: "Open playground…", shortcut: `${MOD}O`, run: () => tabs.quickOpen() },
     { id: "library", label: "Library panel", shortcut: `${MOD}B`, run: () => toggleLibrary() },
+    { id: "settings", label: "Settings…", shortcut: `${MOD},`, run: () => openSettings() },
+    { id: "settings-file", label: "Open settings file", run: () => void invoke("open_settings_file") },
     { id: "rename", label: "Rename playground", shortcut: "F2", run: () => tabs.startRename() },
     { id: "close", label: "Close tab", shortcut: `${MOD}W`, run: () => tabs.closeActive() },
     { id: "force-per-run", label: "Force per-run execution", run: () => forcePerRun() },
     { id: "next-error", label: "Next error or warning", shortcut: "F8", run: () => tabs.cycleAnnotation(1) },
     { id: "previous-error", label: "Previous error or warning", shortcut: "⇧F8", run: () => tabs.cycleAnnotation(-1) },
   ];
+}
+
+/** Open the settings window (work item 04-02). */
+function openSettings(): void {
+  window.dispatchEvent(new CustomEvent("tinkerpad:open-settings"));
 }
 
 /** Show or hide the library panel (work item 04-01). */

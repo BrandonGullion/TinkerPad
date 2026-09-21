@@ -36,6 +36,25 @@ pub struct ToolchainOverrides {
 }
 
 impl ToolchainOverrides {
+    /// The overrides in already-parsed settings (work item 04-02). This is
+    /// what the app uses; the text version below is for tests and for the
+    /// plugin CLI, which has no settings type to hand.
+    pub fn of(settings: &tinkerpad_core::Settings) -> Self {
+        Self {
+            by_plugin: settings
+                .toolchains
+                .iter()
+                .map(|(plugin, programs)| {
+                    let programs = programs
+                        .iter()
+                        .map(|(program, path)| (program.clone(), PathBuf::from(path)))
+                        .collect();
+                    (plugin.clone(), programs)
+                })
+                .collect(),
+        }
+    }
+
     /// Read the `[toolchains]` table from the text of `settings.toml`. Other
     /// sections are ignored; they belong to other parts of the app.
     pub fn from_settings(text: &str) -> Result<Self, String> {

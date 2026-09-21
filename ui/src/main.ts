@@ -2,6 +2,7 @@ import { renderExamples } from "./dump/examples";
 import { Editor } from "./editor";
 import { invoke, ready, subscribe } from "./ipc";
 import { RunHistory } from "./history";
+import { openSettings, settingsOpen, watchSettings } from "./settings";
 import { LibraryPanel } from "./library";
 import { createLayout } from "./layout";
 import { BottomPanel } from "./panels";
@@ -54,6 +55,25 @@ const library = new LibraryPanel(layout.sidebar, {
 });
 
 window.addEventListener("tinkerpad:toggle-library", () => library.toggle());
+window.addEventListener("tinkerpad:open-settings", () => void openSettings(settingsHost));
+
+/** What settings change in the window itself (work item 04-02). */
+const settingsHost = {
+  applyEditor: (settings: import("./protocol").Settings) => {
+    editor.applySettings(
+      settings.editor.font_size,
+      settings.editor.font_family,
+      settings.editor.tab_size,
+    );
+    document.documentElement.dataset.theme = settings.theme;
+  },
+  libraryMoved: async (_root: string) => {
+    // Every open tab belongs to the folder that was there before.
+    for (const tab of [...tabs.tabs]) await tabs.close(tab, { save: false });
+    await tabs.refresh();
+  },
+};
+void watchSettings(settingsHost);
 
 statusBar.onCancel = () => void runs.cancel();
 statusBar.onShowHistory = (anchor) => void history.toggle(anchor);
@@ -82,7 +102,7 @@ const isMac = navigator.platform.toLowerCase().includes("mac");
  * Ctrl+Tab is Ctrl everywhere, as in browsers.
  */
 export function handleGlobalKey(e: KeyboardEvent): boolean {
-  if (pickerOpen()) return false;
+  if (pickerOpen() || settingsOpen()) return false;
   const mod = isMac ? e.metaKey : e.ctrlKey;
   const key = e.key.toLowerCase();
   const inTextField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -107,6 +127,11 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
     return true;
   }
   if (!mod || e.altKey) return false;
+  // Mod+, opens settings, as everything else does (work item 04-02).
+  if (key === "," && !e.shiftKey) {
+    void openSettings(settingsHost);
+    return true;
+  }
   switch (key) {
     // The library panel (work item 04-01).
     case "b":

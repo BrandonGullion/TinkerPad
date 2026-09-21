@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-use tinkerpad_core::{CoreEvent, LanguageId, Level, Scope, ToolchainState};
+use tinkerpad_core::{CoreEvent, LanguageId, Scope, ToolchainState};
 use tinkerpad_plugin::{PROBE_TIMEOUT, Plugin, Resolver, env::discover_path, probe};
 use tracing::info;
 
@@ -111,19 +111,7 @@ pub fn check_all(app: &AppHandle) {
         let path = discover_path().await;
         let state = app.state::<AppState>();
 
-        let overrides = match crate::settings::toolchain_overrides(&state.data_dir) {
-            Ok(o) => o,
-            Err(message) => {
-                state.events.publish(
-                    Scope::App,
-                    CoreEvent::Toast {
-                        level: Level::Warning,
-                        message: format!("Toolchain overrides ignored: {message}"),
-                    },
-                );
-                Default::default()
-            }
-        };
+        let overrides = tinkerpad_plugin::ToolchainOverrides::of(&state.settings.get());
         let resolver = Arc::new(Resolver::new(path, overrides));
         *state.toolchains.resolver.write().expect("resolver lock") = resolver.clone();
 
