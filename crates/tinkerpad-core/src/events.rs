@@ -75,6 +75,11 @@ pub enum CoreEvent {
     /// Playgrounds were added, removed, renamed, or their metadata changed on
     /// disk. The UI should list them again.
     LibraryChanged,
+    /// `keybindings.toml` changed (work item 04-03): command id to keys, with
+    /// an empty string meaning the command's default key is taken away.
+    Keybindings {
+        bindings: std::collections::BTreeMap<String, String>,
+    },
     /// `settings.toml` changed, here or in an editor (work item 04-02). The
     /// window applies what it owns: the editor's font, the theme, whether a
     /// run clears the pane.

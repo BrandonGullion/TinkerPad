@@ -10,6 +10,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "isolatedModules": true,
+    // The command catalog is plain JavaScript with JSDoc types, so the docs
+    // generator can import the same file in Node (work item 04-03).
+    "allowJs": true,
+    "checkJs": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "types": ["vite/client"]

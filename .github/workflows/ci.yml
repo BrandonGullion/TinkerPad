@@ -91,6 +91,11 @@ jobs:
       - name: Typecheck
         working-directory: ui
         run: npm run typecheck
+      # docs/KEYBINDINGS.md is generated from the command catalog (04-03);
+      # a keymap change that doesn't update it fails here.
+      - name: Keybindings doc is current
+        working-directory: ui
+        run: npm run docs:keys:check
       - name: Build
         working-directory: ui
         run: npm run build

@@ -36,6 +36,7 @@ export type CoreEvent =
   | { type: "helper"; plugin: string; state: ServerState }
   | { type: "libraryChanged" }
   | ({ type: "settings" } & Settings)
+  | { type: "keybindings"; bindings: Record<string, string> }
   | { type: "sourceChangedOnDisk"; playground: string };
 
 /** A line a plugin's `[deps]` puts at the top of the main file. */
