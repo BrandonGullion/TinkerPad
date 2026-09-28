@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
 pub struct Settings {
-    /// The colour theme, by name. Real themes arrive in 04-04; until then
-    /// anything but `dark` falls back to it.
+    /// `system`, `light`, or `dark` (work item 04-04). `system` follows the
+    /// desktop's own setting, and is what an unanswered question means.
     pub theme: String,
     pub library: LibrarySettings,
     pub editor: EditorSettings,
@@ -101,8 +101,12 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The only theme there is until 04-04.
-    pub const DEFAULT_THEME: &'static str = "dark";
+    /// Following the desktop is the default: the app should look like the
+    /// rest of the machine until the user says otherwise.
+    pub const DEFAULT_THEME: &'static str = "system";
+
+    /// The themes there are.
+    pub const THEMES: [&'static str; 3] = ["system", "light", "dark"];
 
     /// How big the editor's text may be, whatever the file says.
     pub const FONT_SIZE: std::ops::RangeInclusive<u16> = 8..=40;
@@ -158,8 +162,8 @@ pub const TEMPLATE: &str = r#"# TinkerPad settings.
 # Everything here is optional: a line you delete goes back to its default.
 # Changes apply as soon as you save, except `library.root`, which asks first.
 
-# The colour theme. Only "dark" so far.
-# theme = "dark"
+# The colour theme: "system" follows the desktop, or pick "light" or "dark".
+# theme = "system"
 
 [editor]
 # Text size in points, between 8 and 40.
@@ -211,7 +215,7 @@ mod tests {
     #[test]
     fn everything_has_a_default() {
         let settings = Settings::default();
-        assert_eq!(settings.theme, "dark");
+        assert_eq!(settings.theme, "system");
         assert_eq!(settings.library.root, None);
         assert_eq!(settings.font_size(), 13);
         assert_eq!(settings.tab_size(), 2);
@@ -301,6 +305,9 @@ mod tests {
         )
         .expect("unknown keys");
         assert_eq!(settings.font_size(), 16);
-        assert_eq!(settings.theme, "dark");
+        assert_eq!(settings.theme, "dark", "what the file says");
+
+        let plain: Settings = toml::from_str("").expect("an empty file");
+        assert_eq!(plain.theme, "system", "and the default follows the desktop");
     }
 }

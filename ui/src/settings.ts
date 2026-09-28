@@ -91,6 +91,18 @@ export async function openSettings(host: SettingsHost): Promise<void> {
   // ---- the form ------------------------------------------------------------
 
   body.append(
+    section("Appearance", [
+      choice(
+        "Theme",
+        draft.theme,
+        [
+          ["system", "Follow the system"],
+          ["light", "Light"],
+          ["dark", "Dark"],
+        ],
+        (value) => (draft.theme = value),
+      ),
+    ]),
     section("Editor", [
       number("Font size", draft.editor.font_size, 8, 40, (n) => (draft.editor.font_size = n)),
       text(
@@ -338,6 +350,26 @@ function text(
   input.placeholder = placeholder;
   input.addEventListener("input", () => onChange(input.value.trim()));
   return row(label, input, hint);
+}
+
+/** One of a few named options. */
+function choice(
+  label: string,
+  value: string,
+  options: [string, string][],
+  onChange: (value: string) => void,
+): HTMLElement {
+  const select = document.createElement("select");
+  select.className = "settings-input settings-select";
+  for (const [id, title] of options) {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = title;
+    select.append(option);
+  }
+  select.value = options.some(([id]) => id === value) ? value : (options[0]?.[0] ?? "");
+  select.addEventListener("change", () => onChange(select.value));
+  return row(label, select);
 }
 
 function toggle(label: string, on: boolean, onChange: (on: boolean) => void): HTMLElement {

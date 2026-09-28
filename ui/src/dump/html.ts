@@ -65,13 +65,13 @@ export function sanitize(html: string): DocumentFragment {
 
 const BASE_CSS = `
 :host { display: block; }
-.root { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #d4d4d8; }
+.root { font: 13px/1.45 var(--font-ui); color: var(--fg); }
 .root > :first-child { margin-top: 0; }
 .root > :last-child { margin-bottom: 0; }
-a { color: #93c5fd; }
+a { color: var(--link); }
 img { max-width: 100%; }
 table { border-collapse: collapse; }
-td, th { border: 1px solid #34363c; padding: 2px 6px; }
+td, th { border: 1px solid var(--border); padding: 2px 6px; }
 `;
 
 export function renderHtml(html: string): HTMLElement {

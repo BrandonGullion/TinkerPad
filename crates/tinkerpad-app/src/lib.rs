@@ -977,6 +977,25 @@ pub fn run() {
                 startup_notices: Mutex::new(startup_notices),
             });
 
+            // The window's own background, from the theme the settings name,
+            // so the frame around the webview matches what it is about to
+            // paint (work item 04-04).
+            if let Some(window) = app.get_webview_window("main") {
+                let theme = app.state::<AppState>().settings.get().theme.clone();
+                let colour = match theme.as_str() {
+                    "light" => Some(tauri::window::Color(253, 253, 252, 255)),
+                    "dark" => Some(tauri::window::Color(30, 31, 34, 255)),
+                    // Following the system: leave what the config set, which
+                    // the webview's own first paint already matches.
+                    _ => None,
+                };
+                if let Some(colour) = colour
+                    && let Err(error) = window.set_background_color(Some(colour))
+                {
+                    tracing::debug!(%error, "the window background could not be set");
+                }
+            }
+
             // Probes run in the background; the window never waits for them.
             toolchains::check_all(app.handle());
             Ok(())

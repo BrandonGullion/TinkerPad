@@ -3,6 +3,7 @@ import { Editor } from "./editor";
 import { invoke, ready, subscribe } from "./ipc";
 import { RunHistory } from "./history";
 import { openSettings, settingsOpen, watchSettings } from "./settings";
+import { applyTheme, followSystem, onThemeChanged, themeName } from "./theme";
 import { LibraryPanel } from "./library";
 import { createLayout } from "./layout";
 import { BottomPanel } from "./panels";
@@ -71,7 +72,7 @@ const settingsHost = {
       settings.editor.font_family,
       settings.editor.tab_size,
     );
-    document.documentElement.dataset.theme = settings.theme;
+    applyTheme(themeName(settings.theme));
   },
   libraryMoved: async (_root: string) => {
     // Every open tab belongs to the folder that was there before.
@@ -79,6 +80,8 @@ const settingsHost = {
     await tabs.refresh();
   },
 };
+onThemeChanged((theme) => editor.applyTheme(theme));
+followSystem();
 void watchSettings(settingsHost);
 
 statusBar.onCancel = () => void runs.cancel();

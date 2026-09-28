@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TinkerPad</title>
+    <!--
+      The window's ground, painted before any stylesheet or script has loaded,
+      so launching into a dark theme never flashes white (work item 04-04).
+      The app's own palette takes over the moment style.css arrives.
+    -->
+    <style>
+      html {
+        color-scheme: light dark;
+        background: #1e1f22;
+      }
+      @media (prefers-color-scheme: light) {
+        html {
+          background: #fdfdfc;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
