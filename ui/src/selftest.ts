@@ -1823,15 +1823,17 @@ async function packagesScenario(ctx: SelftestContext, check: Check) {
     [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" | ");
   const clearToasts = () => document.querySelectorAll(".toast").forEach((t) => t.remove());
 
-  // With nothing open there is nothing to add a package to.
+  // With nothing open there is nothing to add a package to, so the palette
+  // doesn't offer it: a command that can't run isn't listed (work item 04-03).
   for (const t of [...tabs.tabs]) await tabs.close(t);
-  const opened = await runCommand("Add package");
-  await until(() => note() !== "", 3000);
+  const offered = await runCommand("Add package");
   await check(
-    "Mod+Shift+P lists Add package, which says there is nothing open",
-    opened && note().includes("Open a playground"),
-    JSON.stringify({ opened, note: note() }),
+    "Mod+Shift+P leaves out commands that need a playground",
+    !offered,
+    JSON.stringify({ offered, note: note() }),
   );
+  pressKey("Escape");
+  await until(() => document.querySelector(".picker") === null, 3000);
   await check("the palette closes after choosing", document.querySelector(".picker") === null);
 
   // C# adds packages by putting a directive at the top of the file.
@@ -1914,22 +1916,34 @@ async function packagesScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify({ changed: text() !== locked, toast: toastText().slice(0, 120) }),
   );
 
-  // A plugin with no [deps] section says so.
+  // A plugin with no [deps] section and no add_dependency hook says so. The
+  // test plugin has both (03-07), so this needs one that has neither: `mini`,
+  // when it is installed. Without it there is nothing to check here.
   clearToasts();
-  const plain = await openTestPlayground(ctx, "Packages Unsupported");
-  const plainText = text();
-  done = runCommand("Add package");
-  await fillPrompt(["anything", ""]);
-  await done;
-  await until(() => toastText().includes("deps"), 5000);
-  await check(
-    "a plugin that does not say how to add packages reports that",
-    text() === plainText && toastText().includes("[deps]"),
-    JSON.stringify({ toast: toastText().slice(0, 120) }),
-  );
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  let plain: Playground | null = null;
+  if (plugins.plugins.some((p) => p.id === "mini")) {
+    plain = await invoke<Playground>("create_playground", {
+      name: "Packages Unsupported",
+      language: "mini",
+    });
+    await openPlayground(editor, ctx.status, plain.id);
+    const plainText = text();
+    done = runCommand("Add package");
+    await fillPrompt(["anything", ""]);
+    await done;
+    await until(() => toastText().includes("deps"), 5000);
+    await check(
+      "a plugin that says nothing about packages reports that",
+      text() === plainText && toastText().includes("[deps]"),
+      JSON.stringify({ toast: toastText().slice(0, 120) }),
+    );
+  } else {
+    await report("INFO no plugin without [deps] is installed, so that check was skipped");
+  }
 
   for (const t of [...tabs.tabs]) await tabs.close(t);
-  for (const id of [plain.id, expression.id, csharp.id]) {
+  for (const id of [plain?.id, expression.id, csharp.id].filter((id) => id !== undefined)) {
     try {
       await invoke("delete_playground", { id });
     } catch (e) {
@@ -3436,6 +3450,180 @@ async function settingsScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: main.id }).catch(() => {});
 }
 
+/**
+ * The command registry, the palette, and `keybindings.toml` (work item 04-03).
+ */
+async function keysScenario(ctx: SelftestContext, check: Check) {
+  const { tabs } = ctx;
+  const items = () => [...document.querySelectorAll<HTMLElement>(".picker-item")];
+  const shownIn = (text: string) => items().some((item) => (item.textContent ?? "").includes(text));
+  const file = await invoke<string>("keybindings_file");
+  const toastText = () =>
+    [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" | ");
+  const clearToasts = () => document.querySelectorAll(".toast").forEach((t) => t.remove());
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const main = await openTestPlayground(ctx, "Keys Test");
+  await invoke("start_helper", { plugin: "node-check" }).catch(() => {});
+
+  // Start from the defaults, whatever an earlier run left in the file.
+  await invoke("selftest_write_file", { path: file, text: "" });
+  await untilAsync(
+    async () => Object.keys(await invoke<Record<string, string>>("get_keybindings")).length === 0,
+    5000,
+  );
+  await frame();
+
+  // The palette lists commands with their category and their keys.
+  pressKey("p", { mod: true, shift: true });
+  await until(() => document.querySelector(".picker") !== null, 5000);
+  const input = document.querySelector<HTMLInputElement>(".picker-input");
+  if (input) {
+    input.value = "run";
+    input.dispatchEvent(new Event("input"));
+  }
+  await frame();
+  await check(
+    "the palette lists commands with their category and shortcut",
+    shownIn("Run") && shownIn("Ctrl+Enter"),
+    JSON.stringify(items().map((i) => i.textContent)),
+  );
+  pressKey("Escape");
+  await until(() => document.querySelector(".picker") === null, 3000);
+
+  // What was used last comes first next time.
+  await runCommand("Clear output");
+  pressKey("p", { mod: true, shift: true });
+  await until(() => document.querySelector(".picker") !== null, 5000);
+  await check(
+    "the command used last is offered first",
+    (items()[0]?.textContent ?? "").includes("Clear output"),
+    JSON.stringify(items()[0]?.textContent),
+  );
+  pressKey("Escape");
+  await until(() => document.querySelector(".picker") === null, 3000);
+
+  // A default binding runs its command.
+  ctx.editor.focus();
+  const code = 'console.log("bound")\n';
+  ctx.editor.view.dispatch({
+    changes: { from: 0, to: ctx.editor.view.state.doc.length, insert: code },
+  });
+  let end = ctx.runs.waitForEnd();
+  pressKey("Enter", { mod: true }, ctx.editor.view.contentDOM);
+  let outcome = await withTimeout(end, 30_000, "Mod+Enter");
+  await check("the default binding runs its command", outcome.kind === "exited", JSON.stringify(outcome));
+
+  // keybindings.toml moves it, and the move arrives on its own.
+  await invoke("selftest_write_file", {
+    path: file,
+    text: '"run.start" = "mod+shift+r"' + '\n',
+  });
+  const moved = await untilAsync(
+    async () => (await invoke<Record<string, string>>("get_keybindings"))["run.start"] === "mod+shift+r",
+    5000,
+  );
+  await frame();
+
+  // The editor's own keymap was rebuilt: its old key does nothing now.
+  ctx.editor.focus();
+  pressKey("Enter", { mod: true }, ctx.editor.view.contentDOM);
+  const stillIdle = !(await until(() => ctx.runs.running, 1500));
+  await check(
+    "a rebound command loses its old key, in the editor too",
+    moved && stillIdle,
+    JSON.stringify({ moved, running: ctx.runs.running }),
+  );
+
+  // And the new one runs it.
+  end = ctx.runs.waitForEnd();
+  pressKey("R", { mod: true, shift: true }, document.body);
+  outcome = await withTimeout(end, 30_000, "the moved binding");
+  await check(
+    "the binding from keybindings.toml runs the command",
+    outcome.kind === "exited",
+    JSON.stringify(outcome),
+  );
+
+  // And the palette shows the new keys.
+  pressKey("p", { mod: true, shift: true });
+  await until(() => document.querySelector(".picker") !== null, 5000);
+  const runRow = items().find((item) => (item.textContent ?? "").startsWith("Run"));
+  await check(
+    "the palette shows the keys the user chose",
+    (runRow?.textContent ?? "").includes("Ctrl+Shift+R"),
+    JSON.stringify(runRow?.textContent),
+  );
+  pressKey("Escape");
+  await until(() => document.querySelector(".picker") === null, 3000);
+
+  // Mod+Enter with a completion showing accepts it rather than running
+  // (the item's gotcha). Put the default back first, so it is Mod+Enter.
+  await invoke("selftest_write_file", { path: file, text: "" });
+  await untilAsync(
+    async () => Object.keys(await invoke<Record<string, string>>("get_keybindings")).length === 0,
+    5000,
+  );
+  await frame();
+  const view = ctx.editor.view;
+  // The test server offers `<file>Value`, so type a prefix it matches.
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "main" } });
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  ctx.editor.focus();
+  // The tab's language server attaches in the background, so ask until it
+  // answers, as the `lsp` scenario does.
+  let offered = false;
+  for (let attempt = 0; attempt < 20 && !offered; attempt++) {
+    startCompletion(view);
+    offered = await until(() => currentCompletions(view.state).length > 0, 1500);
+  }
+  const wanted = currentCompletions(view.state)[0]?.label ?? "";
+  // CodeMirror ignores an accept within `interactionDelay` (75 ms) of the
+  // popup opening, so a stray keystroke can't accept something you never saw.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  pressKey("Enter", { mod: true }, view.contentDOM);
+  await frame();
+  const accepted = await until(() => view.state.doc.toString() === wanted, 3000);
+  await check(
+    "Mod+Enter accepts a completion instead of running",
+    offered && accepted && !ctx.runs.running,
+    JSON.stringify({ offered, wanted, text: view.state.doc.toString(), running: ctx.runs.running }),
+  );
+  closeCompletion(view);
+
+  // Two commands on one shortcut is worth saying out loud.
+  clearToasts();
+  await invoke("selftest_write_file", {
+    path: file,
+    text: '"run.start" = "mod+b"' + '\n',
+  });
+  const warned = await until(() => toastText().includes("share a shortcut"), 5000);
+  await check(
+    "two commands on one shortcut are reported",
+    warned && toastText().includes("Ctrl+B"),
+    JSON.stringify({ toast: toastText().slice(0, 160) }),
+  );
+
+  // Put the file back, and check the default returns.
+  await invoke("selftest_write_file", { path: file, text: "" });
+  await untilAsync(
+    async () => Object.keys(await invoke<Record<string, string>>("get_keybindings")).length === 0,
+    5000,
+  );
+  await frame();
+  end = ctx.runs.waitForEnd();
+  pressKey("Enter", { mod: true }, ctx.editor.view.contentDOM);
+  outcome = await withTimeout(end, 30_000, "the default again");
+  await check(
+    "emptying the file gives the defaults back",
+    outcome.kind === "exited",
+    JSON.stringify(outcome),
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: main.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -3473,6 +3661,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "helper-run": helperRunScenario,
   definition: definitionScenario,
   "library-panel": libraryPanelScenario,
+  keys: keysScenario,
   settings: settingsScenario,
   history: historyScenario,
   hooks: hooksScenario,

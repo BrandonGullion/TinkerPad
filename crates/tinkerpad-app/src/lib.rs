@@ -11,6 +11,7 @@
 pub mod events;
 mod helpers;
 mod hooks;
+mod keys;
 mod library;
 mod logging;
 mod lsp;
@@ -64,6 +65,8 @@ pub struct AppState {
     helpers: Arc<tinkerpad_runner::HelperPool>,
     /// `settings.toml` as it is now, watched for changes (work item 04-02).
     settings: Arc<settings::Live>,
+    /// `keybindings.toml`, the same way (work item 04-03).
+    keys: Arc<keys::Live>,
 
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
@@ -502,6 +505,36 @@ mod commands {
         Ok((*state.settings.get()).clone())
     }
 
+    /// The user's keybindings: command id to keys (work item 04-03).
+    #[tauri::command(async)]
+    pub fn get_keybindings(state: State<'_, AppState>) -> crate::keys::Bindings {
+        (*state.keys.get()).clone()
+    }
+
+    /// Where `keybindings.toml` is.
+    #[tauri::command(async)]
+    pub fn keybindings_file(state: State<'_, AppState>) -> String {
+        state.keys.file().to_string_lossy().into_owned()
+    }
+
+    /// Open `keybindings.toml` in whatever edits TOML on this machine.
+    #[tauri::command(async)]
+    pub fn open_keybindings_file(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+    ) -> Result<(), CommandError> {
+        use tauri_plugin_opener::OpenerExt;
+        let file = state.keys.file().to_path_buf();
+        app.opener()
+            .open_path(file.to_string_lossy(), None::<&str>)
+            .map_err(|e| {
+                CommandError::new(
+                    tinkerpad_core::ErrorCode::Io,
+                    format!("Couldn't open {}: {e}", file.display()),
+                )
+            })
+    }
+
     /// Where `settings.toml` is, for the UI to show and for the self-tests to
     /// edit as an outside editor would.
     #[tauri::command(async)]
@@ -901,6 +934,8 @@ pub fn run() {
 
             settings::ensure_exists(&data_dir);
             let live_settings = settings::Live::open(settings::path(&data_dir), bus.clone());
+            keys::ensure_exists(&data_dir);
+            let live_keys = keys::Live::open(keys::path(&data_dir), bus.clone());
             let toolchains = Arc::new(Toolchains::default());
 
             let library_root = library::root(
@@ -927,6 +962,7 @@ pub fn run() {
             app.manage(AppState {
                 events: bus,
                 settings: live_settings,
+                keys: live_keys,
                 runs,
                 session_path: session::path(&data_dir),
                 data_dir,
@@ -956,6 +992,9 @@ pub fn run() {
             commands::reset_settings,
             commands::open_settings_file,
             commands::settings_file,
+            commands::get_keybindings,
+            commands::keybindings_file,
+            commands::open_keybindings_file,
             commands::change_library_root,
             commands::list_plugins,
             commands::toolchain_status,

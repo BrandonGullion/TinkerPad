@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "docs:keys": "node scripts/keybindings.mjs",
+    "docs:keys:check": "node scripts/keybindings.mjs --check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

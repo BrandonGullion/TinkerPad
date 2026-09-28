@@ -242,6 +242,11 @@ export class StatusBar {
     this.setRun({ kind: "idle" });
   }
 
+  /** The run indicator, which the run history hangs under (04-03). */
+  get runElement(): HTMLElement {
+    return this.run;
+  }
+
   setLanguage(name: string): void {
     this.language.textContent = name;
   }

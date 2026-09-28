@@ -6,7 +6,17 @@ import { openSettings, settingsOpen, watchSettings } from "./settings";
 import { LibraryPanel } from "./library";
 import { createLayout } from "./layout";
 import { BottomPanel } from "./panels";
-import { openCommandPalette } from "./commands";
+import {
+  EDITOR_COMMANDS,
+  commandFor,
+  copyKeybindings,
+  onBindingsChanged,
+  openCommandPalette,
+  registerCommands,
+  registerCondition,
+  runCommand,
+  watchKeybindings,
+} from "./commands";
 import { jumpBack } from "./definition";
 import { pickerOpen } from "./picker";
 import { setTabManager } from "./playground";
@@ -26,11 +36,7 @@ const panel = new BottomPanel();
 panel.register({ id: "output", title: "Output", element: outputHost });
 panelHost.append(panel.element);
 
-const editor = new Editor(editorHost, {
-  run: () => void runs.run(tabs.activeId, editor.text),
-  cancel: () => void runs.cancel(),
-  clearOutput: () => tabs.activeOutput.clear(),
-});
+const editor = new Editor(editorHost);
 
 const tabs = new TabManager({
   editor,
@@ -94,69 +100,93 @@ if (import.meta.env.DEV) {
   );
 }
 
-const isMac = navigator.platform.toLowerCase().includes("mac");
+/**
+ * Every command the window has, and what each one does (work item 04-03).
+ *
+ * The catalog says what exists and what it is called; this says what it runs.
+ * Keys, the palette, and `docs/KEYBINDINGS.md` all come from there, so adding
+ * a shortcut is a line of data plus a line here.
+ */
+function registerEverything(): void {
+  const text = () => (tabs.activeTab ? tabs.textOf(tabs.activeTab) : editor.text);
+  registerCondition("playground", () => tabs.activePlayground() !== null);
+  registerCommands({
+    "run.start": () => void runs.run(tabs.activeId, text()),
+    "run.cancel": () => void runs.cancel(),
+    "run.clearOutput": () => tabs.activeOutput.clear(),
+    "run.forcePerRun": () => void forcePerRun(),
+    "run.history": () => void history.toggle(statusBar.runElement),
+
+    "playground.new": () => void tabs.newPlayground(),
+    "playground.newOfKind": () => void tabs.pickAndCreate(),
+    "playground.open": () => void tabs.quickOpen(),
+    "playground.rename": () => tabs.startRename(),
+    "playground.addPackage": () => void tabs.addPackage(),
+
+    "tab.close": () => void tabs.closeActive(),
+    "tab.next": () => tabs.cycle(1),
+    "tab.previous": () => tabs.cycle(-1),
+
+    "go.nextProblem": () => tabs.cycleAnnotation(1),
+    "go.previousProblem": () => tabs.cycleAnnotation(-1),
+    "go.back": () => jumpBack(tabs),
+
+    "view.library": () => library.toggle(),
+    "view.commands": () => void openCommandPalette(),
+
+    "settings.open": () => void openSettings(settingsHost),
+    "settings.file": () => void invoke("open_settings_file").catch(() => {}),
+    "settings.keybindings": () => void invoke("open_keybindings_file").catch(() => {}),
+    "settings.copyKeybindings": () => void copyKeybindings(),
+    "settings.logs": () => void invoke("open_log_folder").catch(() => {}),
+  });
+}
+registerEverything();
+onBindingsChanged(() => editor.applyBindings());
+void watchKeybindings();
 
 /**
- * Tab and playground shortcuts. Handled before CodeMirror sees the key, so
- * they work wherever focus is. `Mod` is Cmd on macOS and Ctrl elsewhere;
- * Ctrl+Tab is Ctrl everywhere, as in browsers.
+ * Keep runs off plugin helpers for the rest of the session, or let them back
+ * on (work item 03-03). It's a toggle, so it says which way it went.
+ */
+async function forcePerRun(): Promise<void> {
+  const now = await invoke<boolean>("force_per_run");
+  const forced = await invoke<boolean>("force_per_run", { forced: !now });
+  toast(
+    "info",
+    forced
+      ? "Runs will start a new process each time, ignoring plugin helpers."
+      : "Runs will use plugin helpers again.",
+  );
+}
+
+/**
+ * Keys, everywhere except inside the editor's own text: the editor gets the
+ * same commands through CodeMirror, at a precedence that lets a completion
+ * popup have Enter first (04-03).
  */
 export function handleGlobalKey(e: KeyboardEvent): boolean {
   if (pickerOpen() || settingsOpen()) return false;
-  const mod = isMac ? e.metaKey : e.ctrlKey;
-  const key = e.key.toLowerCase();
-  const inTextField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+  const inTextField =
+    e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+  const command = commandFor(e);
+  if (!command) return false;
+  // A plain key (F2, and anything a user binds without a modifier) belongs to
+  // the field being typed in.
+  if (inTextField && !(e.ctrlKey || e.metaKey || e.altKey)) return false;
+  if (inEditor(e) && editorHandles(command.id)) return false;
+  void runCommand(command.id);
+  return true;
+}
 
-  if (e.ctrlKey && e.key === "Tab") {
-    tabs.cycle(e.shiftKey ? -1 : 1);
-    return true;
-  }
-  if (e.key === "F2" && !mod && !inTextField) {
-    tabs.startRename();
-    return true;
-  }
-  // Alt+Left returns from a go-to-definition jump, including out of a
-  // read-only tab, which has no editor keymap of its own (02-09).
-  if (e.key === "ArrowLeft" && e.altKey && !mod) {
-    jumpBack(tabs);
-    return true;
-  }
-  // F8 walks the last run's errors and warnings (01-13).
-  if (e.key === "F8" && !mod) {
-    tabs.cycleAnnotation(e.shiftKey ? -1 : 1);
-    return true;
-  }
-  if (!mod || e.altKey) return false;
-  // Mod+, opens settings, as everything else does (work item 04-02).
-  if (key === "," && !e.shiftKey) {
-    void openSettings(settingsHost);
-    return true;
-  }
-  switch (key) {
-    // The library panel (work item 04-01).
-    case "b":
-      if (e.shiftKey) return false;
-      library.toggle();
-      return true;
-    case "n":
-      void (e.shiftKey ? tabs.pickAndCreate() : tabs.newPlayground());
-      return true;
-    // The command palette holds everything without a key of its own (01-14).
-    case "p":
-      if (!e.shiftKey) return false;
-      void openCommandPalette(tabs, runs);
-      return true;
-    case "o":
-      if (e.shiftKey) return false;
-      void tabs.quickOpen();
-      return true;
-    case "w":
-      if (e.shiftKey) return false;
-      void tabs.closeActive();
-      return true;
-    default:
-      return false;
-  }
+/** Whether the event happened inside the editor's text. */
+function inEditor(e: KeyboardEvent): boolean {
+  return e.target instanceof HTMLElement && e.target.closest(".cm-editor") !== null;
+}
+
+/** Commands CodeMirror runs itself, so they aren't run twice. */
+function editorHandles(id: string): boolean {
+  return EDITOR_COMMANDS.includes(id);
 }
 
 document.addEventListener(
@@ -170,24 +200,6 @@ document.addEventListener(
   true,
 );
 
-// App shortcuts that must work when focus is outside the editor too. Inside
-// the editor, CodeMirror's keymap handles them.
-document.addEventListener("keydown", (e) => {
-  const mod = e.metaKey || e.ctrlKey;
-  if (!mod || pickerOpen()) return;
-  const inEditor = e.target instanceof HTMLElement && e.target.closest(".cm-editor") !== null;
-  if (inEditor) return;
-  if (e.key === "Enter") {
-    e.preventDefault();
-    void runs.run(tabs.activeId, editor.text);
-  } else if (e.key === ".") {
-    e.preventDefault();
-    void runs.cancel();
-  } else if (e.key.toLowerCase() === "l") {
-    e.preventDefault();
-    tabs.activeOutput.clear();
-  }
-});
 
 // Unsaved edits are written before the window goes away. The writes are
 // fired without waiting; each is atomic, so a cut-off one leaves the old file.

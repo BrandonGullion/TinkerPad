@@ -459,6 +459,24 @@ with a marker so a `dump(hugeList)` doesn't freeze the UI).
   generated in the form from the plugin registry, so a plugin installed
   tomorrow gets its rows without a line of UI code.
 
+### Commands and keys (work item 04-03)
+
+- **One registry.** `ui/src/commands/catalog.js` lists every command — id,
+  title, category, default keys — as plain data, and `registry.ts` binds
+  handlers to those ids. Nothing else in the UI decides what a key does.
+- The catalog is JavaScript so `npm run docs:keys` can import the same file in
+  Node and write `docs/KEYBINDINGS.md`. CI runs `docs:keys:check`, so a keymap
+  change that doesn't update the document fails the build.
+- **`<app-data>/keybindings.toml`** is one line per command
+  (`"run.start" = "mod+shift+r"`, `""` to unbind), read and watched like
+  settings. Two commands sharing a shortcut is a toast, not a refusal: the
+  later one wins, since refusing both would leave neither.
+- `mod` means Cmd on macOS and Ctrl elsewhere; `ctrl` and `cmd` mean
+  themselves. The palette and the docs render each platform's own glyphs.
+- **The editor gets the same commands** as a high-precedence CodeMirror keymap,
+  rebuilt in a `Compartment` when bindings change. `Mod+Enter` with a
+  completion popup open accepts the completion instead of running.
+
 ## 7. UI shell (ui/)
 
 Keep it small: a tab strip over one CodeMirror view, a resizable output pane, a

@@ -11,8 +11,10 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
-import { Compartment, EditorState, type Extension, Prec } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { indentUnit } from "@codemirror/language";
+
+import { editorKeymap } from "./commands/editor";
 import {
   drawSelection,
   EditorView,
@@ -28,12 +30,6 @@ const MONO_FALLBACK = '"Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Cons
 /** Tab width and what pressing Tab inserts, from one number. */
 function indentation(tabSize: number): Extension {
   return [EditorState.tabSize.of(tabSize), indentUnit.of(" ".repeat(tabSize))];
-}
-
-export interface EditorActions {
-  run(): void;
-  cancel(): void;
-  clearOutput(): void;
 }
 
 const theme = EditorView.theme(
@@ -72,18 +68,12 @@ export class Editor {
   private readonly indent = new Compartment();
   private tabSize = 2;
 
-  constructor(parent: HTMLElement, actions: EditorActions, doc = "") {
-    // App shortcuts take precedence over CodeMirror defaults (Mod-l would
-    // otherwise select the line). `Mod` is Cmd on macOS and Ctrl elsewhere.
-    const appKeys = Prec.highest(
-      keymap.of([
-        { key: "Mod-Enter", run: () => (actions.run(), true) },
-        { key: "Mod-.", run: () => (actions.cancel(), true) },
-        { key: "Mod-l", run: () => (actions.clearOutput(), true) },
-      ]),
-    );
+  /** The app's own keys, rebuilt when `keybindings.toml` changes (04-03). */
+  private readonly appKeys = new Compartment();
+
+  constructor(parent: HTMLElement, doc = "") {
     this.base = [
-      appKeys,
+      this.appKeys.of(editorKeymap()),
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightActiveLine(),
@@ -106,9 +96,15 @@ export class Editor {
     return EditorState.create({ doc, extensions: [this.base, extra] });
   }
 
+  /** The app's keys changed: rebuild the editor's copy of them (04-03). */
+  applyBindings(): void {
+    this.view.dispatch({ effects: this.appKeys.reconfigure(editorKeymap()) });
+  }
+
   /** Swap in another state (another tab's document). */
   setState(state: EditorState): void {
     this.view.setState(state);
+    this.view.dispatch({ effects: this.appKeys.reconfigure(editorKeymap()) });
     // A state made before the last settings change carries the old indent.
     this.view.dispatch({ effects: this.indent.reconfigure(indentation(this.tabSize)) });
   }
