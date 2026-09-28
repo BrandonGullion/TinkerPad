@@ -1,19 +1,129 @@
-:root {
+/* Themes (work item 04-04).
+ *
+ * Every colour in the app comes from these variables; nothing below this block
+ * names one. The dark palette is the default and lives on `:root`, so a window
+ * paints correctly before any setting has been read. The light palette is
+ * written once and applied two ways: when the user has chosen it
+ * (`data-theme="light"`), and when they have chosen to follow the system
+ * (`data-theme="system"`, which is also the absence of a choice) and the
+ * system is light.
+ *
+ * Contrast: every text colour against the surface it sits on is at least 4.5:1,
+ * and every border, squiggle and zebra row at least 3:1, checked by the
+ * `themes` self-test rather than by eye.
+ */
+
+:root,
+:root[data-theme="dark"] {
   --bg: #1e1f22;
   --fg: #d4d4d8;
-  --muted: #8b8d94;
+  --muted: #9a9ca4;
   --panel: #25262b;
   --panel-2: #2b2d31;
-  --border: #34363c;
-  --accent: #3b82f6;
+  --border: #4a4d55;
+  --accent: #60a5fa;
+  --accent-fg: #10233d;
   --error: #f87171;
   --warning: #fbbf24;
   --success: #4ade80;
   --ok: #4ade80;
+  --link: #93c5fd;
+  /* Surfaces the editor paints itself. */
+  --selection: #2f5b8c;
+  --active-line: rgb(255 255 255 / 0.05);
+  --bracket-match: rgb(96 165 250 / 0.28);
+  --bracket-match-outline: rgb(96 165 250 / 0.55);
+  --zebra: rgb(255 255 255 / 0.035);
+  --shadow: rgb(0 0 0 / 0.45);
+  --scrim: rgb(0 0 0 / 0.25);
+  /* Code, one set per theme (04-04). */
+  --code-keyword: #c792ea;
+  --code-string: #a5d6a7;
+  --code-number: #f5b97a;
+  --code-comment: #8a8d96;
+  --code-function: #82aaff;
+  --code-type: #7fd1c8;
+  --code-variable: #d4d4d8;
+  --code-constant: #f78c6c;
+  --code-operator: #b0b4bd;
+  --code-invalid: #f87171;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #fdfdfc;
+  --fg: #1f2124;
+  --muted: #5c6068;
+  --panel: #f2f2f0;
+  --panel-2: #e8e8e6;
+  --border: #b7b9bd;
+  --accent: #1d4ed8;
+  --accent-fg: #ffffff;
+  --error: #b3261e;
+  --warning: #8a5a00;
+  --success: #0f7a3d;
+  --ok: #0f7a3d;
+  --link: #1553c4;
+  --selection: #bcd7fb;
+  --active-line: rgb(0 0 0 / 0.045);
+  --bracket-match: rgb(29 78 216 / 0.16);
+  --bracket-match-outline: rgb(29 78 216 / 0.45);
+  --zebra: rgb(0 0 0 / 0.035);
+  --shadow: rgb(15 18 22 / 0.18);
+  --scrim: rgb(15 18 22 / 0.18);
+  --code-keyword: #7c3aed;
+  --code-string: #0f7a3d;
+  --code-number: #9a4a00;
+  --code-comment: #6b7078;
+  --code-function: #1553c4;
+  --code-type: #0f6f6a;
+  --code-variable: #1f2124;
+  --code-constant: #a33800;
+  --code-operator: #4a4f57;
+  --code-invalid: #b3261e;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --bg: #fdfdfc;
+    --fg: #1f2124;
+    --muted: #5c6068;
+    --panel: #f2f2f0;
+    --panel-2: #e8e8e6;
+    --border: #b7b9bd;
+    --accent: #1d4ed8;
+    --accent-fg: #ffffff;
+    --error: #b3261e;
+    --warning: #8a5a00;
+    --success: #0f7a3d;
+    --ok: #0f7a3d;
+    --link: #1553c4;
+    --selection: #bcd7fb;
+    --active-line: rgb(0 0 0 / 0.045);
+    --bracket-match: rgb(29 78 216 / 0.16);
+    --bracket-match-outline: rgb(29 78 216 / 0.45);
+    --zebra: rgb(0 0 0 / 0.035);
+    --shadow: rgb(15 18 22 / 0.18);
+    --scrim: rgb(15 18 22 / 0.18);
+    --code-keyword: #7c3aed;
+    --code-string: #0f7a3d;
+    --code-number: #9a4a00;
+    --code-comment: #6b7078;
+    --code-function: #1553c4;
+    --code-type: #0f6f6a;
+    --code-variable: #1f2124;
+    --code-constant: #a33800;
+    --code-operator: #4a4f57;
+    --code-invalid: #b3261e;
+    color-scheme: light;
+  }
+}
+
+:root {
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --editor-font-size: 14px;
-  color-scheme: dark;
 }
 
 * {
@@ -258,7 +368,7 @@ body {
   justify-content: center;
   align-items: flex-start;
   padding-top: 12vh;
-  background: rgb(0 0 0 / 0.25);
+  background: var(--scrim);
 }
 
 .picker {
@@ -266,7 +376,7 @@ body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  box-shadow: 0 12px 32px var(--shadow);
   overflow: hidden;
 }
 
@@ -395,7 +505,7 @@ body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 0.45);
+  box-shadow: 0 10px 28px var(--shadow);
   font-size: 12px;
   text-align: left;
   cursor: default;
@@ -751,7 +861,7 @@ body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 0.45);
+  box-shadow: 0 10px 28px var(--shadow);
   font-size: 12px;
   text-align: left;
 }
@@ -855,7 +965,7 @@ button.history-row:focus-visible {
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+  box-shadow: 0 4px 16px var(--shadow);
   cursor: pointer;
   overflow-wrap: anywhere;
 }
@@ -1109,7 +1219,7 @@ button.history-row:focus-visible {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 16px 48px rgb(0 0 0 / 0.5);
+  box-shadow: 0 16px 48px var(--shadow);
 }
 
 .settings-title {
@@ -1176,6 +1286,10 @@ button.history-row:focus-visible {
 
 .settings-number {
   flex: 0 0 90px;
+}
+
+.settings-select {
+  flex: 0 0 200px;
 }
 
 .settings-idle {

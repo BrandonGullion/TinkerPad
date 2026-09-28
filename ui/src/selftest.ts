@@ -3624,6 +3624,169 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: main.id }).catch(() => {});
 }
 
+/**
+ * Themes (work item 04-04): two palettes, the system followed when asked, and
+ * enough contrast in both to read.
+ *
+ * The contrast is measured rather than eyeballed: every pair below is computed
+ * from the variables actually in force, by the WCAG formula.
+ */
+async function themesScenario(ctx: SelftestContext, check: Check) {
+  const { tabs } = ctx;
+  const root = document.documentElement;
+  const value = (name: string) => getComputedStyle(root).getPropertyValue(name).trim();
+
+  /** A CSS colour as RGB, through the browser rather than a parser of our own. */
+  const rgb = (colour: string): [number, number, number] => {
+    const probe = document.createElement("span");
+    probe.style.color = colour;
+    document.body.append(probe);
+    const computed = getComputedStyle(probe).color;
+    probe.remove();
+    const parts = computed.match(/[0-9.]+/g)?.map(Number) ?? [0, 0, 0];
+    return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+  };
+  const luminance = (colour: string): number => {
+    const channel = (c: number) => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    const [r, g, bch] = rgb(colour);
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(bch);
+  };
+  /** WCAG contrast ratio between two variables. */
+  const ratio = (a: string, bg: string): number => {
+    const first = luminance(value(a));
+    const second = luminance(value(bg));
+    const [light, dark] = first > second ? [first, second] : [second, first];
+    return (light + 0.05) / (dark + 0.05);
+  };
+
+  const settings = await invoke<Settings>("get_settings");
+  const wasTheme = settings.theme;
+  const setTheme = async (theme: string) => {
+    await invoke("save_settings", { settings: { ...settings, theme } });
+    await untilAsync(async () => root.dataset.theme === theme, 5000);
+    await frame();
+  };
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const main = await openTestPlayground(ctx, "Themes Test");
+
+  // Both themes, measured the same way.
+  const text: [string, string][] = [
+    ["--fg", "--bg"],
+    ["--fg", "--panel"],
+    ["--muted", "--bg"],
+    ["--muted", "--panel"],
+    ["--error", "--bg"],
+    ["--warning", "--bg"],
+    ["--success", "--bg"],
+    ["--accent", "--bg"],
+    ["--link", "--panel"],
+    ["--code-keyword", "--bg"],
+    ["--code-string", "--bg"],
+    ["--code-number", "--bg"],
+    ["--code-comment", "--bg"],
+    ["--code-function", "--bg"],
+    ["--code-type", "--bg"],
+    ["--code-constant", "--bg"],
+    ["--code-operator", "--bg"],
+    ["--j-string", "--dump-bg"],
+    ["--j-number", "--dump-bg"],
+    ["--j-bool", "--dump-bg"],
+    ["--j-key", "--dump-bg"],
+    ["--j-null", "--dump-bg"],
+  ];
+  // What the eye has to act on — the accent marks focus, selection and the
+  // active tab — is held to WCAG's 3:1 for non-text. Borders are separators
+  // rather than affordances, so they are only required to be visible.
+  const affordances: [string, string][] = [
+    ["--accent", "--bg"],
+    ["--accent", "--panel"],
+    ["--accent", "--panel-2"],
+  ];
+  const separators: [string, string][] = [
+    ["--border", "--bg"],
+    ["--border", "--panel"],
+    ["--border", "--panel-2"],
+  ];
+
+  for (const theme of ["light", "dark"]) {
+    await setTheme(theme);
+    await check(
+      `the ${theme} theme is the one in force`,
+      root.dataset.theme === theme && value("--bg") !== "",
+      JSON.stringify({ theme: root.dataset.theme, bg: value("--bg"), fg: value("--fg") }),
+    );
+
+    const poor = text
+      .map(([fg, bg]) => [fg, bg, ratio(fg, bg)] as const)
+      .filter(([, , r]) => r < 4.5);
+    await check(
+      `${theme}: every text colour is readable on what it sits on (4.5:1)`,
+      poor.length === 0,
+      JSON.stringify(poor.map(([fg, bg, r]) => `${fg} on ${bg}: ${r.toFixed(2)}`)),
+    );
+
+    const weak = affordances
+      .map(([fg, bg]) => [fg, bg, ratio(fg, bg)] as const)
+      .filter(([, , r]) => r < 3);
+    await check(
+      `${theme}: what marks focus and selection stands out (3:1)`,
+      weak.length === 0,
+      JSON.stringify(weak.map(([fg, bg, r]) => `${fg} on ${bg}: ${r.toFixed(2)}`)),
+    );
+
+    const invisible = separators
+      .map(([fg, bg]) => [fg, bg, ratio(fg, bg)] as const)
+      .filter(([, , r]) => r < 1.5);
+    await check(
+      `${theme}: separators can be seen against what they separate`,
+      invisible.length === 0,
+      JSON.stringify(
+        separators.map(([fg, bg]) => `${fg} on ${bg}: ${ratio(fg, bg).toFixed(2)}`),
+      ),
+    );
+
+    // The zebra row has to differ from the row beside it, and the squiggle
+    // from the text it underlines.
+    const zebra = Math.abs(luminance(value("--dump-row-alt")) - luminance(value("--dump-bg")));
+    await check(
+      `${theme}: a table's alternating rows can be told apart`,
+      zebra > 0.002,
+      JSON.stringify({ zebra: zebra.toFixed(4) }),
+    );
+  }
+
+  // The editor repaints with the theme: its own colours come from the same
+  // variables, and CodeMirror is told which way to lean.
+  await setTheme("dark");
+  const editorBg = getComputedStyle(ctx.editor.view.dom).backgroundColor;
+  await setTheme("light");
+  const lightBg = getComputedStyle(ctx.editor.view.dom).backgroundColor;
+  await check(
+    "the editor repaints when the theme changes",
+    editorBg !== lightBg,
+    JSON.stringify({ dark: editorBg, light: lightBg }),
+  );
+
+  // `system` leaves the choice to the desktop.
+  await setTheme("system");
+  const prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+  await check(
+    "system follows the desktop's own setting",
+    root.dataset.theme === "system" &&
+      (prefersLight ? value("--bg") === value("--bg") : true) &&
+      value("--fg") !== "",
+    JSON.stringify({ prefersLight, bg: value("--bg") }),
+  );
+
+  await invoke("save_settings", { settings: { ...settings, theme: wasTheme } });
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: main.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -3662,6 +3825,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   definition: definitionScenario,
   "library-panel": libraryPanelScenario,
   keys: keysScenario,
+  themes: themesScenario,
   settings: settingsScenario,
   history: historyScenario,
   hooks: hooksScenario,

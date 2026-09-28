@@ -5,16 +5,12 @@
 // this module owns the view and accepts states; it never recreates the view.
 
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import {
-  bracketMatching,
-  defaultHighlightStyle,
-  indentOnInput,
-  syntaxHighlighting,
-} from "@codemirror/language";
+import { bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { indentUnit } from "@codemirror/language";
 
 import { editorKeymap } from "./commands/editor";
+import { currentTheme, highlightStyle } from "./theme";
 import {
   drawSelection,
   EditorView,
@@ -27,39 +23,60 @@ import {
 /** What a font family falls back to when the one asked for isn't installed. */
 const MONO_FALLBACK = '"Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace';
 
+/** Everything about the editor that a theme decides. */
+function themeExtensions(theme: "light" | "dark"): Extension {
+  return [editorTheme(theme === "dark"), syntaxHighlighting(highlightStyle(theme), { fallback: true })];
+}
+
 /** Tab width and what pressing Tab inserts, from one number. */
 function indentation(tabSize: number): Extension {
   return [EditorState.tabSize.of(tabSize), indentUnit.of(" ".repeat(tabSize))];
 }
 
-const theme = EditorView.theme(
-  {
-    "&": {
-      height: "100%",
-      backgroundColor: "var(--bg)",
-      color: "var(--fg)",
-      fontSize: "var(--editor-font-size)",
+/**
+ * The editor's own colours, all of them from the theme's variables (04-04).
+ * `dark` tells CodeMirror which way its built-in styles should lean, so it is
+ * built once per theme and swapped rather than being fixed.
+ */
+function editorTheme(dark: boolean): Extension {
+  return EditorView.theme(
+    {
+      "&": {
+        height: "100%",
+        backgroundColor: "var(--bg)",
+        color: "var(--fg)",
+        fontSize: "var(--editor-font-size)",
+      },
+      ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.5" },
+      ".cm-content": { caretColor: "var(--accent)" },
+      ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)" },
+      "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
+        backgroundColor: "var(--selection) !important",
+      },
+      ".cm-gutters": {
+        backgroundColor: "var(--bg)",
+        color: "var(--muted)",
+        border: "none",
+      },
+      ".cm-activeLine": { backgroundColor: "var(--active-line)" },
+      ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--fg)" },
+      "&.cm-focused .cm-matchingBracket": {
+        backgroundColor: "var(--bracket-match)",
+        outline: "1px solid var(--bracket-match-outline)",
+      },
+      ".cm-tooltip": {
+        backgroundColor: "var(--panel)",
+        border: "1px solid var(--border)",
+        color: "var(--fg)",
+      },
+      ".cm-tooltip-autocomplete ul li[aria-selected]": {
+        backgroundColor: "var(--accent)",
+        color: "var(--accent-fg)",
+      },
     },
-    ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.5" },
-    ".cm-content": { caretColor: "var(--accent)" },
-    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)" },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-      backgroundColor: "#264f78 !important",
-    },
-    ".cm-gutters": {
-      backgroundColor: "var(--bg)",
-      color: "var(--muted)",
-      border: "none",
-    },
-    ".cm-activeLine": { backgroundColor: "rgb(255 255 255 / 0.04)" },
-    ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--fg)" },
-    "&.cm-focused .cm-matchingBracket": {
-      backgroundColor: "rgb(59 130 246 / 0.25)",
-      outline: "1px solid rgb(59 130 246 / 0.5)",
-    },
-  },
-  { dark: true },
-);
+    { dark },
+  );
+}
 
 export class Editor {
   readonly view: EditorView;
@@ -70,6 +87,8 @@ export class Editor {
 
   /** The app's own keys, rebuilt when `keybindings.toml` changes (04-03). */
   private readonly appKeys = new Compartment();
+  /** The theme's colours and highlighting, swapped on a theme change (04-04). */
+  private readonly colours = new Compartment();
 
   constructor(parent: HTMLElement, doc = "") {
     this.base = [
@@ -81,12 +100,11 @@ export class Editor {
       history(),
       indentOnInput(),
       bracketMatching(),
-      // Colours the tokens a language grammar produces. Plain text without a
-      // grammar looks the same as before (02-04).
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      // Colours the tokens a language grammar produces, in this theme's
+      // colours (04-04). Plain text without a grammar is just text.
+      this.colours.of(themeExtensions(currentTheme())),
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
       this.indent.of(indentation(this.tabSize)),
-      theme,
     ];
     this.view = new EditorView({ parent, state: this.createState(doc) });
   }
@@ -94,6 +112,11 @@ export class Editor {
   /** A fresh state with the editor's standard extensions, plus `extra`. */
   createState(doc: string, extra: Extension = []): EditorState {
     return EditorState.create({ doc, extensions: [this.base, extra] });
+  }
+
+  /** Paint in another theme's colours (work item 04-04). */
+  applyTheme(theme: "light" | "dark"): void {
+    this.view.dispatch({ effects: this.colours.reconfigure(themeExtensions(theme)) });
   }
 
   /** The app's keys changed: rebuild the editor's copy of them (04-03). */
@@ -104,7 +127,12 @@ export class Editor {
   /** Swap in another state (another tab's document). */
   setState(state: EditorState): void {
     this.view.setState(state);
-    this.view.dispatch({ effects: this.appKeys.reconfigure(editorKeymap()) });
+    this.view.dispatch({
+      effects: [
+        this.appKeys.reconfigure(editorKeymap()),
+        this.colours.reconfigure(themeExtensions(currentTheme())),
+      ],
+    });
     // A state made before the last settings change carries the old indent.
     this.view.dispatch({ effects: this.indent.reconfigure(indentation(this.tabSize)) });
   }

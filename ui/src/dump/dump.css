@@ -1,15 +1,41 @@
-/* Rendered dumps in the output pane. Colours are variables so themes (04-04)
-   can restyle dumps and highlighting together. */
+/* Rendered dumps in the output pane. A palette per theme (04-04), written
+   the same way as the app's: dark on `:root`, light when it is chosen or when
+   the system is light and the user follows it. */
 
-:root {
+:root,
+:root[data-theme="dark"] {
   --j-string: #86efac;
   --j-number: #93c5fd;
   --j-bool: #f0abfc;
-  --j-null: #8b8d94;
+  --j-null: #9a9ca4;
   --j-key: #e5c07b;
   --dump-bg: #232428;
-  --dump-row-alt: #26272c;
-  --dump-hover: #2f3137;
+  --dump-row-alt: #2a2b30;
+  --dump-hover: #33353c;
+}
+
+:root[data-theme="light"] {
+  --j-string: #0f7a3d;
+  --j-number: #1553c4;
+  --j-bool: #8a2fb0;
+  --j-null: #6b7078;
+  --j-key: #8a5a00;
+  --dump-bg: #f7f7f6;
+  --dump-row-alt: #ececeb;
+  --dump-hover: #e0e0dd;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --j-string: #0f7a3d;
+    --j-number: #1553c4;
+    --j-bool: #8a2fb0;
+    --j-null: #6b7078;
+    --j-key: #8a5a00;
+    --dump-bg: #f7f7f6;
+    --dump-row-alt: #ececeb;
+    --dump-hover: #e0e0dd;
+  }
 }
 
 .j-str { color: var(--j-string); }

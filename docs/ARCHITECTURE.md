@@ -459,6 +459,21 @@ with a marker so a `dump(hugeList)` doesn't freeze the UI).
   generated in the form from the plugin registry, so a plugin installed
   tomorrow gets its rows without a line of UI code.
 
+### Themes (work item 04-04)
+
+- **Two palettes of CSS variables**, dark on `:root` so a window paints before
+  any setting is read, light under `[data-theme="light"]` and under
+  `[data-theme="system"]` when the system is light. Nothing outside those
+  blocks names a colour; the `themes` self-test measures the contrast.
+- `theme = "system" | "light" | "dark"` in settings, `system` by default and
+  following `prefers-color-scheme` as it changes, with no restart.
+- **CodeMirror gets one highlight style per theme** (`ui/src/theme.ts`),
+  swapped in a `Compartment` along with its `dark` flag, because a highlight
+  style is built once and can't read variables.
+- The window's own background is set from the theme at launch, and
+  `index.html` paints the ground before any stylesheet loads, so starting into
+  a dark theme never flashes white.
+
 ### Commands and keys (work item 04-03)
 
 - **One registry.** `ui/src/commands/catalog.js` lists every command — id,
