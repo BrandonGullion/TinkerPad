@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -23,8 +24,8 @@ use tinkerpad_plugin::helper::RunRequest;
 use tinkerpad_runner::helper_run::{self, Waiting};
 use tinkerpad_runner::spec::scratch_dir;
 use tinkerpad_runner::{
-    Cancel, HelperConfig, HelperPool, OutputDecoder, RunContext, RunEvent, RunHandle, SpecError,
-    run, run_spec,
+    Cancel, HelperConfig, HelperPool, Input, OutputDecoder, RunContext, RunEvent, RunHandle,
+    SpecError, run, run_spec,
 };
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
@@ -40,6 +41,10 @@ const TOOLCHAIN_WAIT: Duration = Duration::from_secs(10);
 struct Active {
     id: u64,
     cancel: Cancel,
+    /// Where what the user types goes, while this run lasts (04-05). Filled
+    /// in when the run has something to type at, which for a helper run is
+    /// after the wait for the helper is over.
+    input: Arc<StdMutex<Option<Input>>>,
     /// Finishes after the run's final event has been published.
     forwarder: JoinHandle<()>,
 }
@@ -329,6 +334,8 @@ impl Runs {
         };
 
         let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+        let input_slot: Arc<StdMutex<Option<Input>>> = Arc::new(StdMutex::new(None));
+        let fill_input = input_slot.clone();
         let dir = playground.dir.clone();
         let helpers = self.helpers.clone();
         let events = self.events.clone();
@@ -377,6 +384,7 @@ impl Runs {
                 }
             };
 
+            *fill_input.lock().expect("input lock") = handle.input();
             forward(
                 handle,
                 Some(cancel_rx),
@@ -392,6 +400,7 @@ impl Runs {
         *active = Some(Active {
             id,
             cancel: Cancel::Helper(cancel_tx),
+            input: input_slot,
             forwarder,
         });
         id
@@ -433,6 +442,7 @@ impl Runs {
     ) -> u64 {
         debug!(run = id, playground = %playground_id, plugin = %plugin.id, "streaming run output");
         let cancel = handle.canceller();
+        let input = handle.input();
         let forwarder = tauri::async_runtime::spawn(forward(
             handle,
             None,
@@ -446,9 +456,41 @@ impl Runs {
         *active = Some(Active {
             id,
             cancel,
+            input: Arc::new(StdMutex::new(input)),
             forwarder,
         });
         id
+    }
+
+    /// Give a playground's run what the user typed (work item 04-05).
+    ///
+    /// Returns whether there was a run to type at: the window shows the box
+    /// only while one is going, but the program can end between the keystroke
+    /// and the command arriving.
+    pub async fn send_input(&self, playground: &PlaygroundId, data: Vec<u8>) -> bool {
+        match self.input_of(playground).await {
+            Some(input) => input.send(data),
+            None => false,
+        }
+    }
+
+    /// Close a playground's run's input: it reads end-of-file from here on.
+    pub async fn close_input(&self, playground: &PlaygroundId) -> bool {
+        match self.input_of(playground).await {
+            Some(input) => input.eof(),
+            None => false,
+        }
+    }
+
+    async fn input_of(&self, playground: &PlaygroundId) -> Option<Input> {
+        let slot = self
+            .slots
+            .lock()
+            .expect("slots lock")
+            .get(playground)
+            .cloned()?;
+        let active = slot.lock().await;
+        active.as_ref()?.input.lock().expect("input lock").clone()
     }
 
     /// Cancel a playground's run, if it has one. Returns immediately; a
@@ -675,9 +717,9 @@ async fn forward(
         let Some(event) = event else { break };
 
         match event {
-            RunEvent::Started { warm, .. } => {
+            RunEvent::Started { warm, stdin, .. } => {
                 timing.runner = if warm { Runner::Helper } else { Runner::PerRun };
-                out.push(UiRunEvent::Started { warm });
+                out.push(UiRunEvent::Started { warm, stdin });
             }
             RunEvent::Stdout(b) => {
                 timing.first_output(&began);

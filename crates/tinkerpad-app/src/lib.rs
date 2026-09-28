@@ -443,6 +443,26 @@ mod commands {
             .await
     }
 
+    /// Give a playground's run what the user typed (work item 04-05). The
+    /// text is sent as-is; the window adds the newline when a line is sent.
+    #[tauri::command]
+    pub async fn send_input(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+        text: String,
+    ) -> Result<bool, CommandError> {
+        Ok(state.runs.send_input(&playground, text.into_bytes()).await)
+    }
+
+    /// Close a run's input: the program reads end-of-file from here on.
+    #[tauri::command]
+    pub async fn close_input(
+        state: State<'_, AppState>,
+        playground: tinkerpad_core::PlaygroundId,
+    ) -> Result<bool, CommandError> {
+        Ok(state.runs.close_input(&playground).await)
+    }
+
     /// Cancel a playground's run, if it has one.
     #[tauri::command]
     pub async fn cancel(
@@ -1004,6 +1024,8 @@ pub fn run() {
             commands::ping,
             commands::run,
             commands::cancel,
+            commands::send_input,
+            commands::close_input,
             commands::run_history,
             commands::open_log_folder,
             commands::get_settings,

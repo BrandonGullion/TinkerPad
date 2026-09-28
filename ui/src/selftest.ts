@@ -3787,6 +3787,190 @@ async function themesScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: main.id }).catch(() => {});
 }
 
+/**
+ * Typing at a running program, and the colours it may ask for (04-05).
+ */
+async function stdinScenario(ctx: SelftestContext, check: Check) {
+  const { tabs, runs } = ctx;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+  const row = () => document.querySelector<HTMLElement>(".output-input");
+  const box = () => document.querySelector<HTMLInputElement>(".output-input-box");
+  const type = (text: string) => {
+    const input = box();
+    if (!input) return false;
+    input.value = text;
+    pressKey("Enter", {}, input);
+    return true;
+  };
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const main = await openTestPlayground(ctx, "Stdin Test");
+  await invoke("start_helper", { plugin: "node-check" }).catch(() => {});
+
+  // A program that reads two lines and then reads to the end of its input.
+  const program = [
+    'const lines = [];',
+    'process.stdin.setEncoding("utf8");',
+    'let buffer = "";',
+    'process.stdin.on("data", (chunk) => {',
+    '  buffer += chunk;',
+    '  let cut;',
+    '  while ((cut = buffer.indexOf("\\n")) >= 0) {',
+    '    lines.push(buffer.slice(0, cut));',
+    '    buffer = buffer.slice(cut + 1);',
+    '    console.log("got", lines[lines.length - 1]);',
+    '  }',
+    '});',
+    'process.stdin.on("end", () => console.log("done after", lines.length));',
+  ].join("\n") + "\n";
+
+  const end = runs.waitForEnd();
+  runCode(ctx, program);
+  await until(() => row()?.hidden === false, 15_000);
+  await check("a running program gets an input box", row()?.hidden === false);
+
+  // Quiet for half a second: the box says it is probably wanted.
+  const highlighted = await until(() => row()?.classList.contains("waiting") === true, 5000);
+  await check("a program that has gone quiet highlights the box", highlighted);
+
+  // A line goes to the program, and is echoed in the pane.
+  type("hello");
+  await until(() => outText().includes("got hello"), 15_000);
+  await ctx.output.flushed();
+  await check(
+    "a typed line reaches the program and is echoed in the pane",
+    outText().includes("got hello") && outText().includes("hello"),
+    JSON.stringify({ out: outText().slice(0, 120) }),
+  );
+  await check(
+    "what the user typed is styled as their own",
+    document.querySelector(".out-input") !== null,
+    JSON.stringify({ spans: [...document.querySelectorAll(".output-body span")].length }),
+  );
+
+  // Ctrl+D closes the input, so a program reading to the end finishes.
+  const input = box();
+  if (input) pressKey("d", { ctrl: true }, input);
+  const outcome = await withTimeout(end, 30_000, "the program after end of input");
+  await ctx.output.flushed();
+  await check(
+    "Ctrl+D ends the input and the program finishes",
+    outcome.kind === "exited" && outText().includes("done after 1"),
+    JSON.stringify({ outcome, out: outText().slice(-120) }),
+  );
+  await check("the box goes when the run does", row()?.hidden === true);
+
+  // The same, on the per-run path: a process of its own, typed at through its
+  // own pipe rather than through a helper.
+  await invoke("force_per_run", { forced: true });
+  const cold = runs.waitForEnd();
+  runCode(
+    ctx,
+    'process.stdin.once("data", (d) => console.log("cold got", String(d).trim()));\n',
+  );
+  await until(() => row()?.hidden === false, 15_000);
+  type("typed at a process");
+  await until(() => outText().includes("cold got typed at a process"), 15_000);
+  await check(
+    "a run with no helper can be typed at too",
+    outText().includes("cold got typed at a process"),
+    JSON.stringify({ out: outText().slice(-80) }),
+  );
+  const coldInput = box();
+  if (coldInput) pressKey("d", { ctrl: true }, coldInput);
+  await withTimeout(cold, 30_000, "the per-run program");
+  await invoke("force_per_run", { forced: false });
+
+  // Python's input(), which is what this is for.
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  if (plugins.plugins.some((p) => p.id === "python")) {
+    let state = (await invoke<LanguageToolchain[]>("toolchain_status")).find(
+      (s) => s.language === "python",
+    )?.state;
+    if (state?.kind === "ready") {
+      const py = await invoke<Playground>("create_playground", {
+        name: "Stdin Python",
+        language: "python",
+      });
+      await openPlayground(ctx.editor, ctx.status, py.id);
+      const asked = runs.waitForEnd();
+      runCode(ctx, 'name = input("who? ")\nprint(f"hello {name}")\n');
+      await until(() => row()?.hidden === false, 60_000);
+      await until(() => outText().includes("who?"), 60_000);
+      type("Ada");
+      const outcome = await withTimeout(asked, 60_000, "python input()");
+      await ctx.output.flushed();
+      await check(
+        "Python's input() waits for what is typed and gets it",
+        outcome.kind === "exited" && outText().includes("hello Ada"),
+        JSON.stringify({ outcome, out: outText().slice(-80) }),
+      );
+      await tabs.close(tabs.activeTab!);
+      await invoke("delete_playground", { id: py.id }).catch(() => {});
+    } else {
+      await report("INFO python isn't installed, so input() wasn't checked");
+    }
+  }
+
+  // And C#'s Console.ReadLine(), through the Roslyn helper.
+  if (plugins.plugins.some((p) => p.id === "csharp")) {
+    const state = (await invoke<LanguageToolchain[]>("toolchain_status")).find(
+      (s) => s.language === "csharp",
+    )?.state;
+    if (state?.kind === "ready") {
+      const cs = await invoke<Playground>("create_playground", {
+        name: "Stdin CSharp",
+        language: "csharp",
+        kind: "statements",
+      });
+      await openPlayground(ctx.editor, ctx.status, cs.id);
+      const asked = runs.waitForEnd();
+      runCode(
+        ctx,
+        'Console.Write("who? ");\nvar who = Console.ReadLine();\nConsole.WriteLine($"hello {who}");\n',
+      );
+      await until(() => row()?.hidden === false, 120_000);
+      await until(() => outText().includes("who?"), 120_000);
+      type("Grace");
+      const outcome = await withTimeout(asked, 120_000, "C# Console.ReadLine()");
+      await ctx.output.flushed();
+      await check(
+        "C#'s Console.ReadLine() gets what is typed",
+        outcome.kind === "exited" && outText().includes("hello Grace"),
+        JSON.stringify({ outcome, out: outText().slice(-80) }),
+      );
+      await tabs.close(tabs.activeTab!);
+      await invoke("delete_playground", { id: cs.id }).catch(() => {});
+    } else {
+      await report("INFO the .NET SDK isn't installed, so ReadLine() wasn't checked");
+    }
+  }
+
+  // ANSI colours in output (work item 04-05).
+  const coloured = runs.waitForEnd();
+  runCode(
+    ctx,
+    'console.log("\u001b[31mred \u001b[1mbold \u001b[0mplain");\n',
+  );
+  await withTimeout(coloured, 30_000, "the coloured run");
+  await ctx.output.flushed();
+  const spans = [...document.querySelectorAll<HTMLElement>(".output-body span[data-ansi]")];
+  await check(
+    "ANSI colours become styled text, and the escapes themselves are gone",
+    spans.length >= 2 &&
+      spans[0]?.style.color !== "" &&
+      !outText().includes("[31m") &&
+      outText().includes("red bold plain"),
+    JSON.stringify({
+      spans: spans.map((span) => [span.textContent, span.style.color, span.style.fontWeight]),
+      out: outText(),
+    }),
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: main.id }).catch(() => {});
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -3825,6 +4009,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   definition: definitionScenario,
   "library-panel": libraryPanelScenario,
   keys: keysScenario,
+  stdin: stdinScenario,
   themes: themesScenario,
   settings: settingsScenario,
   history: historyScenario,

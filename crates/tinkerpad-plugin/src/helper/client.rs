@@ -177,6 +177,27 @@ impl HelperRun {
         self.events.recv().await
     }
 
+    /// Send the program what the user typed (work item 04-05).
+    ///
+    /// Best-effort: a helper that doesn't declare `stdin` ignores the message
+    /// (unknown types are ignored both ways, D7), and a run that has ended
+    /// has nothing to type at.
+    pub async fn stdin(&self, data: &[u8]) {
+        let message = ToHelper::Stdin {
+            id: self.id.clone(),
+            data: BASE64.encode(data),
+        };
+        let _ = self.to_helper.send(message).await;
+    }
+
+    /// Close the program's input: it reads end-of-file from here on.
+    pub async fn stdin_eof(&self) {
+        let message = ToHelper::StdinEof {
+            id: self.id.clone(),
+        };
+        let _ = self.to_helper.send(message).await;
+    }
+
     /// Ask the helper to stop the program, and kill the helper if it doesn't.
     ///
     /// Returns once the run is over either way. A helper that ignores `cancel`

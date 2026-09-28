@@ -55,6 +55,16 @@ pub enum ToHelper {
     Cancel {
         id: String,
     },
+    /// What the user typed at a running program (work item 04-05). Base64,
+    /// like output, because input is bytes and a line may be anything.
+    Stdin {
+        id: String,
+        data: String,
+    },
+    /// No more input is coming: the program's standard input is at its end.
+    StdinEof {
+        id: String,
+    },
     /// Stop cleanly. The helper has two seconds before it is killed.
     Shutdown,
     PlaygroundCreated {
@@ -274,8 +284,10 @@ impl HookRequest {
 /// Every message a manifest's `hooks` may list: the four hooks, and `run` for
 /// a helper that executes playgrounds. The one list, so the loader and the
 /// client can't drift apart.
-pub const HOOKS: [&str; 5] = [
+pub const HOOKS: [&str; 6] = [
     "run",
+    // A helper that takes typed input while a program runs (work item 04-05).
+    "stdin",
     "playground_created",
     "playground_opened",
     "playground_closed",
@@ -379,7 +391,9 @@ mod tests {
             let message = json(&request.clone().into_message("h".to_owned()));
             assert_eq!(message["type"], request.name());
         }
-        assert_eq!(HOOKS.len(), requests.len() + 1, "plus `run`");
+        // The four hooks above, plus `run` and `stdin`, which are things a
+        // helper does rather than questions it answers.
+        assert_eq!(HOOKS.len(), requests.len() + 2, "plus `run` and `stdin`");
     }
 
     #[test]

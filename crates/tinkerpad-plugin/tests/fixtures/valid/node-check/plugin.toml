@@ -53,7 +53,7 @@ directive = "// package {name}@{version}"
 # stands in for a real compile step.
 command = "node"
 args = ["{plugin_dir}/helper.js"]
-hooks = ["run", "playground_created", "playground_opened", "playground_closed", "add_dependency"]
+hooks = ["run", "stdin", "playground_created", "playground_opened", "playground_closed", "add_dependency"]
 idle_shutdown = "never"
 
 [helper.build]

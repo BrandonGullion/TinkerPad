@@ -556,3 +556,31 @@ async fn a_helper_shuts_down_when_asked_without_waiting_for_the_grace() {
     // Asking twice is not an error.
     client.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_program_can_be_typed_at_until_its_input_ends() {
+    let dir = scratch("stdin");
+    let client = HelperClient::start(start(&dir).hooks(["run", "stdin"]))
+        .await
+        .unwrap();
+    let main = main_file(&dir, b"read\n");
+    let mut run = client.run(request(main, &dir, "read")).await.unwrap();
+
+    run.stdin(b"hello\n").await;
+    run.stdin(b"again\n").await;
+    run.stdin_eof().await;
+
+    let (out, _err, last) = collect(&mut run).await;
+    let text = String::from_utf8_lossy(&out);
+    assert!(text.contains("read: hello"), "{text}");
+    assert!(text.contains("read: again"), "{text}");
+    assert!(
+        text.contains("end of input"),
+        "the helper was told the input ended: {text}"
+    );
+    assert!(
+        matches!(last, Some(HelperEvent::Exited { code: Some(0), .. })),
+        "{last:?}",
+    );
+    client.shutdown().await;
+}

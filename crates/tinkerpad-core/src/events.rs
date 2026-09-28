@@ -187,6 +187,9 @@ pub enum RunEvent {
     /// that tells the two paths apart.
     Started {
         warm: bool,
+        /// Whether this run can be typed at: the window shows an input box
+        /// while it lasts (work item 04-05).
+        stdin: bool,
     },
     /// Nothing is running yet, and this is what it is waiting for: another
     /// playground's run on the same helper, or a helper being built. The run

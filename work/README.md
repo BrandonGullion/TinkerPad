@@ -74,7 +74,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [04-02 Settings](phase-4-polish/04-02-settings.md) · M
 - [x] [04-03 Command palette and keybindings](phase-4-polish/04-03-command-palette.md) · M
 - [x] [04-04 Themes](phase-4-polish/04-04-themes.md) · S
-- [ ] [04-05 Stdin and interactive programs](phase-4-polish/04-05-stdin.md) · M
+- [x] [04-05 Stdin and interactive programs](phase-4-polish/04-05-stdin.md) · M
 - [ ] [04-06 Installer and updates](phase-4-polish/04-06-installer.md) · M
 - [ ] [04-07 Go and PowerShell plugins](phase-4-polish/04-07-go-and-powershell.md) · M
 - [ ] [04-08 Getting a language's tools](phase-4-polish/04-08-getting-a-languages-tools.md) · M
