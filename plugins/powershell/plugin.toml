@@ -1,0 +1,76 @@
+api = 1
+
+# PowerShell: the smallest a bundled plugin gets (work item 04-07).
+#
+# Nothing here but the four required sections — no language server, no
+# dependency command, no helper, no `dump/` folder. A plugin that needs a
+# language nobody has written tooling for should look like this and still work.
+# The `Dump` function lives in the kind's locked prelude, which is ten lines of
+# PowerShell and the whole of the rich-output support.
+
+[language]
+id = "powershell"
+name = "PowerShell"
+extension = "ps1"
+highlighter = "powershell"
+
+[toolchain]
+# `pwsh` is PowerShell 7, which is the one on every platform. Windows also
+# ships the older `powershell` (5.1), which runs the same scripts; it is the
+# fallback so a stock Windows machine works without installing anything.
+probe = [
+  { command = "pwsh", args = ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"] },
+  { command = "powershell", args = ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"], os = ["windows"] },
+]
+install_hint = "Install PowerShell 7: https://aka.ms/powershell"
+
+[[kind]]
+id = "statements"
+name = "PowerShell Script"
+template = "statements.ps1"
+default = true
+# Locked lines: `Dump` is what makes rich output work, and a playground that
+# deletes it gets a confusing error instead of a table.
+prelude = """$ErrorView = 'NormalView'
+$ErrorActionPreference = 'Stop'
+
+function Dump {
+  [CmdletBinding()]
+  param([Parameter(ValueFromPipeline)]$Value, [string]$Title, [int]$Depth = 8)
+  begin { $items = [System.Collections.ArrayList]::new() }
+  process { if ($null -ne $Value) { [void]$items.Add($Value) } }
+  end {
+    $one = if ($items.Count -eq 1) { $items[0] } else { $items.ToArray() }
+    $node = if ($one -is [System.Collections.IEnumerable] -and $one -isnot [string]) {
+      $rows = @($one)
+      $names = @($rows[0].PSObject.Properties.Name)
+      if ($names.Count -gt 1) {
+        @{ v = 1; kind = 'table'; truncated = $false
+           columns = @($names | ForEach-Object { @{ name = "$_"; type = '' } })
+           rows = @($rows | ForEach-Object { $row = $_; , @($names | ForEach-Object { $row.$_ }) }) }
+      } else { @{ v = 1; kind = 'tree'; value = $rows; type = 'array' } }
+    } elseif ($one -is [string] -or $one -is [valuetype]) {
+      @{ v = 1; kind = 'value'; value = $one; type = $one.GetType().Name }
+    } else {
+      @{ v = 1; kind = 'tree'; value = $one; type = $one.GetType().Name }
+    }
+    if ($Title) { $node.title = $Title }
+    [Console]::Out.Write("$([char]27)]1337;TinkerPad=$($node | ConvertTo-Json -Depth $Depth -Compress)$([char]7)")
+  }
+}
+
+"""
+
+[run]
+# -NoProfile so a user's profile can't change what a playground does, and
+# -NonInteractive so a prompt fails loudly instead of hanging. Typed input
+# still reaches the script's own reads (work item 04-05).
+command = "{toolchain}"
+args = ["-NoProfile", "-NonInteractive", "-File", "{main}"]
+
+[output]
+# PowerShell 7's default error view is several lines of box drawing with the
+# message last; `NormalView` (set in the prelude) is the classic two lines,
+# message first and then the position, which is what this reads.
+error_regex = '(?<message>[^\r\n]+)\r?\nAt (?<file>[^:\r\n]+(?::[^:\r\n]*)?):(?<line>\d+) char:(?<col>\d+)'
+error_regex_multiline = true

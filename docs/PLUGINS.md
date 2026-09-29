@@ -685,16 +685,32 @@ The template for each kind already imports the helper, so a new playground can c
   `cancel` is `KeyboardInterrupt` raised into that thread. Warm means the
   interpreter is shared: globals are fresh each run, imported modules are not.
 
-### Go (later)
+### Go
 
-- Each playground is a module (`[scaffold]` writes `go.mod`). `go run .`. `gopls`
-  with `workspace = "scratch_workspace"` and a helper implementing
-  `playground_opened`/`playground_closed` that rewrites `go.work`.
+- **A module per playground.** `[scaffold]` writes `go.mod` naming the module
+  after the folder, with a `replace` pointing `tinkerpad` at the plugin's own
+  `dump/` module. `go run .` runs it; `[deps]` is `go get {name}@{version}`.
+- **One server over all of them.** `gopls` with `workspace = "scratch_workspace"`
+  and `GOWORK` set to `{scratch}/go.work`.
+- **A helper for the hooks, not for runs.** It answers
+  `playground_opened`/`playground_closed` by rewriting that `go.work` from the
+  list of open playgrounds it is handed, plus the `dump/` module so every
+  `replace` resolves. Written whole and renamed into place, because gopls
+  watches it. No warm runner: Go's build cache makes a second run about 130 ms
+  against 330 ms for the first, which no helper would improve on (work item
+  04-07).
 
-### PowerShell / shell (whenever)
+### PowerShell
 
-- No LSP needed. `pwsh -NoProfile -File main.ps1`. A good test that a plugin with
-  nothing but `[language]`, `[toolchain]`, one `[[kind]]`, and `[run]` works.
+- **The smallest a plugin gets**: `[language]`, `[toolchain]`, one `[[kind]]`,
+  `[run]`, and an `[output]` pattern. No server, no helper, no `dump/` folder.
+- `pwsh -NoProfile -NonInteractive -File main.ps1`, falling back to Windows'
+  own `powershell` so a stock Windows machine needs no download.
+- **Rich output from the locked prelude**: about twenty lines of PowerShell
+  that write the §6 sentinel, taking the pipeline so `$things | Dump` is one
+  table. The prelude also sets `$ErrorView = 'NormalView'`, so errors carry a
+  position `[output].error_regex` can read, and `$ErrorActionPreference =
+  'Stop'`, so a mistake ends the run instead of printing and exiting 0.
 
 ## 8. Distribution and installation
 
