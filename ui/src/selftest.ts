@@ -3971,6 +3971,281 @@ async function stdinScenario(ctx: SelftestContext, check: Check) {
   await invoke("delete_playground", { id: main.id }).catch(() => {});
 }
 
+/**
+ * The PowerShell plugin (work item 04-07): the smallest a bundled plugin
+ * gets — no server, no dependency command, no dump library, and rich output
+ * from ten lines in a locked prelude.
+ */
+async function powershellScenario(ctx: SelftestContext, check: Check) {
+  const { runs, editor, status, tabs } = ctx;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const plugin = plugins.plugins.find((p) => p.id === "powershell");
+  await check(
+    "the PowerShell plugin is bundled, with no server and no helper",
+    plugin?.source === "bundled" && plugin?.lsp === false && plugin?.helper === false,
+    JSON.stringify(plugin ?? null),
+  );
+
+  const state = await settledToolchain("powershell");
+  if (state?.kind !== "ready") {
+    // The plugin is optional on macOS and Linux; a missing pwsh must cost the
+    // language and nothing else.
+    await check(
+      "without pwsh the plugin says how to get it, and the app carries on",
+      state?.kind === "missing" && (state.hint ?? "").includes("powershell"),
+      JSON.stringify(state ?? null),
+    );
+    await report("INFO pwsh isn't installed, so the run checks were skipped");
+    return;
+  }
+  await report(`INFO powershell: ${state.program} ${state.version} at ${state.path}`);
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const made = await invoke<Playground>("create_playground", {
+    name: "PS Self Test",
+    language: "powershell",
+  });
+  await openPlayground(editor, status, made.id);
+  await check(
+    "a new playground starts from the template, under the locked Dump",
+    editor.text.includes("function Dump {") && editor.text.includes("$people | Dump"),
+    JSON.stringify(editor.text.slice(0, 40)),
+  );
+
+  // The template, unedited: a table from the pipeline and a line of text.
+  let end = runs.waitForEnd();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  let outcome = await withTimeout(end, 60_000, "the PowerShell template");
+  await ctx.output.flushed();
+  const table = ctx.output.element.querySelector<HTMLElement>(".dump-kind-table");
+  await check(
+    "it runs, and the pipeline's objects arrive as one table",
+    outcome.kind === "exited" &&
+      outcome.code === 0 &&
+      table !== null &&
+      (table?.textContent ?? "").includes("Grace") &&
+      outText().includes("2 people"),
+    JSON.stringify({ outcome, table: table?.textContent?.slice(0, 60), out: outText().slice(-40) }),
+  );
+
+  // A scalar dumps as a value. The kind's first lines are locked, so this
+  // adds to the script rather than replacing it.
+  const append = (line: string) => {
+    const view = editor.view;
+    view.dispatch({ changes: { from: view.state.doc.length, insert: line + "\n" } });
+  };
+  ctx.output.clear();
+  append('41 + 1 | Dump -Title "answer"');
+  end = runs.waitForEnd();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  outcome = await withTimeout(end, 60_000, "a scalar dump");
+  await ctx.output.flushed();
+  const value = ctx.output.element.querySelector<HTMLElement>(".dump-kind-value");
+  await check(
+    "a scalar dumps as a value with its type",
+    outcome.kind === "exited" && (value?.textContent ?? "").includes("42"),
+    JSON.stringify({ outcome, value: value?.textContent, out: outText().slice(-60) }),
+  );
+
+  // An error stops the script, says where, and fails the run.
+  ctx.output.clear();
+  append("Get-Item 'no-such-file-here-9a7f2'");
+  append('"never reached"');
+  end = runs.waitForEnd();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  outcome = await withTimeout(end, 60_000, "a failing script");
+  await ctx.output.flushed();
+  await check(
+    "an error stops the script and fails the run, with a position to point at",
+    outcome.kind === "exited" &&
+      outcome.code !== 0 &&
+      outText().includes("no-such-file-here-9a7f2") &&
+      !outText().includes("never reached"),
+    JSON.stringify({ outcome, out: outText().slice(-140) }),
+  );
+  const marked = [...document.querySelectorAll(".out-annotation")].length;
+  await check(
+    "and the error line is clickable in the output",
+    marked > 0,
+    JSON.stringify({ marked }),
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: made.id }).catch(() => {});
+}
+
+/**
+ * The Go plugin (work item 04-07): a module per playground, one gopls over all
+ * of them, and a helper that keeps `go.work` listing the open ones.
+ */
+async function goScenario(ctx: SelftestContext, check: Check) {
+  const { runs, editor, status, tabs } = ctx;
+  const outText = () => ctx.output.element.querySelector(".output-body")?.textContent ?? "";
+
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  const plugin = plugins.plugins.find((p) => p.id === "go");
+  await check(
+    "the Go plugin is bundled, with a server and a helper",
+    plugin?.source === "bundled" && plugin?.lsp === true && plugin?.helper === true,
+    JSON.stringify(plugin ?? null),
+  );
+
+  const state = await settledToolchain("go");
+  if (state?.kind !== "ready") {
+    await check(
+      "without Go the plugin says how to get it",
+      state?.kind === "missing" && (state.hint ?? "").includes("go.dev"),
+      JSON.stringify(state ?? null),
+    );
+    await report("INFO Go isn't installed, so the rest was skipped");
+    return;
+  }
+  await report(`INFO go: ${state.program} ${state.version} at ${state.path}`);
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  const first = await invoke<Playground>("create_playground", { name: "Go Self Test", language: "go" });
+  await openPlayground(editor, status, first.id);
+
+  // The scaffold: a module named after the folder, and the dump library.
+  const mod = await invoke<Peek>("open_readonly", { path: `${first.dir}/go.mod` });
+  await check(
+    "a new playground is scaffolded as a module with the dump library replaced in",
+    mod.text.includes("module go-self-test") &&
+      mod.text.includes("replace tinkerpad =>") &&
+      mod.text.includes("dump"),
+    JSON.stringify({ mod: mod.text.slice(0, 160) }),
+  );
+
+  // The template, unedited: a table of structs.
+  let end = runs.waitForEnd();
+  let started = performance.now();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  let outcome = await withTimeout(end, 180_000, "the Go template");
+  const coldMs = performance.now() - started;
+  await ctx.output.flushed();
+  const table = ctx.output.element.querySelector<HTMLElement>(".dump-kind-table");
+  await check(
+    "it builds and runs, and a slice of structs arrives as a table",
+    outcome.kind === "exited" &&
+      outcome.code === 0 &&
+      table !== null &&
+      (table?.textContent ?? "").includes("Grace"),
+    JSON.stringify({ outcome, table: table?.textContent?.slice(0, 60) }),
+  );
+
+  // Go's build cache is the reason this plugin needs no warm runner.
+  end = runs.waitForEnd();
+  started = performance.now();
+  runScopeHandlers(editor.view, key("Enter", { mod: true }), "editor");
+  await withTimeout(end, 120_000, "the second Go run");
+  const warmMs = performance.now() - started;
+  await report(`INFO go run: ${coldMs.toFixed(0)} ms cold, ${warmMs.toFixed(0)} ms cached`);
+  await check(
+    "runs are quick enough that no warm runner is needed",
+    warmMs < 2000 && coldMs < 20_000,
+    JSON.stringify({ coldMs: Math.round(coldMs), warmMs: Math.round(warmMs) }),
+  );
+
+  // A compile error points at the line it is on.
+  const view = editor.view;
+  view.dispatch({ changes: { from: view.state.doc.length, insert: "\nvar unused = undefinedThing{}\n" } });
+  end = runs.waitForEnd();
+  runScopeHandlers(view, key("Enter", { mod: true }), "editor");
+  outcome = await withTimeout(end, 120_000, "a Go compile error");
+  await ctx.output.flushed();
+  const marked = [...document.querySelectorAll(".out-annotation")].length;
+  await check(
+    "a compile error fails the run and is clickable in the output",
+    outcome.kind === "exited" && outcome.code !== 0 && marked > 0,
+    JSON.stringify({ outcome, marked, out: outText().slice(-120) }),
+  );
+  // Put it back.
+  view.dispatch({
+    changes: { from: view.state.doc.length - "\nvar unused = undefinedThing{}\n".length, to: view.state.doc.length, insert: "" },
+  });
+  await invoke("write_source", { id: first.id, text: view.state.doc.toString() });
+
+  // `[deps]`: Add package runs `go get` in the playground folder, through the
+  // palette, which is the path a person takes.
+  const deps = runs.waitForEnd();
+  const asked = runCommand("Add package");
+  await fillPrompt(["rsc.io/quote", "v1.5.2"]);
+  await asked;
+  const gotten = await withTimeout(deps, 180_000, "go get").catch(() => null);
+  const after = await invoke<Peek>("open_readonly", { path: `${first.dir}/go.mod` });
+  await check(
+    "Add package runs `go get`, and the module file says so",
+    gotten?.kind === "exited" && after.text.includes("rsc.io/quote v1.5.2"),
+    JSON.stringify({ gotten, mod: after.text.slice(-140) }),
+  );
+
+  // Two playgrounds open: gopls has to see both, which means the helper's
+  // `go.work` has to name both.
+  const second = await invoke<Playground>("create_playground", { name: "Go Second Test", language: "go" });
+  await openPlayground(editor, status, second.id);
+
+  const server = await untilAsync(
+    async () => (await invoke<ServerStatus[]>("server_status")).some((s) => s.language === "go"),
+    60_000,
+  );
+  const servers = await invoke<ServerStatus[]>("server_status");
+  // The server is rooted at `<scratch>/go/lsp`, while the helper writes
+  // `go.work` into the plugin's scratch folder above it, which is where GOWORK
+  // points. Same folder the plugin's `{scratch}` names.
+  const root = servers.find((s) => s.language === "go")?.root ?? "";
+  const scratch = root.slice(0, Math.max(root.lastIndexOf("/"), root.lastIndexOf("\\")));
+  const work = await untilAsync(async () => {
+    const file = await invoke<Peek>("open_readonly", { path: `${scratch}/go.work` }).catch(() => null);
+    return file !== null && file.text.includes("go-second-test");
+  }, 30_000);
+  const workFile = await invoke<Peek>("open_readonly", { path: `${scratch}/go.work` }).catch(() => null);
+  await check(
+    "the helper's go.work names every open playground and the dump module",
+    server &&
+      work &&
+      (workFile?.text ?? "").includes("go-self-test") &&
+      (workFile?.text ?? "").includes("go-second-test") &&
+      (workFile?.text ?? "").includes("dump"),
+    JSON.stringify({ scratch, work: workFile?.text?.slice(0, 300) }),
+  );
+
+  // Completions from gopls, in the second playground.
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: 'package main\n\nimport "strings"\n\nfunc main() {\n	strings.\n}\n' },
+  });
+  view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf("strings.") + "strings.".length } });
+  editor.focus();
+  let offered: readonly { label: string }[] = [];
+  for (let attempt = 0; attempt < 40 && offered.length === 0; attempt++) {
+    startCompletion(view);
+    await until(() => {
+      offered = currentCompletions(view.state);
+      return offered.length > 0;
+    }, 3000);
+  }
+  await check(
+    "gopls answers completions on `strings.` in a second open playground",
+    offered.some((item) => item.label.startsWith("ToUpper")),
+    JSON.stringify({ offered: offered.slice(0, 6).map((o) => o.label) }),
+  );
+
+  // Closing one takes it out of the workspace again.
+  const secondTab = tabs.tabs.find((t) => t.id === second.id);
+  if (secondTab) await tabs.close(secondTab, { save: false });
+  const removed = await untilAsync(async () => {
+    const file = await invoke<Peek>("open_readonly", { path: `${scratch}/go.work` }).catch(() => null);
+    return file !== null && !file.text.includes("go-second-test");
+  }, 30_000);
+  await check("closing a playground takes it out of go.work", removed);
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  for (const id of [first.id, second.id]) {
+    await invoke("delete_playground", { id }).catch(() => {});
+  }
+}
+
 /** Create a playground of the node-check test plugin and open it. */
 async function openTestPlayground(
   { editor, status }: SelftestContext,
@@ -4009,6 +4284,8 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   definition: definitionScenario,
   "library-panel": libraryPanelScenario,
   keys: keysScenario,
+  go: goScenario,
+  powershell: powershellScenario,
   stdin: stdinScenario,
   themes: themesScenario,
   settings: settingsScenario,

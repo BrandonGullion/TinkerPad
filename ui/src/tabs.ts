@@ -47,6 +47,10 @@ const SESSION_SAVE_MS = 400;
 /** How many recently opened playgrounds the session remembers (04-01). */
 const RECENT_KEPT = 20;
 
+/** Language-server problems already reported, so a tab switch doesn't repeat
+ * them (work item 04-07). */
+const toldAbout = new Set<string>();
+
 const isMac = navigator.platform.toLowerCase().includes("mac");
 const MOD = isMac ? "⌘" : "Ctrl+";
 
@@ -551,6 +555,13 @@ export class TabManager implements RunHost {
       })
       .catch((error: unknown) => {
         console.warn("language support failed to load", error);
+        // A plugin whose server can't even be configured would otherwise fail
+        // in silence: no chip, no server, no reason (work item 04-07).
+        const message = (error as { message?: string }).message;
+        if (message && !toldAbout.has(message)) {
+          toldAbout.add(message);
+          toast("warning", message);
+        }
       })
       .finally(() => {
         tab.connecting = null;

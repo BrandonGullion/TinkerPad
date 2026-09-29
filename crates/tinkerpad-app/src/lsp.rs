@@ -264,16 +264,22 @@ fn config(
         .unwrap_or_default();
     let name = playground.map(|p| p.name.clone()).unwrap_or_default();
     let plugin_dir = plugin.dir.to_string_lossy();
+    // A plugin's own scratch folder: where its helper keeps whatever the
+    // server needs to see, such as Go's `go.work` (work item 04-07).
+    let scratch = tinkerpad_runner::spec::scratch_dir(scratch_root, plugin)
+        .to_string_lossy()
+        .into_owned();
     let root_text = root
         .as_deref()
         .map(|r| r.to_string_lossy().into_owned())
         .unwrap_or_else(|| dir.clone());
-    let values: [(&str, &str); 5] = [
+    let values: [(&str, &str); 6] = [
         ("dir", &dir),
         ("main", &main),
         ("plugin_dir", &plugin_dir),
         ("root", &root_text),
         ("name", &name),
+        ("scratch", &scratch),
     ];
     let fill = |field: &str, template: &str| {
         placeholders::substitute(template, &values)

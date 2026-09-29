@@ -1,0 +1,80 @@
+api = 1
+
+# Go: a module per playground, one language server over all of them, and a
+# helper whose only job is to keep `go.work` honest (work item 04-07).
+#
+# This is the other end of the plugin format from PowerShell next door. It uses
+# `[scaffold]`, a shared-workspace `[lsp]`, a `[deps]` command, and the two
+# playground hooks — everything a language with a real project model needs.
+
+[language]
+id = "go"
+name = "Go"
+extension = "go"
+highlighter = "go"
+
+[toolchain]
+# Go 1.21 brought `go.work` use directives working the way this plugin needs.
+probe = [{ command = "go", args = ["version"], min_version = "1.21" }]
+install_hint = "Install Go: https://go.dev/dl"
+
+[[kind]]
+id = "program"
+name = "Go Program"
+template = "program.go"
+default = true
+
+# Locked lines: the file is one expression, and the wrapper dumps it.
+[[kind]]
+id = "expression"
+name = "Go Expression"
+template = "expression.go"
+prelude = """package main
+
+import "tinkerpad"
+
+func main() {
+\ttinkerpad.Dump(
+"""
+postlude = """
+\t)
+}
+"""
+
+[scaffold]
+# A playground is a module of its own, with the dump library resolved from this
+# plugin folder by a `replace` directive. The absolute path is written at
+# creation and recorded in playground.toml, as the Rust plugin does.
+files = [{ path = "go.mod", template = "go.mod" }]
+
+[run]
+command = "{toolchain}"
+args = ["run", "."]
+
+[deps]
+kind = "command"
+add = ["go", "get", "{name}@{version}"]
+
+[lsp]
+# gopls over every open Go playground at once: one server, one `go.work`, which
+# the helper below rewrites as tabs open and close. Without that file gopls
+# treats each folder as an unrelated module and answers nothing useful.
+command = "gopls"
+args = ["serve"]
+workspace = "scratch_workspace"
+# gopls is a memory-hungry neighbour; let it go when the Go tabs are closed.
+idle_shutdown = "30m"
+env = { GOWORK = "{scratch}/go.work" }
+
+[helper]
+# Not a warm runner: `go build` caches well enough that a second run is quick.
+# This helper exists for the two hooks, and does nothing else.
+command = "{toolchain}"
+args = ["run", "{plugin_dir}/helper/main.go"]
+hooks = ["playground_opened", "playground_closed"]
+idle_shutdown = "5m"
+
+[output]
+# `./main.go:7:2: undefined: foo`, and the `# command-line-arguments` header
+# above it, which is not a position and is skipped by the pattern.
+error_regex = '^(?:\.[\/])?(?<file>[^\s:]+\.go):(?<line>\d+):(?<col>\d+): (?<message>.+)$'
