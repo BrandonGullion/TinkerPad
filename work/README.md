@@ -77,7 +77,8 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [04-05 Stdin and interactive programs](phase-4-polish/04-05-stdin.md) · M
 - [ ] [04-06 Installer and updates](phase-4-polish/04-06-installer.md) · M
 - [x] [04-07 Go and PowerShell plugins](phase-4-polish/04-07-go-and-powershell.md) · M
-- [ ] [04-08 Getting a language's tools](phase-4-polish/04-08-getting-a-languages-tools.md) · M
+- [ ] [04-08a Acquiring a language's tools](phase-4-polish/04-08a-acquiring-tools.md) · M
+- [ ] [04-08b Offering to install what a language needs](phase-4-polish/04-08b-tool-offers.md) · M
 - [ ] [04-09 Deleting a playground something else has open](phase-4-polish/04-09-deleting-a-playground-in-use.md) · S
 
 ## Phase 5 — Community

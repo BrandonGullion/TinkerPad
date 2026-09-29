@@ -45,6 +45,10 @@ the core can't break them silently.
 - [ ] `check/` folder convention documented in PLUGINS.md §8 and the template
       repo (05-03).
 
+- [ ] `tinkerpad tools list` and `tinkerpad tools install <language>`, sharing
+      the code the app's own offers use (04-08a, 04-08b), so a machine or a CI
+      runner can be set up without opening the window.
+
 ## Out of scope
 
 Performance assertions (report timings, don't fail on them). Security scanning.
