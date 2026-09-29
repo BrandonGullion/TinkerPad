@@ -75,6 +75,11 @@ pub enum CoreEvent {
     /// Playgrounds were added, removed, renamed, or their metadata changed on
     /// disk. The UI should list them again.
     LibraryChanged,
+    /// A line from getting a language's tools, while it happens (04-08a).
+    Tool {
+        plugin: crate::LanguageId,
+        line: String,
+    },
     /// A newer TinkerPad is out (work item 04-06). The window says so once,
     /// without interrupting; installing is the user's to ask for.
     #[serde(rename_all = "camelCase")]

@@ -94,16 +94,35 @@ impl ToolchainOverrides {
     }
 }
 
-/// Finds a plugin's programs: settings override first, then `PATH`.
+/// Where TinkerPad put a tool it acquired for a plugin (work item 04-08a):
+/// plugin id to the folders holding its versions, oldest first.
+pub type AcquiredTools = BTreeMap<String, Vec<PathBuf>>;
+
+/// Finds a plugin's programs: settings override first, then anything TinkerPad
+/// acquired for that plugin, then `PATH`.
 #[derive(Clone, Debug, Default)]
 pub struct Resolver {
     path: OsString,
     overrides: ToolchainOverrides,
+    acquired: AcquiredTools,
 }
 
 impl Resolver {
     pub fn new(path: OsString, overrides: ToolchainOverrides) -> Self {
-        Self { path, overrides }
+        Self {
+            path,
+            overrides,
+            acquired: AcquiredTools::new(),
+        }
+    }
+
+    /// Also look in the folders TinkerPad downloaded tools into. They come
+    /// after a settings override — the user's own path always wins — and
+    /// before `PATH`, so a tool the user asked TinkerPad to get is the one
+    /// used, not whatever older copy the machine happens to have.
+    pub fn with_acquired(mut self, acquired: AcquiredTools) -> Self {
+        self.acquired = acquired;
+        self
     }
 
     /// The `PATH` lookups use. Pass it to children so their own lookups match.
@@ -124,6 +143,14 @@ impl Resolver {
                     path.display()
                 )
             });
+        }
+        if let Some(dirs) = self.acquired.get(plugin_id) {
+            // Newest last in the list, so search from the end.
+            for dir in dirs.iter().rev() {
+                if let Some(found) = find_program(program, dir.as_os_str()) {
+                    return Ok(found);
+                }
+            }
         }
         find_program(program, &self.path).ok_or_else(|| format!("`{program}` was not found"))
     }

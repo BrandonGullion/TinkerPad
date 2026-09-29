@@ -11,6 +11,12 @@ rust-version.workspace = true
 name = "tinkerpad"
 path = "src/main.rs"
 
+# Stand-in package manager for the tool-acquisition tests (work item 04-08a).
+# Not part of the app.
+[[bin]]
+name = "tinkerpad-faketool"
+path = "src/bin/faketool.rs"
+
 [dependencies]
 tinkerpad-core.workspace = true
 tinkerpad-process.workspace = true
@@ -20,6 +26,7 @@ tinkerpad-runner.workspace = true
 tinkerpad-library.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tauri = { version = "2", features = [] }
@@ -38,6 +45,17 @@ toml_edit = "0.22"
 # Watching settings.toml, the same way the library watches its folder.
 notify = "8"
 notify-debouncer-mini = "0.7.0"
+# Getting a language's tools (work item 04-08a): fetch, verify, unpack. All
+# five already arrive with tauri-plugin-updater, so these are direct edges to
+# crates the build already has rather than new dependencies.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

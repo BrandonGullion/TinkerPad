@@ -205,6 +205,54 @@ is dropped, so `serde@{version}` becomes `serde`.
   Directive languages should give people a kind without locked lines (C# has
   `statements` and `program`).
 
+**`[toolchain.acquire]` and `[lsp.acquire]` in detail.** `install_hint` tells
+someone what to install; `acquire` lets TinkerPad do it for them, when they ask.
+Both sections take the same shape, one for the language and one for its server.
+Nothing here ever runs on its own: the app asks first, showing the command or
+the URL and checksum, and `[tools] acquire = "never"` in `settings.toml` refuses
+the lot. `install_hint` is still what is shown when there is no `acquire`, or
+when acquiring fails.
+
+```toml
+[toolchain.acquire]
+kind = "command"                     # ask a package manager the user already has
+command = ["rustup", "component", "add", "rust-analyzer"]
+needs = "rustup"                     # refused, with a reason, when this isn't there
+label = "rustup component add rust-analyzer"   # default: the command itself
+os = ["macos", "linux"]              # optional; elsewhere there is simply no offer
+
+[lsp.acquire]
+kind = "download"                    # or fetch the release its maintainers publish
+version = "0.3.2000"                 # required; names the folder it lands in
+
+[[lsp.acquire.file]]
+os = "windows"
+arch = "x86_64"                      # or "aarch64"; "amd64"/"x64"/"arm64" also read
+url = "https://.../rust-analyzer-x86_64-pc-windows-msvc.zip"
+sha256 = "5e88…"                     # 64 hex characters, for this file and version
+member = "rust-analyzer.exe"         # what to take out; omit when the file is the tool
+rename_to = "rust-analyzer.exe"      # optional, when the name inside is unhelpful
+```
+
+- A `command` runs through `tinkerpad-process` like everything else — never a
+  shell — with its program found the same way a run's is, and its output
+  streamed to the window line by line.
+- A `download` is fetched, hashed, and compared against `sha256` **before**
+  anything is unpacked. A mismatch deletes what arrived and says so. Only
+  `member` is extracted, from a `.zip`, `.tar.gz` or `.gz`; a path climbing out
+  of the archive is refused at load time, and a symlink inside one is skipped.
+  What lands is made executable on Unix.
+- Downloads go to `<app-data>/tools/<plugin-id>/<version>/`, which the resolver
+  searches after the user's `[toolchains]` overrides and before `PATH`. A plugin
+  sees only its own folder. Deleting it undoes the lot.
+- The URL must be `https://`. A machine that fetches from an internal copy sets
+  `[tools] mirror` in `settings.toml`; the host is replaced and the path kept.
+- Getting these wrong is a load error, not a silent download: a missing
+  `version`, a checksum that isn't a SHA-256, a URL that isn't HTTPS, a platform
+  named twice, or a `member` with `..` in it all stop the plugin loading.
+- After either kind the toolchain is probed again, so the language becomes
+  usable without restarting the app.
+
 **`[output]` in detail.** Every completed line of stdout and stderr is matched
 against `error_regex`. A match becomes a position the app can use.
 
