@@ -20,6 +20,9 @@
 //! - `is_alive(pid) -> bool`: liveness check used by tests and the sweep.
 //! - `set_registry(path)` / `sweep_orphans()`: the macOS pid registry; no-ops
 //!   elsewhere so the app can call them unconditionally.
+//! - `print_to_parent_console(text) -> bool`: Windows needs this so a GUI
+//!   build's `--version` reaches the console that started it; `false`
+//!   elsewhere, and the caller falls back to `println!`.
 
 #[cfg(target_os = "windows")]
 mod windows;

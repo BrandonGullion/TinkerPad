@@ -34,6 +34,8 @@ const LANGUAGES: Record<string, () => Promise<Extension>> = {
   shell: async () =>
     StreamLanguage.define((await import("@codemirror/legacy-modes/mode/shell")).shell),
   lua: async () => StreamLanguage.define((await import("@codemirror/legacy-modes/mode/lua")).lua),
+  powershell: async () =>
+    StreamLanguage.define((await import("@codemirror/legacy-modes/mode/powershell")).powerShell),
   swift: async () =>
     StreamLanguage.define((await import("@codemirror/legacy-modes/mode/swift")).swift),
   ruby: async () =>
@@ -56,7 +58,7 @@ const BY_EXTENSION: Record<string, string> = {
   toml: "toml", c: "cpp", h: "cpp", cc: "cpp", cpp: "cpp", hpp: "cpp",
   java: "java", cs: "csharp", kt: "kotlin", kts: "kotlin", scala: "scala",
   sh: "shell", bash: "shell", zsh: "shell", lua: "lua", swift: "swift",
-  rb: "ruby",
+  rb: "ruby", ps1: "powershell", psm1: "powershell", psd1: "powershell",
 };
 
 /** The highlighter for a file extension, without the dot. */
