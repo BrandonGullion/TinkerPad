@@ -93,6 +93,7 @@ export const CATALOG = [
   { id: "settings.keybindings", title: "Open keybindings file", category: "Settings" },
   { id: "settings.copyKeybindings", title: "Copy keybindings as Markdown", category: "Settings" },
   { id: "settings.logs", title: "Open log folder", category: "Settings" },
+  { id: "app.update", title: "Install update", category: "Settings" },
 ];
 
 /** The default binding of every command that has one, by id. */

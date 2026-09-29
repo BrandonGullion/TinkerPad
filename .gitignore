@@ -15,11 +15,12 @@ Thumbs.db
 # The Rust plugin's dump crate is built inside each playground, never locked here
 plugins/rust/dump/Cargo.lock
 
+# A plugin's helper is built into the app's data folder at runtime; these are
+# what a hand-run build in the plugin folder leaves behind. They must not be
+# committed, and must not end up in a release bundle (work item 04-06).
+plugins/*/helper/bin/
+plugins/*/helper/obj/
+
 # Python bytecode from a plugin's dump library or helper.
 __pycache__/
 *.pyc
-
-# The C# helper is built on first use, into the app's data folder; these are
-# what a local `dotnet build` in the plugin folder leaves behind.
-plugins/csharp/helper/bin/
-plugins/csharp/helper/obj/
