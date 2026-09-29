@@ -35,6 +35,7 @@ pub struct Settings {
     /// `[toolchain]` probe asks for.
     pub toolchains: BTreeMap<String, BTreeMap<String, String>>,
     pub lsp: LspSettings,
+    pub tools: ToolSettings,
     /// Per plugin: how long its warm helper may sit idle.
     pub helpers: BTreeMap<String, ServiceOverride>,
 }
@@ -67,6 +68,34 @@ pub struct RunSettings {
     pub clear_output: bool,
 }
 
+/// Getting the tools a language needs (work item 04-08a).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct ToolSettings {
+    /// `ask` offers to install what is missing; `never` shows the plugin's
+    /// hint and no button, and refuses to install however it is asked.
+    pub acquire: String,
+    /// An internal copy of the downloads, for a machine that can't reach the
+    /// open internet. The path of each URL is kept, only the host replaced.
+    pub mirror: Option<String>,
+}
+
+impl Default for ToolSettings {
+    fn default() -> Self {
+        Self {
+            acquire: "ask".to_owned(),
+            mirror: None,
+        }
+    }
+}
+
+impl ToolSettings {
+    /// Whether TinkerPad may offer to install anything at all.
+    pub fn offers(&self) -> bool {
+        !self.acquire.eq_ignore_ascii_case("never")
+    }
+}
+
 /// Language servers: which to start early, and how long each may idle.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
@@ -95,6 +124,7 @@ impl Default for Settings {
             run: RunSettings::default(),
             toolchains: BTreeMap::new(),
             lsp: LspSettings::default(),
+            tools: ToolSettings::default(),
             helpers: BTreeMap::new(),
         }
     }
@@ -202,6 +232,16 @@ pub const TEMPLATE: &str = r#"# TinkerPad settings.
 # [lsp.rust]
 # idle_shutdown = "30m"
 
+[tools]
+# When a language needs something you don't have — a language server, a
+# formatter — TinkerPad can offer to install it, showing exactly what will run
+# or be fetched. "never" turns the offers off and shows the plugin's own
+# instructions instead.
+# acquire = "ask"
+# An internal mirror of the downloads, for a machine that can't reach the open
+# internet. Only the host is replaced; the rest of each URL is kept.
+# mirror = "https://tools.example.internal"
+
 # The same, for a plugin's warm helper (the process that runs your code).
 #
 # [helpers.csharp]
@@ -272,6 +312,12 @@ mod tests {
             lsp: LspSettings {
                 prewarm: vec!["typescript".to_owned()],
                 ..LspSettings::default()
+            },
+            // The mirror is an example rather than a default, like the library
+            // root above it: there is nowhere sensible to point by default.
+            tools: ToolSettings {
+                mirror: Some("https://tools.example.internal".to_owned()),
+                ..ToolSettings::default()
             },
             ..Settings::default()
         };

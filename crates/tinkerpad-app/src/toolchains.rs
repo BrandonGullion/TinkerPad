@@ -112,7 +112,11 @@ pub fn check_all(app: &AppHandle) {
         let state = app.state::<AppState>();
 
         let overrides = tinkerpad_plugin::ToolchainOverrides::of(&state.settings.get());
-        let resolver = Arc::new(Resolver::new(path, overrides));
+        // Anything TinkerPad has acquired sits between the overrides and PATH,
+        // so a downloaded tool is found by probes, runs, servers and helpers
+        // alike without the user editing their environment (work item 04-08a).
+        let acquired = crate::tools::search_paths(&state.data_dir);
+        let resolver = Arc::new(Resolver::new(path, overrides).with_acquired(acquired));
         *state.toolchains.resolver.write().expect("resolver lock") = resolver.clone();
 
         let mut tasks = tokio::task::JoinSet::new();

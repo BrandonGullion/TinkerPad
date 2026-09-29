@@ -11,7 +11,7 @@ use tinkerpad_core::LanguageId;
 
 use crate::error::{Location, ManifestError, Problem, ProblemKind, Syntax, Unknown};
 use crate::manifest::{self, KNOWN_SECTIONS, Manifest};
-use crate::os::Os;
+use crate::os::{Arch, Os};
 use crate::placeholders::{self, PlaceholderError};
 use crate::suggest;
 
@@ -76,6 +76,8 @@ pub struct Plugin {
     /// Toolchain probes that apply on this OS, in order.
     pub probes: Vec<Probe>,
     pub install_hint: Option<String>,
+    /// How to get what the probes look for, when it isn't there (04-08a).
+    pub toolchain_acquire: Option<Acquire>,
     /// Always non-empty, exactly one marked default.
     pub kinds: Vec<Kind>,
     pub scaffold: Vec<ScaffoldFile>,
@@ -152,6 +154,8 @@ pub struct HelperSpec {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LspSpec {
     pub command: CommandSpec,
+    /// How to get the server when it isn't installed (work item 04-08a).
+    pub acquire: Option<Acquire>,
     pub workspace: Workspace,
     pub idle_shutdown: IdleShutdown,
     /// `initializationOptions`, converted from TOML.
@@ -163,6 +167,75 @@ pub struct LspSpec {
 }
 
 pub use manifest::Workspace;
+
+/// Whether a path names something inside an archive: relative, no `..`, no
+/// drive, no root. What comes out of a download must land where it is meant to
+/// (work item 04-08a).
+fn inside_archive(path: &str) -> bool {
+    let normalised = path.replace('\\', "/");
+    !normalised.is_empty()
+        && !normalised.starts_with('/')
+        && normalised.as_bytes().get(1) != Some(&b':')
+        && normalised
+            .split('/')
+            .all(|part| part != ".." && !part.is_empty())
+}
+
+/// How to get a tool the plugin needs, validated (work item 04-08a).
+///
+/// Nothing here happens on its own: the app asks, having told the user exactly
+/// what is about to run or be fetched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Acquire {
+    /// Ask a package manager the user already has.
+    Command {
+        /// Program first, then its arguments. Never a shell.
+        command: Vec<String>,
+        /// What must be on PATH for this to work, such as `rustup`.
+        needs: Option<String>,
+        /// What the user is shown as the thing about to happen.
+        label: String,
+    },
+    /// Fetch a published release.
+    Download {
+        /// Part of where it lands, and what the checksums belong to.
+        version: String,
+        /// One per platform; the machine's own is chosen when it runs.
+        files: Vec<AcquireFile>,
+    },
+}
+
+/// One platform's download, validated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcquireFile {
+    pub os: Os,
+    pub arch: Arch,
+    pub url: String,
+    /// Lowercase hex, 64 characters.
+    pub sha256: String,
+    /// What to take out of the archive; the download itself when absent.
+    pub member: Option<String>,
+    /// What to call it once it is out.
+    pub rename_to: Option<String>,
+}
+
+impl Acquire {
+    /// What the user is told will happen, in one line.
+    pub fn label(&self) -> String {
+        match self {
+            Acquire::Command { label, .. } => label.clone(),
+            Acquire::Download { version, .. } => format!("download version {version}"),
+        }
+    }
+
+    /// The download for this machine, if this is a download and there is one.
+    pub fn file_for(&self, os: Os, arch: Arch) -> Option<&AcquireFile> {
+        match self {
+            Acquire::Command { .. } => None,
+            Acquire::Download { files, .. } => files.iter().find(|f| f.os == os && f.arch == arch),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Register {
@@ -295,7 +368,7 @@ impl Validator<'_> {
         });
     }
 
-    fn build(&mut self, m: Manifest) -> Plugin {
+    fn build(&mut self, mut m: Manifest) -> Plugin {
         let lang = m.language;
         self.id("language.id", &lang.id);
         self.non_empty("language.name", &lang.name);
@@ -330,6 +403,7 @@ impl Validator<'_> {
             .relative_path("language.main_path", &main_path)
             .unwrap_or_default();
 
+        let toolchain_acquire = self.acquire("toolchain.acquire", m.toolchain.acquire.take());
         let (probes, install_hint) = self.toolchain(m.toolchain);
         let kinds = self.kinds(m.kinds);
         let scaffold = self.scaffold(m.scaffold);
@@ -373,6 +447,7 @@ impl Validator<'_> {
             main_path,
             probes,
             install_hint,
+            toolchain_acquire,
             kinds,
             scaffold,
             run,
@@ -395,6 +470,108 @@ impl Validator<'_> {
                 key,
                 format!("`{id}` must use only lowercase letters, digits, and hyphens"),
             );
+        }
+    }
+
+    /// Check an `acquire` section and turn it into what the app can act on
+    /// (work item 04-08a).
+    ///
+    /// A plugin that gets this wrong fails to load rather than downloading
+    /// something unverified: an empty command, a missing checksum, a checksum
+    /// that isn't a SHA-256, or a URL that isn't HTTPS are all refusals.
+    fn acquire(&mut self, key: &str, acquire: Option<manifest::Acquire>) -> Option<Acquire> {
+        match acquire? {
+            manifest::Acquire::Command {
+                command,
+                needs,
+                label,
+                os,
+            } => {
+                self.os_list(key, os.as_deref());
+                if command.iter().all(|part| part.trim().is_empty()) {
+                    self.problem(
+                        ProblemKind::InvalidValue,
+                        format!("{key}.command"),
+                        "needs a program to run, as an array: [\"rustup\", \"component\", \"add\", …]",
+                    );
+                    return None;
+                }
+                // A section that applies to no OS here is a section this
+                // machine simply doesn't have; the plugin is still fine.
+                if os.as_ref().is_some_and(|list| !list.contains(&self.os)) {
+                    return None;
+                }
+                let label = label.unwrap_or_else(|| command.join(" "));
+                Some(Acquire::Command {
+                    command,
+                    needs: needs.filter(|n| !n.trim().is_empty()),
+                    label,
+                })
+            }
+            manifest::Acquire::Download { version, file } => {
+                self.non_empty(&format!("{key}.version"), &version);
+                if file.is_empty() {
+                    self.problem(
+                        ProblemKind::InvalidValue,
+                        format!("{key}.file"),
+                        "a download needs at least one [[….file]] with an os, arch, url and sha256",
+                    );
+                    return None;
+                }
+                let mut files = Vec::new();
+                let mut seen: Vec<(Os, Arch)> = Vec::new();
+                for (i, f) in file.into_iter().enumerate() {
+                    let at = format!("{key}.file[{i}]");
+                    if !f.url.starts_with("https://") {
+                        self.problem(
+                            ProblemKind::InvalidValue,
+                            format!("{at}.url"),
+                            format!("`{}` should be an https:// URL", f.url),
+                        );
+                        continue;
+                    }
+                    let sha = f.sha256.trim().to_ascii_lowercase();
+                    if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+                        self.problem(
+                            ProblemKind::InvalidValue,
+                            format!("{at}.sha256"),
+                            "should be a SHA-256 as 64 hex characters",
+                        );
+                        continue;
+                    }
+                    if seen.contains(&(f.os, f.arch)) {
+                        self.problem(
+                            ProblemKind::InvalidValue,
+                            at.clone(),
+                            format!("{:?}/{} is named twice", f.os, f.arch),
+                        );
+                        continue;
+                    }
+                    seen.push((f.os, f.arch));
+                    if let Some(member) = &f.member
+                        && !inside_archive(member)
+                    {
+                        self.problem(
+                            ProblemKind::InvalidValue,
+                            format!("{at}.member"),
+                            format!("`{member}` must be a relative path inside the archive"),
+                        );
+                        continue;
+                    }
+                    files.push(AcquireFile {
+                        os: f.os,
+                        arch: f.arch,
+                        url: f.url,
+                        sha256: sha,
+                        member: f.member,
+                        rename_to: f.rename_to,
+                    });
+                }
+                if files.is_empty() {
+                    return None;
+                }
+                Some(Acquire::Download { version, files })
+            }
         }
     }
 
@@ -807,6 +984,7 @@ impl Validator<'_> {
             );
             let spec = LspSpec {
                 command,
+                acquire: self.acquire(&format!("{key}.acquire"), l.acquire.take()),
                 workspace: l.workspace.unwrap_or(Workspace::PlaygroundDir),
                 idle_shutdown,
                 init_options,

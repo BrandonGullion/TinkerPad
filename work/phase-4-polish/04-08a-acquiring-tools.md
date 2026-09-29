@@ -52,32 +52,93 @@ downloading, checksums, archive extraction — reviewable on their own.
 
 ## Expectations
 
-- [ ] Manifest: `[toolchain.acquire]` and `[lsp.acquire]`, each `kind = "command"`
+- [x] Manifest: `[toolchain.acquire]` and `[lsp.acquire]`, each `kind = "command"`
       or `kind = "download"`, validated like every other section (unknown keys are
       errors; per-OS entries as elsewhere). `install_hint` stays as the text shown
       when there is no `acquire`, or when acquiring fails.
-- [ ] Checksums are per platform *and* per version, so `version` is required on a
+- [x] Checksums are per platform *and* per version, so `version` is required on a
       `download` and keys the folder it lands in. A plugin that gets this wrong
       fails to load rather than downloading something unverified.
-- [ ] `kind = "command"` runs through `tinkerpad-process` like everything else,
+- [x] `kind = "command"` runs through `tinkerpad-process` like everything else,
       with its output streamed the way `[deps]` commands are (01-14), and is
       refused with a clear reason when `needs` isn't there ("rustup isn't
       installed").
-- [ ] `kind = "download"` verifies the SHA-256 before unpacking, refuses on a
+- [x] `kind = "download"` verifies the SHA-256 before unpacking, refuses on a
       mismatch, extracts with no path traversal and no symlinks, sets the
       executable bit on Unix, and leaves either the finished tool or nothing —
       never half a file.
-- [ ] The resolver searches `<app-data>/tools/<plugin-id>/<version>/` after
+- [x] The resolver searches `<app-data>/tools/<plugin-id>/<version>/` after
       settings overrides and before `PATH`, so an acquired tool is found by runs,
       servers and helpers alike.
-- [ ] After either kind, the toolchain probe runs again and the language becomes
+- [x] After either kind, the toolchain probe runs again and the language becomes
       usable without restarting the app.
-- [ ] Settings: `[tools] acquire = "ask" | "never"`, and a way to point at an
+- [x] Settings: `[tools] acquire = "ask" | "never"`, and a way to point at an
       internal mirror. `never` means the core refuses to acquire at all, however
       it is asked.
-- [ ] Tests: a fake plugin whose `acquire` command writes a stub binary, and a
+- [x] Tests: a fake plugin whose `acquire` command writes a stub binary, and a
       `download` against a local file server with a good and a bad checksum.
       Nothing in the test suite reaches the network.
+
+## Results
+
+Measured on Windows 11, `cargo test --workspace`, 2026-09-29.
+
+**Where the pieces live**
+
+| Piece | File |
+|---|---|
+| Manifest shape | `crates/tinkerpad-plugin/src/manifest.rs` (`Acquire`, `AcquireFile`) |
+| Validation | `crates/tinkerpad-plugin/src/plugin.rs` (`Builder::acquire`, `inside_archive`) |
+| Architecture names | `crates/tinkerpad-plugin/src/os.rs` (`Arch`, with `amd64`/`x64`/`arm64` aliases) |
+| Resolution | `crates/tinkerpad-plugin/src/toolchain.rs` (`Resolver::with_acquired`) |
+| The engine | `crates/tinkerpad-app/src/tools.rs` |
+| Settings | `crates/tinkerpad-core/src/settings.rs` (`[tools]`) |
+| Progress events | `CoreEvent::Tool { plugin, line }` |
+| Commands | `tool_offer`, `acquire_tool` in `crates/tinkerpad-app/src/lib.rs` |
+
+**Resolution order.** `Resolver::resolve` tries, in order: the `[toolchains.<id>]`
+override, then each acquired folder for *that plugin* (newest version first),
+then `PATH`. A plugin sees only its own folder, so Go's `gopls` is never what
+the Python plugin finds. Covered by
+`an_acquired_tool_is_found_after_the_overrides_and_before_path` and
+`the_newest_acquired_version_is_the_one_used`.
+
+**Dependencies.** `reqwest`, `sha2`, `zip`, `flate2` and `tar` all already
+arrive with `tauri-plugin-updater`, so these are direct edges to crates the
+build already had rather than five new dependencies. No shell, no `curl | sh`,
+no post-install scripts.
+
+**Tests.** 21 new, all offline.
+
+| Test file | Count | Covers |
+|---|---|---|
+| `crates/tinkerpad-app/tests/tools.rs` | 7 | the command that installs a stub, a failing command's message, `acquire = "never"` refusing before anything runs, a good and a bad checksum against a local server, a zip member, a tarball whose symlink is skipped |
+| `crates/tinkerpad-plugin/tests/acquire.rs` | 12 | what the manifest accepts and, mostly, what it refuses |
+| `crates/tinkerpad-plugin/tests/toolchain.rs` | 2 | resolution order and version choice |
+
+Nothing reaches the network. The download tests fetch from a `TcpListener` on
+`127.0.0.1` started by the test, reached through the `[tools] mirror` setting —
+which exercises the mirror as well, since the manifest URL must be `https://`.
+The command tests run `tinkerpad-faketool`, a stand-in package manager in
+`crates/tinkerpad-app/src/bin/faketool.rs`, alongside the plugin crate's
+existing `tinkerpad-fakeprobe`.
+
+**A bug this found.** An `acquire` limited with `os = [...]` was being resolved
+against the machine doing the loading rather than the OS the plugin was being
+loaded *for*, so a Windows-only `acquire` would have been kept when validating
+for Linux (`plugin.rs` used `Os::current()` where every other per-OS section
+uses `self.os`). `a_command_for_another_os_is_simply_absent` covers it now.
+
+**Deferred to 04-08b**, as the split says: everything the user sees, and the
+bundled plugins' own `acquire` sections. The two commands exist and are
+registered; nothing in the window calls them yet.
+
+**Not fixed here (pre-existing on `main`, both from PRs merged while CI was
+billing-blocked):** `scripts/lint-platform-cfg.sh` fails on
+`crates/tinkerpad-app/src/main.rs:72` (04-06's Windows console attach), and
+`bundled_plugins_load_cleanly_on_every_os` fails because the PowerShell plugin
+names a `powershell` highlighter that isn't in `KNOWN_HIGHLIGHTERS` (04-07).
+Neither is this item; each wants its own small PR.
 
 ## Out of scope
 

@@ -27,13 +27,14 @@ pub use helper::{
     HelperClient, HelperError, HelperEvent, HelperRun, HelperStart, HookRequest, HookResult,
     RunRequest,
 };
-pub use os::Os;
+pub use os::{Arch, Os};
 pub use plugin::{
-    CommandSpec, DepsSpec, HelperSpec, IdleShutdown, Kind, LspSpec, MANIFEST_FILE, OutputSpec,
-    Plugin, Probe, Register, SUPPORTED_API, ScaffoldFile, TEMPLATES_DIR, Version, Workspace,
+    Acquire, AcquireFile, CommandSpec, DepsSpec, HelperSpec, IdleShutdown, Kind, LspSpec,
+    MANIFEST_FILE, OutputSpec, Plugin, Probe, Register, SUPPORTED_API, ScaffoldFile, TEMPLATES_DIR,
+    Version, Workspace,
 };
 pub use registry::{Entry, LoadFailure, Override, PluginRegistry, Source};
-pub use toolchain::{PROBE_TIMEOUT, Resolver, ToolchainOverrides, probe};
+pub use toolchain::{AcquiredTools, PROBE_TIMEOUT, Resolver, ToolchainOverrides, probe};
 
 /// The annotated C# manifest from `docs/PLUGINS.md` §2, kept identical to the
 /// docs by a test. The plugin template repository (work item 05-03) starts

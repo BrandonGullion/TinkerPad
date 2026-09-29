@@ -15,7 +15,7 @@ use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
-use crate::os::Os;
+use crate::os::{Arch, Os};
 
 /// Top-level sections this version understands.
 pub const KNOWN_SECTIONS: &[&str] = &[
@@ -66,6 +66,8 @@ pub struct Toolchain {
     #[serde(default)]
     pub probe: Vec<Probe>,
     pub install_hint: Option<String>,
+    /// How to get what the probes look for, when it isn't there (04-08a).
+    pub acquire: Option<Acquire>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,6 +161,54 @@ pub struct Lsp {
     #[serde(default)]
     pub workspace_files: Vec<ScaffoldFile>,
     pub os: Option<Vec<Os>>,
+    /// How to get the server, when it isn't installed (work item 04-08a).
+    pub acquire: Option<Acquire>,
+}
+
+/// How to get a tool this plugin needs (work item 04-08a).
+///
+/// Two kinds. `command` asks a package manager the user already has; `download`
+/// fetches a published release when there is none to ask. Nothing here runs
+/// unless the user asks for it.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Acquire {
+    Command {
+        /// The program and its arguments, as an array: there is never a shell.
+        command: Vec<String>,
+        /// What must already exist for this to work, such as `rustup`. Shown
+        /// as the reason when it doesn't.
+        needs: Option<String>,
+        /// What to show the user as the thing about to happen. The command
+        /// line itself, when absent.
+        label: Option<String>,
+        os: Option<Vec<Os>>,
+    },
+    Download {
+        /// Required, and part of where the tool lands: a checksum means
+        /// nothing without the version it belongs to.
+        version: String,
+        /// One entry per platform. The one matching this machine is used; a
+        /// machine with no entry is told there is nothing to download.
+        #[serde(default)]
+        file: Vec<AcquireFile>,
+    },
+}
+
+/// One platform's download.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcquireFile {
+    pub os: Os,
+    pub arch: Arch,
+    pub url: String,
+    /// Hex SHA-256 of the file at `url`, checked before anything is unpacked.
+    pub sha256: String,
+    /// What to take out of the archive. Absent when the download is the tool
+    /// itself rather than an archive of one.
+    pub member: Option<String>,
+    /// What to call it once it is out, when that isn't the member's own name.
+    pub rename_to: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]

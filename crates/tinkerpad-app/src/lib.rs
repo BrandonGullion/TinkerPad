@@ -24,6 +24,7 @@ mod service_settings;
 mod session;
 mod settings;
 mod toolchains;
+pub mod tools;
 mod update;
 
 use std::collections::BTreeSet;
@@ -605,6 +606,55 @@ mod commands {
         crate::library::change_root(&app, &state)
     }
 
+    /// What a language needs that isn't here, and what could be done about
+    /// it (work item 04-08a). Answering changes nothing and needs no network.
+    #[tauri::command(async)]
+    pub fn tool_offer(
+        state: State<'_, AppState>,
+        language: String,
+        which: crate::tools::Which,
+    ) -> Option<crate::tools::Offer> {
+        let plugin = state
+            .plugins
+            .read()
+            .expect("plugins lock")
+            .get(language.as_str())
+            .cloned()?;
+        crate::tools::offer(&crate::tools::Env::of(&state), &plugin, which)
+    }
+
+    /// Get it, having been asked to. Never called on the app's own initiative.
+    #[tauri::command(async)]
+    pub async fn acquire_tool(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+        language: String,
+        which: crate::tools::Which,
+    ) -> Result<Option<String>, CommandError> {
+        let plugin = state
+            .plugins
+            .read()
+            .expect("plugins lock")
+            .get(language.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                CommandError::new(
+                    tinkerpad_core::ErrorCode::NotFound,
+                    format!("no plugin is loaded for `{language}`"),
+                )
+            })?;
+        let result = crate::tools::acquire(&crate::tools::Env::of(&state), &plugin, which).await;
+        if result.is_ok() {
+            // The probe is what decides whether a language works, so ask it
+            // again rather than assuming, and rebuild the resolver so the new
+            // folder is searched.
+            crate::toolchains::check_all(&app);
+        }
+        result
+            .map(|path| path.map(|p| p.to_string_lossy().into_owned()))
+            .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e.to_string()))
+    }
+
     /// What the launch check found, if anything (work item 04-06).
     #[tauri::command(async)]
     pub fn update_available(state: State<'_, AppState>) -> Option<crate::update::Available> {
@@ -1048,6 +1098,8 @@ pub fn run() {
             commands::close_input,
             commands::run_history,
             commands::open_log_folder,
+            commands::tool_offer,
+            commands::acquire_tool,
             commands::update_available,
             commands::install_update,
             commands::get_settings,

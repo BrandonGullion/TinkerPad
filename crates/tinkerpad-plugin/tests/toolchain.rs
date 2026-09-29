@@ -300,3 +300,72 @@ async fn override_pointing_nowhere_says_so() {
         other => panic!("expected Missing, got {other:?}"),
     }
 }
+
+/// A program TinkerPad acquired, in a folder named for its version.
+fn acquired(dir: &Path, plugin: &str, version: &str, name: &str) -> PathBuf {
+    let folder = dir.join("tools").join(plugin).join(version);
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join(if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    });
+    std::fs::copy(FAKE, &file).unwrap();
+    tinkerpad_plugin::env::make_executable(&file).unwrap();
+    file
+}
+
+#[test]
+fn an_acquired_tool_is_found_after_the_overrides_and_before_path() {
+    let s = Scratch::new("acquired");
+    let mine = acquired(&s.0, "fake", "1.0.0", "tp-acquired");
+    let acquired_tools: tinkerpad_plugin::AcquiredTools = [(
+        "fake".to_owned(),
+        vec![mine.parent().unwrap().to_path_buf()],
+    )]
+    .into_iter()
+    .collect();
+
+    // No PATH at all: only the acquired folder can answer.
+    let r = Resolver::default().with_acquired(acquired_tools.clone());
+    assert_eq!(r.resolve("fake", "tp-acquired").unwrap(), mine);
+    assert!(
+        r.resolve("other", "tp-acquired").is_err(),
+        "one plugin's tools are not another's"
+    );
+
+    // A settings override still wins: the user's own path is the last word.
+    let settings = format!(
+        "[toolchains.fake]
+tp-acquired = {}
+",
+        lit(FAKE)
+    );
+    let r = Resolver::new(
+        std::env::var_os("PATH").unwrap_or_default(),
+        ToolchainOverrides::from_settings(&settings).unwrap(),
+    )
+    .with_acquired(acquired_tools);
+    assert_eq!(
+        r.resolve("fake", "tp-acquired").unwrap(),
+        PathBuf::from(FAKE)
+    );
+}
+
+#[test]
+fn the_newest_acquired_version_is_the_one_used() {
+    let s = Scratch::new("acquired-versions");
+    let old = acquired(&s.0, "fake", "1.0.0", "tp-versioned");
+    let new = acquired(&s.0, "fake", "1.2.0", "tp-versioned");
+    // Sorted oldest first, as `tools::search_paths` hands them over.
+    let mut folders = vec![
+        old.parent().unwrap().to_path_buf(),
+        new.parent().unwrap().to_path_buf(),
+    ];
+    folders.sort();
+    let acquired_tools: tinkerpad_plugin::AcquiredTools =
+        [("fake".to_owned(), folders)].into_iter().collect();
+
+    let r = Resolver::default().with_acquired(acquired_tools);
+    assert_eq!(r.resolve("fake", "tp-versioned").unwrap(), new);
+}
