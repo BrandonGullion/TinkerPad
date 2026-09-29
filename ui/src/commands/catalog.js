@@ -86,6 +86,7 @@ export const CATALOG = [
   // ---- the window ----------------------------------------------------------
   { id: "view.library", title: "Library panel", category: "View", key: "mod+b" },
   { id: "view.commands", title: "Commands…", category: "View", key: "mod+shift+p" },
+  { id: "view.tools", title: "What each language needs", category: "View" },
 
   // ---- settings ------------------------------------------------------------
   { id: "settings.open", title: "Settings…", category: "Settings", key: "mod+," },

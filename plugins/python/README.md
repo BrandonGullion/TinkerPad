@@ -131,6 +131,11 @@ attaching later is a change to one function rather than a rewrite
 pip install basedpyright
 ```
 
+The **Languages** button in the status bar offers to run that for you, after
+showing you the command (work item 04-08b). pip installs it beside the Python
+it belongs to; if that folder isn't on your `PATH`, the reason is reported and
+`[toolchains.python]` in `settings.toml` can point at the program directly.
+
 Without it the editor still runs code; you just lose completion and
 diagnostics, and the status strip says what to install.
 

@@ -75,6 +75,14 @@ Completions, hover, signature help, and live errors come from
 TypeScript it analyses with are both npm packages that belong to you rather than
 to the app.
 
+The quickest way to get both is to let TinkerPad do it: the **Languages** button
+in the status bar lists what each language is missing, and offers to install it
+after showing you exactly what it would run (work item 04-08b). It installs into
+TinkerPad's own folder rather than globally, so nothing needs elevation and
+deleting `<app-data>/tools/typescript/` undoes it.
+
+By hand is the same two steps:
+
 ```sh
 npm install -g typescript-language-server
 ```
@@ -88,7 +96,8 @@ time it starts, TinkerPad writes two files there and never touches them again:
 | `tsconfig.json` | Without one, your `.ts` files are analysed as loose JavaScript with no types. |
 | `package.json` | Declares the TypeScript the server analyses with. |
 
-Run `npm install` in that folder once, and the server has its TypeScript:
+Run `npm install` in that folder once, and the server has its TypeScript — or
+let the Languages button do it, which runs the same command in the same place:
 
 ```sh
 cd ~/TinkerPad && npm install

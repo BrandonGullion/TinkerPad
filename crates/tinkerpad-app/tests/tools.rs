@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use tinkerpad_app::events::EventBus;
 use tinkerpad_app::tools::{self, Env, Which};
-use tinkerpad_core::CoreEvent;
+use tinkerpad_core::{CoreEvent, ToolchainState};
 use tinkerpad_plugin::{Arch, Os, Plugin, Resolver};
 
 const FAKETOOL: &str = env!("CARGO_BIN_EXE_tinkerpad-faketool");
@@ -92,6 +92,9 @@ fn env(scratch: &Scratch, mirror: Option<String>) -> Env {
         resolver: Arc::new(Resolver::default()),
         mirror,
         offers: true,
+        // No language server in these fixtures, so no workspace either.
+        library_root: scratch.0.join("library"),
+        scratch_root: scratch.0.join("scratch"),
     }
 }
 
@@ -297,6 +300,166 @@ fn program_name() -> String {
     } else {
         "tp-fake".to_owned()
     }
+}
+
+// --- what a language needs ------------------------------------------------
+
+#[test]
+fn a_present_toolchain_is_reported_with_no_offer() {
+    let scratch = Scratch::new("needs-present");
+    let p = plugin(
+        &scratch,
+        &format!(
+            "[toolchain.acquire]\nkind = \"command\"\ncommand = [{}, 'print', 'hi']\n",
+            lit(FAKETOOL),
+        ),
+    );
+    let needs = tools::needs(
+        &env(&scratch, None),
+        &p,
+        Some(ToolchainState::Ready {
+            program: "tp-nothing".to_owned(),
+            path: "/somewhere/tp-nothing".to_owned(),
+            version: Some("1.2.3".to_owned()),
+        }),
+    );
+    let toolchain = needs
+        .iter()
+        .find(|need| need.which == Which::Toolchain)
+        .expect("a toolchain row");
+    assert!(toolchain.present);
+    assert_eq!(toolchain.found_at.as_deref(), Some("/somewhere/tp-nothing"));
+    assert_eq!(toolchain.version.as_deref(), Some("1.2.3"));
+    assert!(
+        toolchain.offer.is_none(),
+        "nothing is offered for something already here"
+    );
+}
+
+#[test]
+fn a_missing_toolchain_is_reported_with_the_offer_and_the_hint() {
+    let scratch = Scratch::new("needs-missing");
+    let p = plugin(
+        &scratch,
+        &format!(
+            "install_hint = 'Install Fake by hand'\n\
+             [toolchain.acquire]\nkind = \"command\"\ncommand = [{}, 'print', 'hi']\n\
+             label = 'install Fake'\n",
+            lit(FAKETOOL),
+        ),
+    );
+    let needs = tools::needs(
+        &env(&scratch, None),
+        &p,
+        Some(ToolchainState::Missing {
+            reason: "`tp-nothing` was not found".to_owned(),
+            hint: Some("Install Fake by hand".to_owned()),
+        }),
+    );
+    let toolchain = &needs[0];
+    assert!(!toolchain.present);
+    assert_eq!(
+        toolchain.reason.as_deref(),
+        Some("`tp-nothing` was not found")
+    );
+    // The hint is there either way: it is what a machine that won't install
+    // anything is left with.
+    assert_eq!(toolchain.hint.as_deref(), Some("Install Fake by hand"));
+    let offer = toolchain.offer.as_ref().expect("an offer");
+    assert_eq!(offer.label, "install Fake");
+    assert_eq!(offer.kind, "command");
+    assert!(offer.blocked.is_none(), "{:?}", offer.blocked);
+}
+
+#[test]
+fn acquire_never_leaves_the_hint_and_blocks_the_offer() {
+    let scratch = Scratch::new("needs-never");
+    let p = plugin(
+        &scratch,
+        &format!(
+            "install_hint = 'Install Fake by hand'\n\
+             [toolchain.acquire]\nkind = \"command\"\ncommand = [{}, 'print', 'hi']\n",
+            lit(FAKETOOL),
+        ),
+    );
+    let mut env = env(&scratch, None);
+    env.offers = false;
+    let needs = tools::needs(
+        &env,
+        &p,
+        Some(ToolchainState::Missing {
+            reason: "not found".to_owned(),
+            hint: Some("Install Fake by hand".to_owned()),
+        }),
+    );
+    assert_eq!(needs[0].hint.as_deref(), Some("Install Fake by hand"));
+    assert!(
+        needs[0]
+            .offer
+            .as_ref()
+            .and_then(|offer| offer.blocked.as_deref())
+            .is_some_and(|why| why.contains("switched off")),
+        "{:?}",
+        needs[0].offer
+    );
+}
+
+#[test]
+fn a_plugin_with_no_acquire_has_a_row_but_nothing_to_offer() {
+    let scratch = Scratch::new("needs-no-acquire");
+    let p = plugin(&scratch, "install_hint = 'Do it yourself'\n");
+    let needs = tools::needs(
+        &env(&scratch, None),
+        &p,
+        Some(ToolchainState::Missing {
+            reason: "not found".to_owned(),
+            hint: Some("Do it yourself".to_owned()),
+        }),
+    );
+    assert_eq!(needs.len(), 1, "no server, so no server row");
+    assert!(!needs[0].present);
+    assert!(needs[0].offer.is_none());
+    assert_eq!(needs[0].hint.as_deref(), Some("Do it yourself"));
+}
+
+#[test]
+fn a_workspace_dependency_is_a_need_of_its_own() {
+    let scratch = Scratch::new("needs-workspace");
+    // A server rooted in the library folder, needing something inside it.
+    let p = plugin(
+        &scratch,
+        "[lsp]\ncommand = 'tp-server'\nworkspace = 'library_root'\n\
+         workspace_needs = 'node_modules/typescript'\n\n\
+         [lsp.workspace_acquire]\nkind = \"command\"\ncommand = ['npm', 'install']\n\
+         needs = 'npm'\n",
+    );
+    let env = env(&scratch, None);
+    let library = env.library_root.clone();
+
+    let workspace_row = |env: &tools::Env| {
+        tools::needs(env, &p, None)
+            .into_iter()
+            .find(|need| need.which == Which::Workspace)
+            .expect("a workspace row")
+    };
+
+    let missing = workspace_row(&env);
+    assert!(!missing.present);
+    assert!(
+        missing
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("node_modules/typescript"),
+        "{:?}",
+        missing.reason
+    );
+
+    // Put it there, and the same question answers differently.
+    std::fs::create_dir_all(library.join("node_modules").join("typescript")).unwrap();
+    let there = workspace_row(&env);
+    assert!(there.present, "{:?}", there.reason);
+    assert!(there.offer.is_none());
 }
 
 // --- archives ------------------------------------------------------------

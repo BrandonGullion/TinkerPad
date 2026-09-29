@@ -25,6 +25,12 @@ pub const PROBE: &[&str] = &["plugin_dir", "scratch"];
 /// package being added, not the playground or toolchain.
 pub const DEPS: &[&str] = &["name", "version"];
 
+/// Placeholders allowed in an `acquire` command and its environment
+/// (work item 04-08b). `{tools_dir}` is the folder TinkerPad keeps this
+/// plugin's acquired tools in, which the resolver searches: a package manager
+/// pointed at it installs somewhere the app will find and the user can delete.
+pub const ACQUIRE: &[&str] = &["plugin_dir", "tools_dir", "workspace"];
+
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PlaceholderError {
     #[error("unknown placeholder `{{{name}}}`")]

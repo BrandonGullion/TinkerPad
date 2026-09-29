@@ -32,6 +32,8 @@ export type CoreEvent =
   | { type: "toast"; level: Level; message: string }
   | ({ type: "run" } & RunEvent)
   | { type: "toolchain"; language: string; state: ToolchainState }
+  /** A line of progress while a tool is being acquired (work item 04-08a). */
+  | { type: "tool"; plugin: string; line: string }
   | { type: "server"; language: string; root: string; state: ServerState }
   | { type: "helper"; plugin: string; state: ServerState }
   | { type: "libraryChanged" }
@@ -186,6 +188,45 @@ export interface LanguageToolchain {
   state: ToolchainState;
 }
 
+/** Which of a plugin's tools something is about (work item 04-08a). */
+export type Which = "toolchain" | "lsp" | "workspace";
+
+/** What TinkerPad could do about a missing tool, and why it might not. */
+export interface Offer {
+  /** One line: the command that would run, or the version to fetch. */
+  label: string;
+  kind: "command" | "download";
+  /** Where a download comes from, so the user can see before agreeing. */
+  url: string | null;
+  /** Its SHA-256, for the same reason. */
+  sha256: string | null;
+  /** Set when the offer can't be made, and says why in one sentence. */
+  blocked: string | null;
+}
+
+/** One thing a language needs (work item 04-08b). */
+export interface Need {
+  which: Which;
+  /** "Toolchain", "Language server", "Workspace". */
+  label: string;
+  /** The program name, or the path inside the workspace. */
+  what: string;
+  present: boolean;
+  foundAt: string | null;
+  version: string | null;
+  reason: string | null;
+  /** The plugin's `install_hint`: what someone is left with either way. */
+  hint: string | null;
+  offer: Offer | null;
+}
+
+/** One entry of the `tools_status` reply. */
+export interface LanguageNeeds {
+  language: string;
+  name: string;
+  needs: Need[];
+}
+
 export interface Envelope {
   /** Strictly increasing per app session. */
   seq: number;
@@ -249,6 +290,8 @@ export interface Settings {
   toolchains: Record<string, Record<string, string>>;
   /** `prewarm`, plus a `ServiceOverride` per language id. */
   lsp: { prewarm: string[] } & Record<string, ServiceOverride | string[] | undefined>;
+  /** Getting the tools a language needs (work items 04-08a, 04-08b). */
+  tools: { acquire: string; mirror: string | null };
   helpers: Record<string, ServiceOverride>;
 }
 

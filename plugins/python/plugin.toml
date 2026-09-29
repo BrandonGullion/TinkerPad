@@ -46,6 +46,17 @@ args = ["--stdio"]
 workspace = "playground_dir"
 idle_shutdown = "30m"
 
+[lsp.acquire]
+# What basedpyright's own instructions say. No `--prefix` games: pip's
+# generated launchers expect the interpreter's own layout, so installing
+# anywhere else gives a program that can't import itself. If the result isn't
+# on PATH — a Python whose Scripts folder isn't — the reason is reported and
+# `[toolchains.python]` in settings.toml can point at it (work item 04-08b).
+kind = "command"
+command = ["pip", "install", "basedpyright"]
+needs = "pip"
+label = "pip install basedpyright"
+
 [lsp.init_options]
 # Without this the server indexes only what is imported; a playground is small,
 # so index it all and get completions for everything in the folder.

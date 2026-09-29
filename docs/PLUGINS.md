@@ -184,6 +184,7 @@ one you're on, so a mistake that only affects macOS still fails on Windows.
 | `[lsp].args`, `[lsp].env` | As for `[run]`. |
 | `[lsp].workspace` | Defaults to `playground_dir`. |
 | `[lsp].workspace_files` | `[{ path = "tsconfig.json", template = "tsconfig.json" }]`: files the server's *workspace* needs, written there the first time it starts and never overwritten. Same shape as `[scaffold].files`, but relative to the workspace root rather than a playground. |
+| `[lsp].workspace_needs` | A path inside the workspace the server needs to find there, such as `node_modules/typescript`. See below. |
 | `[lsp.register].reload` | A request to send after the registered setting changes, for a server that reads it once: `"rust-analyzer/reloadWorkspace"`. |
 | `[deps]` with `kind = "command"` | Needs `add = ["cargo", "add", "{name}@{version}"]`. |
 | `[deps]` with `kind = "inline-directive"` | Needs `directive = "#:package {name}@{version}"`. |
@@ -220,6 +221,7 @@ command = ["rustup", "component", "add", "rust-analyzer"]
 needs = "rustup"                     # refused, with a reason, when this isn't there
 label = "rustup component add rust-analyzer"   # default: the command itself
 os = ["macos", "linux"]              # optional; elsewhere there is simply no offer
+env = { GOBIN = "{tools_dir}" }      # optional; {tools_dir}, {plugin_dir}, {workspace}
 
 [lsp.acquire]
 kind = "download"                    # or fetch the release its maintainers publish
@@ -245,6 +247,12 @@ rename_to = "rust-analyzer.exe"      # optional, when the name inside is unhelpf
 - Downloads go to `<app-data>/tools/<plugin-id>/<version>/`, which the resolver
   searches after the user's `[toolchains]` overrides and before `PATH`. A plugin
   sees only its own folder. Deleting it undoes the lot.
+- `{tools_dir}` in a command or its `env` is that plugin's own folder under the
+  same root. Point a package manager at it — `npm install --prefix {tools_dir}`,
+  `GOBIN={tools_dir} go install` — and what it installs is found by the app,
+  needs no elevation, and is one folder to delete. `<prefix>/bin`,
+  `<prefix>/Scripts` and `<prefix>/node_modules/.bin` are searched too, because
+  that is where package managers actually put programs.
 - The URL must be `https://`. A machine that fetches from an internal copy sets
   `[tools] mirror` in `settings.toml`; the host is replaced and the path kept.
 - Getting these wrong is a load error, not a silent download: a missing
@@ -252,6 +260,31 @@ rename_to = "rust-analyzer.exe"      # optional, when the name inside is unhelpf
   named twice, or a `member` with `..` in it all stop the plugin loading.
 - After either kind the toolchain is probed again, so the language becomes
   usable without restarting the app.
+
+**`[lsp].workspace_needs` and `[lsp.workspace_acquire]`.** Some servers need
+something in their *workspace* rather than on `PATH`: typescript-language-server
+analyses with a TypeScript it finds in the workspace, not one of its own. Name
+the path, and how to get it, and it becomes a third thing the app can offer.
+
+```toml
+[lsp]
+command = "typescript-language-server"
+workspace = "library_root"
+workspace_needs = "node_modules/typescript"    # relative to the workspace root
+
+[lsp.workspace_acquire]
+kind = "command"
+command = ["npm", "install"]                   # runs *in* the workspace root
+needs = "npm"
+label = "npm install in your library folder"
+```
+
+`workspace_needs` is a relative path inside the workspace, checked by asking
+whether it exists. `workspace_acquire` is an `acquire` like any other, except
+that its command runs with the workspace as its working directory, and
+`{workspace}` is that folder. A server rooted in each playground's own folder
+(`workspace = "playground_dir"`) has no workspace until a playground is open, so
+it reports nothing until there is one.
 
 **`[output]` in detail.** Every completed line of stdout and stderr is matched
 against `error_regex`. A match becomes a position the app can use.

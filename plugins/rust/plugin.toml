@@ -52,6 +52,14 @@ env = { CARGO_TERM_COLOR = "never" }
 command = "rust-analyzer"
 workspace = "scratch_workspace"
 
+[lsp.acquire]
+# rustup owns rust-analyzer, and its shims are already on the PATH of anyone
+# who has Rust, so there is nowhere better to put it (work item 04-08b).
+kind = "command"
+command = ["rustup", "component", "add", "rust-analyzer"]
+needs = "rustup"
+label = "rustup component add rust-analyzer"
+
 [lsp.register]
 # Each open playground adds its crate to the server's linkedProjects, which is
 # how rust-analyzer serves several unrelated crates from one process.

@@ -21,12 +21,13 @@
 //! the user's settings and before `PATH`. Deleting that folder undoes this
 //! module entirely.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use tinkerpad_core::{CoreEvent, Level, Scope};
+use tinkerpad_core::{CoreEvent, LanguageId, Level, Scope, ToolchainState};
 use tinkerpad_plugin::{Acquire, AcquireFile, AcquiredTools, Arch, Os, Plugin, Resolver};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
@@ -46,13 +47,20 @@ pub enum Which {
     Toolchain,
     /// What `[lsp]` runs: the language server.
     Lsp,
+    /// What `[lsp].workspace_needs` names: not a program but something the
+    /// server's workspace must contain, such as the TypeScript the TypeScript
+    /// server analyses with (work item 04-08b).
+    Workspace,
 }
 
 impl Which {
+    pub const ALL: [Which; 3] = [Which::Toolchain, Which::Lsp, Which::Workspace];
+
     fn of(self, plugin: &Plugin) -> Option<&Acquire> {
         match self {
             Which::Toolchain => plugin.toolchain_acquire.as_ref(),
             Which::Lsp => plugin.lsp.as_ref()?.acquire.as_ref(),
+            Which::Workspace => plugin.lsp.as_ref()?.workspace_acquire.as_ref(),
         }
     }
 
@@ -60,6 +68,19 @@ impl Which {
         match self {
             Which::Toolchain => plugin.name.clone(),
             Which::Lsp => format!("{}'s language server", plugin.name),
+            Which::Workspace => format!(
+                "what {}'s language server needs in its workspace",
+                plugin.name
+            ),
+        }
+    }
+
+    /// The short label the window puts in the list.
+    pub fn label(self) -> &'static str {
+        match self {
+            Which::Toolchain => "Toolchain",
+            Which::Lsp => "Language server",
+            Which::Workspace => "Workspace",
         }
     }
 }
@@ -79,6 +100,11 @@ pub struct Env {
     pub mirror: Option<String>,
     /// `[tools] acquire`: false means never, and nothing here will run.
     pub offers: bool,
+    /// The library folder, which is some servers' workspace (work item 04-08b).
+    pub library_root: PathBuf,
+    /// Where the app keeps per-plugin scratch folders, the other kind of
+    /// workspace a server can have.
+    pub scratch_root: PathBuf,
 }
 
 impl Env {
@@ -94,7 +120,16 @@ impl Env {
                 .clone()
                 .filter(|mirror| !mirror.is_empty()),
             offers: settings.tools.offers(),
+            library_root: state.library.root(),
+            scratch_root: state.data_dir.join("scratch"),
         }
+    }
+
+    /// Where a plugin's language server has its workspace, if it has one that
+    /// exists without a playground open. `[lsp].workspace_needs` is a path
+    /// inside this.
+    fn workspace(&self, plugin: &Plugin) -> Option<PathBuf> {
+        crate::lsp::root_for(plugin, None, &self.library_root, &self.scratch_root).ok()?
     }
 }
 
@@ -137,6 +172,169 @@ pub enum Error {
     Missing(String),
     #[error("{0}")]
     Io(String),
+}
+
+/// One thing a language needs, whether it is there, and what could be done
+/// about it (work item 04-08b).
+///
+/// Answering needs no network and changes nothing, so the window asks about
+/// every language at once and shows a whole picture rather than a trickle of
+/// toasts.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Need {
+    pub which: Which,
+    /// "Toolchain", "Language server", "Workspace".
+    pub label: &'static str,
+    /// What is being looked for: a program name, or a path in the workspace.
+    pub what: String,
+    /// Whether it is there.
+    pub present: bool,
+    /// Where it was found, when it was.
+    pub found_at: Option<String>,
+    /// What version, when the probe captured one.
+    pub version: Option<String>,
+    /// Why it isn't there, in one line.
+    pub reason: Option<String>,
+    /// The plugin's own `install_hint`, which is what a machine that can't or
+    /// won't acquire is left with.
+    pub hint: Option<String>,
+    /// What TinkerPad could do about it, if anything.
+    pub offer: Option<Offer>,
+}
+
+/// Everything one language needs.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageNeeds {
+    pub language: LanguageId,
+    /// The display name: "C#", not "csharp".
+    pub name: String,
+    pub needs: Vec<Need>,
+}
+
+impl LanguageNeeds {
+    /// Whether everything is there. A language with nothing missing should say
+    /// so as plainly as one without.
+    pub fn ready(&self) -> bool {
+        self.needs.iter().all(|need| need.present)
+    }
+}
+
+/// What every loaded plugin needs, in the order the plugins were loaded.
+pub fn status(state: &AppState, env: &Env) -> Vec<LanguageNeeds> {
+    let plugins: Vec<Arc<Plugin>> = state
+        .plugins
+        .read()
+        .expect("plugins lock")
+        .all()
+        .iter()
+        .map(|entry| entry.plugin.clone())
+        .collect();
+
+    plugins
+        .iter()
+        .map(|plugin| LanguageNeeds {
+            language: plugin.id.clone(),
+            name: plugin.name.clone(),
+            needs: needs(env, plugin, state.toolchains.state(plugin.id.as_str())),
+        })
+        .collect()
+}
+
+/// What one plugin needs. `toolchain` is what the probe last found, which is
+/// the only thing here the app has to be running to know.
+pub fn needs(env: &Env, plugin: &Plugin, toolchain: Option<ToolchainState>) -> Vec<Need> {
+    Which::ALL
+        .iter()
+        .filter_map(|&which| need(env, plugin, which, toolchain.clone()))
+        .collect()
+}
+
+/// One row, or nothing when the plugin has no such tool at all — a language
+/// with no server has no server row.
+fn need(
+    env: &Env,
+    plugin: &Plugin,
+    which: Which,
+    toolchain: Option<ToolchainState>,
+) -> Option<Need> {
+    let (what, present, found_at, version, reason) = match which {
+        Which::Toolchain => {
+            let program = plugin
+                .probes
+                .first()
+                .map(|probe| probe.command.clone())
+                .unwrap_or_else(|| plugin.name.clone());
+            match toolchain {
+                Some(ToolchainState::Ready {
+                    program,
+                    path,
+                    version,
+                }) => (program, true, Some(path), version, None),
+                Some(ToolchainState::Missing { reason, .. }) => {
+                    (program, false, None, None, Some(reason))
+                }
+                // Still checking, or never checked: not missing, just unknown.
+                _ => (program, true, None, None, None),
+            }
+        }
+        Which::Lsp => {
+            let lsp = plugin.lsp.as_ref()?;
+            let program = lsp.command.command.clone();
+            match env.resolver.resolve(plugin.id.as_str(), &program) {
+                Ok(path) => (
+                    program,
+                    true,
+                    Some(path.to_string_lossy().into_owned()),
+                    None,
+                    None,
+                ),
+                Err(reason) => (program, false, None, None, Some(reason)),
+            }
+        }
+        Which::Workspace => {
+            let needs = plugin.lsp.as_ref()?.workspace_needs.as_ref()?;
+            let shown = needs.to_string_lossy().into_owned();
+            // A server rooted in each playground's folder has no workspace
+            // until one is open; nothing to report yet.
+            let root = env.workspace(plugin)?;
+            let path = root.join(needs);
+            if path.exists() {
+                (
+                    shown,
+                    true,
+                    Some(path.to_string_lossy().into_owned()),
+                    None,
+                    None,
+                )
+            } else {
+                let reason = format!(
+                    "`{}` isn't in {}, where the server looks for it",
+                    shown,
+                    root.display()
+                );
+                (shown, false, None, None, Some(reason))
+            }
+        }
+    };
+
+    Some(Need {
+        which,
+        label: which.label(),
+        what,
+        present,
+        found_at,
+        version,
+        reason,
+        hint: plugin.install_hint.clone(),
+        // Nothing to offer for something already here.
+        offer: if present {
+            None
+        } else {
+            offer(env, plugin, which)
+        },
+    })
 }
 
 /// What a plugin would do for one of its tools, and whether it can.
@@ -204,11 +402,29 @@ pub async fn acquire(env: &Env, plugin: &Plugin, which: Which) -> Result<Option<
     let result = match &acquire {
         Acquire::Command {
             command,
+            env: vars,
             needs,
             label,
-        } => run_command(env, plugin, command, needs.as_deref(), label)
+        } => {
+            // A workspace dependency is installed *in* the workspace; every
+            // other command is a package manager that knows its own mind.
+            let folder = match which {
+                Which::Workspace => env.workspace(plugin),
+                _ => None,
+            };
+            let filled = fill(env, plugin, command, vars, folder.as_deref())?;
+            run_command(
+                env,
+                plugin,
+                &filled.command,
+                &filled.vars,
+                needs.as_deref(),
+                label,
+                folder.as_deref(),
+            )
             .await
-            .map(|()| None),
+            .map(|()| None)
+        }
         Acquire::Download { version, .. } => {
             let file = this_machine(&acquire).ok_or_else(|| {
                 Error::Blocked(format!("there is no build of {what} for this machine"))
@@ -232,8 +448,10 @@ async fn run_command(
     env: &Env,
     plugin: &Plugin,
     command: &[String],
+    vars: &BTreeMap<String, String>,
     needs: Option<&str>,
     label: &str,
+    folder: Option<&Path>,
 ) -> Result<(), Error> {
     if let Some(program) = needs
         && have(env, plugin, program).is_none()
@@ -254,6 +472,13 @@ async fn run_command(
         spec = spec.arg(arg);
     }
     spec = spec.env("PATH", env.resolver.path());
+    for (key, value) in vars {
+        spec = spec.env(key, value);
+    }
+    if let Some(folder) = folder {
+        std::fs::create_dir_all(folder).map_err(|e| Error::Io(e.to_string()))?;
+        spec = spec.cwd(folder);
+    }
 
     let mut child = tinkerpad_process::spawn(spec)
         .map_err(|e| Error::Command(format!("{label} could not start: {e}")))?;
@@ -285,6 +510,62 @@ async fn run_command(
         }
     }
     Err(Error::Command(format!("{label} said nothing and stopped")))
+}
+
+/// A command and its environment with `{tools_dir}`, `{plugin_dir}` and
+/// `{workspace}` filled in.
+struct Filled {
+    command: Vec<String>,
+    vars: BTreeMap<String, String>,
+}
+
+/// Substitute what an acquire command is allowed to name.
+///
+/// `{tools_dir}` is this plugin's own folder under `<app-data>/tools`, which
+/// the resolver searches: a package manager pointed at it installs where the
+/// app will find it, needs no elevation, and leaves one folder to delete.
+fn fill(
+    env: &Env,
+    plugin: &Plugin,
+    command: &[String],
+    vars: &BTreeMap<String, String>,
+    folder: Option<&Path>,
+) -> Result<Filled, Error> {
+    let tools = acquired_dir(&env.data_dir, plugin);
+    std::fs::create_dir_all(&tools).map_err(|e| Error::Io(e.to_string()))?;
+    let tools = tools.to_string_lossy().into_owned();
+    let plugin_dir = plugin.dir.to_string_lossy().into_owned();
+    let workspace = folder
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let values = [
+        ("tools_dir", tools.as_str()),
+        ("plugin_dir", plugin_dir.as_str()),
+        ("workspace", workspace.as_str()),
+    ];
+    let one = |text: &str| {
+        tinkerpad_plugin::placeholders::substitute(text, &values)
+            .map_err(|e| Error::Command(e.to_string()))
+    };
+    Ok(Filled {
+        command: command
+            .iter()
+            .map(|part| one(part))
+            .collect::<Result<_, _>>()?,
+        vars: vars
+            .iter()
+            .map(|(key, value)| one(value).map(|value| (key.clone(), value)))
+            .collect::<Result<_, _>>()?,
+    })
+}
+
+/// Where a command-installed tool is pointed at: one folder per plugin, under
+/// the same root a download lands in. It is named rather than versioned
+/// because a package manager decides its own versions.
+fn acquired_dir(data_dir: &Path, plugin: &Plugin) -> PathBuf {
+    tools_dir(data_dir)
+        .join(plugin.id.as_str())
+        .join("acquired")
 }
 
 /// Fetch a release, check it, and unpack it into a folder of its own.
@@ -558,12 +839,27 @@ pub fn search_paths(data_dir: &Path) -> AcquiredTools {
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
             .collect();
-        if found.is_empty() {
-            continue;
-        }
         // Sorted, so a machine with two versions of a tool picks the same one
         // every launch rather than whatever the file system said first.
         found.sort();
+        // A package manager pointed at a prefix puts programs one level down,
+        // and each has its own idea where: npm in `node_modules/.bin`, pip in
+        // `Scripts` or `bin`, Go straight in. Looking in all of them is what
+        // makes a `--prefix` install usable without elevation.
+        for folder in found.clone() {
+            for inside in [
+                folder.join("node_modules").join(".bin"),
+                folder.join("Scripts"),
+                folder.join("bin"),
+            ] {
+                if inside.is_dir() {
+                    found.push(inside);
+                }
+            }
+        }
+        if found.is_empty() {
+            continue;
+        }
         acquired.insert(id, found);
     }
     acquired

@@ -145,6 +145,22 @@ pub fn write(file: &Path, settings: &Settings) -> std::io::Result<()> {
             .then(|| value(settings.run.clear_output)),
     );
 
+    set(
+        &mut doc,
+        &["tools", "acquire"],
+        (settings.tools.acquire != defaults.tools.acquire).then(|| value(&settings.tools.acquire)),
+    );
+    set(
+        &mut doc,
+        &["tools", "mirror"],
+        settings
+            .tools
+            .mirror
+            .as_ref()
+            .filter(|mirror| !mirror.is_empty())
+            .map(value),
+    );
+
     // The per-plugin tables. Only what the settings hold is written; a plugin
     // the user has cleared loses its table.
     write_toolchains(&mut doc, settings);
@@ -456,6 +472,9 @@ mod tests {
         let mut settings = Settings::default();
         settings.editor.font_size = 16;
         settings.lsp.prewarm = vec!["rust".to_owned()];
+        // Switching tool offers off has to reach the file, or the setting is
+        // one the window forgets the moment it is set (work item 04-08b).
+        settings.tools.acquire = "never".to_owned();
         settings
             .toolchains
             .entry("python".to_owned())
@@ -471,6 +490,7 @@ mod tests {
         assert!(text.contains("font_size = 16"), "{text}");
         assert!(text.contains(r#"prewarm = ["rust"]"#), "{text}");
         assert!(text.contains(r#"python3 = "/usr/bin/python3""#), "{text}");
+        assert!(text.contains(r#"acquire = "never""#), "{text}");
         assert!(
             !text.contains("\nclear_output"),
             "a default is left commented out:\n{text}"
@@ -484,9 +504,17 @@ mod tests {
         // Putting one back to its default removes its line again.
         settings.editor.font_size = 13;
         settings.toolchains.clear();
+        settings.tools.acquire = "ask".to_owned();
         write(&file, &settings).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(!text.contains("font_size = 16"), "{text}");
+        assert!(
+            !text.contains(
+                "
+acquire = "
+            ),
+            "{text}"
+        );
         assert!(
             !text.contains("\npython3 = "),
             "an uncommented override is gone:\n{text}"

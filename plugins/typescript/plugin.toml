@@ -47,6 +47,34 @@ workspace_files = [
   { path = "tsconfig.json", template = "tsconfig.json" },
   { path = "package.json", template = "library-package.json" },
 ]
+# And the TypeScript it analyses with, which lives in the workspace rather than
+# on PATH (work item 04-08b).
+workspace_needs = "node_modules/typescript"
+
+[lsp.acquire]
+# Installed into TinkerPad's own folder rather than globally: `npm install -g`
+# needs elevation on some setups, and this needs none. npm puts the programs in
+# `<prefix>/node_modules/.bin`, which the resolver searches.
+kind = "command"
+command = [
+  "npm",
+  "install",
+  "--prefix",
+  "{tools_dir}",
+  "typescript-language-server",
+  "typescript",
+]
+needs = "npm"
+label = "npm install typescript-language-server (into TinkerPad's own folder)"
+
+[lsp.workspace_acquire]
+# Runs in the library folder, where TinkerPad has already written a package.json
+# naming the TypeScript the server needs. This is the `npm install` the
+# README asks for, as a button.
+kind = "command"
+command = ["npm", "install"]
+needs = "npm"
+label = "npm install in your library folder"
 
 [deps]
 # Installs into the playground's own node_modules, next to its package.json.

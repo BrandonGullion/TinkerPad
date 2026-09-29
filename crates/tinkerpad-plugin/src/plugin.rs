@@ -165,6 +165,12 @@ pub struct LspSpec {
     /// Files written into the server's workspace the first time it starts,
     /// and never overwritten (work item 02-07).
     pub workspace_files: Vec<ScaffoldFile>,
+    /// A path inside the workspace the server needs to find there, such as
+    /// `node_modules/typescript`: a dependency of the workspace rather than a
+    /// program on `PATH` (work item 04-08b).
+    pub workspace_needs: Option<PathBuf>,
+    /// How to put it there. Runs with the workspace root as its folder.
+    pub workspace_acquire: Option<Acquire>,
 }
 
 pub use manifest::Workspace;
@@ -190,8 +196,11 @@ fn inside_archive(path: &str) -> bool {
 pub enum Acquire {
     /// Ask a package manager the user already has.
     Command {
-        /// Program first, then its arguments. Never a shell.
+        /// Program first, then its arguments. Never a shell. `{tools_dir}` and
+        /// `{plugin_dir}` are substituted when it runs.
         command: Vec<String>,
+        /// Environment for the command, with the same placeholders.
+        env: BTreeMap<String, String>,
         /// What must be on PATH for this to work, such as `rustup`.
         needs: Option<String>,
         /// What the user is shown as the thing about to happen.
@@ -484,6 +493,7 @@ impl Validator<'_> {
         match acquire? {
             manifest::Acquire::Command {
                 command,
+                env,
                 needs,
                 label,
                 os,
@@ -502,9 +512,13 @@ impl Validator<'_> {
                 if os.as_ref().is_some_and(|list| !list.contains(&self.os)) {
                     return None;
                 }
+                for part in command.iter().chain(env.values()) {
+                    self.placeholders(&format!("{key}.command"), part, placeholders::ACQUIRE);
+                }
                 let label = label.unwrap_or_else(|| command.join(" "));
                 Some(Acquire::Command {
                     command,
+                    env,
                     needs: needs.filter(|n| !n.trim().is_empty()),
                     label,
                 })
@@ -983,6 +997,13 @@ impl Validator<'_> {
                 &format!("{key}.workspace_files"),
                 std::mem::take(&mut l.workspace_files),
             );
+            // A path the server needs to find in its workspace, such as
+            // `node_modules/typescript`. Relative and inside, like every other
+            // path a manifest gives (work item 04-08b).
+            let workspace_needs = l
+                .workspace_needs
+                .take()
+                .and_then(|path| self.relative_path(&format!("{key}.workspace_needs"), &path));
             let spec = LspSpec {
                 command,
                 acquire: self.acquire(&format!("{key}.acquire"), l.acquire.take()),
@@ -991,6 +1012,11 @@ impl Validator<'_> {
                 init_options,
                 register,
                 workspace_files,
+                workspace_needs,
+                workspace_acquire: self.acquire(
+                    &format!("{key}.workspace_acquire"),
+                    l.workspace_acquire.take(),
+                ),
             };
             if is_chosen {
                 chosen = Some(spec);

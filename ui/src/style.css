@@ -1472,3 +1472,188 @@ button.history-row:focus-visible {
 .output-input.waiting .output-input-box {
   border-color: var(--accent);
 }
+
+/* What each language needs (work item 04-08b). The button sits in the status
+   bar beside the server chips; the list it opens is a panel rather than a chip
+   popover, because it holds a table and the strip is small. */
+.tools-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tools-count {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--bg);
+  background: var(--warning);
+}
+
+.tools-button.tools-missing {
+  color: var(--fg);
+}
+
+.tools-popover {
+  position: fixed;
+  bottom: 30px;
+  z-index: 40;
+  width: min(460px, calc(100vw - 16px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 10px 12px;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px var(--shadow);
+  font-size: 12px;
+  text-align: left;
+}
+
+.tools-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.tools-empty {
+  color: var(--muted);
+}
+
+.tools-language + .tools-language {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.tools-language-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tools-ok {
+  font-weight: 400;
+  color: var(--ok);
+}
+
+.tools-warn {
+  font-weight: 400;
+  color: var(--warning);
+}
+
+.tools-need {
+  margin: 4px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--ok);
+}
+
+.tools-need[data-present="false"] {
+  border-left-color: var(--warning);
+}
+
+.tools-need-what {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.tools-need-label {
+  color: var(--muted);
+}
+
+.tools-need-what code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.tools-need-where,
+.tools-need-note {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.tools-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.tools-hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.tools-install,
+.tools-cancel {
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.tools-install:hover,
+.tools-cancel:hover {
+  border-color: var(--accent);
+}
+
+/* Exactly what is about to happen, before it happens. */
+.tools-confirm {
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+
+.tools-confirm-lead {
+  color: var(--muted);
+}
+
+.tools-confirm-detail {
+  margin: 4px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tools-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tools-log {
+  max-height: 160px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}

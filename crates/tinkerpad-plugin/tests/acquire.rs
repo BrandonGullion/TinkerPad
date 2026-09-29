@@ -91,6 +91,7 @@ fn a_command_acquire_keeps_the_command_and_labels_itself() {
             command,
             needs,
             label,
+            ..
         } => {
             assert_eq!(command, ["rustup", "component", "add", "rust-analyzer"]);
             assert_eq!(needs.as_deref(), Some("rustup"));
