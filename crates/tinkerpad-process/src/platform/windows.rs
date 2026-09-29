@@ -15,6 +15,9 @@ use std::ptr::{null, null_mut};
 
 use tracing::warn;
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+use windows_sys::Win32::System::Console::{
+    ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
@@ -131,6 +134,32 @@ pub fn is_alive(pid: u32) -> bool {
         CloseHandle(process);
         ok != 0 && code == STILL_ACTIVE
     }
+}
+
+/// Print to the console that started a GUI process, if that is the only place
+/// there is to print to.
+///
+/// A release build of a Tauri app is a Windows GUI program, which makes
+/// `tinkerpad --version` less obvious than it looks. Piped or redirected the
+/// process has a standard output and `println!` is right, so this declines.
+/// Started from a console with no redirection it has none, so this attaches to
+/// that console and writes to `CONOUT$`. Double-clicked there is neither, and
+/// printing nowhere is exactly right — so that also counts as handled.
+///
+/// Returns whether it printed, so the caller can fall back to `println!`.
+pub fn print_to_parent_console(text: &str) -> bool {
+    use std::io::Write;
+
+    // SAFETY: both calls take no pointers and only report or attach a console.
+    let has_stdout = !unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.is_null();
+    if has_stdout {
+        return false;
+    }
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+        let _ = writeln!(console, "{text}");
+    }
+    true
 }
 
 /// No pid registry is needed on Windows; job objects cover force-quit.

@@ -40,6 +40,7 @@ const KNOWN_HIGHLIGHTERS: &[&str] = &[
     "kotlin",
     "lua",
     "markdown",
+    "powershell",
     "python",
     "ruby",
     "rust",

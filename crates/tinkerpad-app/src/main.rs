@@ -62,30 +62,13 @@ const HELP: &str = concat!(
 
 /// Print to whatever asked.
 ///
-/// A release build on Windows is a GUI program, which makes this less obvious
-/// than it looks. Piped or redirected (`tinkerpad --version > v.txt`), the
-/// process has a standard output and writing to it is right. Started from a
-/// console with no redirection it has none, so this attaches to that console
-/// and writes to `CONOUT$`. Double-clicked there is neither, and printing
-/// nowhere is exactly right.
+/// Straightforward everywhere but Windows, where a release build is a GUI
+/// program with no console of its own; `print_to_parent_console` deals with
+/// that and says whether it did, so this stays free of platform conditionals
+/// (ARCHITECTURE.md §10).
 fn say(text: &str) {
-    #[cfg(windows)]
-    {
-        use std::io::Write;
-        unsafe extern "system" {
-            fn AttachConsole(process: u32) -> i32;
-            fn GetStdHandle(which: u32) -> isize;
-        }
-        // -11 is STD_OUTPUT_HANDLE; 0 means there is nothing to write to.
-        let has_stdout = unsafe { GetStdHandle(-11i32 as u32) } != 0;
-        if !has_stdout {
-            // u32::MAX is ATTACH_PARENT_PROCESS.
-            unsafe { AttachConsole(u32::MAX) };
-            if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
-                let _ = writeln!(console, "{text}");
-            }
-            return;
-        }
+    if tinkerpad_process::platform::print_to_parent_console(text) {
+        return;
     }
     println!("{text}");
 }

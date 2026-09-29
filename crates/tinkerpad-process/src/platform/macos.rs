@@ -56,6 +56,12 @@ pub fn is_alive(pid: u32) -> bool {
     unix::is_alive(pid)
 }
 
+/// Nothing to do on macOS: a console program has a standard output,
+/// so the caller's `println!` is always right.
+pub fn print_to_parent_console(_text: &str) -> bool {
+    false
+}
+
 /// Where to record spawned pids. Call once at startup, before any spawn.
 pub fn set_registry(path: PathBuf) {
     if let Ok(mut r) = REGISTRY.lock() {
