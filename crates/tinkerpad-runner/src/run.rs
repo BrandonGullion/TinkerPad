@@ -30,7 +30,10 @@ impl RunSpec {
             args: self.args,
             cwd: self.cwd,
             env: self.env,
-            stdin: false,
+            // Every run keeps a pipe (work item 04-05). A program that reads
+            // input waits for it, which is what a person typing `input()`
+            // meant; without one it would read end-of-file and fall over.
+            stdin: true,
         }
     }
 }
@@ -44,6 +47,10 @@ pub enum RunEvent {
         /// A plugin helper is running it, rather than a process started for
         /// this run (work item 03-03).
         warm: bool,
+        /// Whether this run can be typed at (work item 04-05). Always true for
+        /// a process of its own; for a helper, only when it says it takes
+        /// input.
+        stdin: bool,
     },
     Stdout(Bytes),
     Stderr(Bytes),
@@ -99,6 +106,40 @@ impl Cancel {
     }
 }
 
+/// What to send a run that is waiting to be typed at (work item 04-05).
+///
+/// One shape for both paths, like [`Cancel`]: the per-run side writes to the
+/// child's pipe, the helper side sends `stdin` messages. Cloneable, so the
+/// window can keep one beside the run.
+#[derive(Clone, Debug)]
+pub struct Input(mpsc::Sender<Stdin>);
+
+/// One thing to give a program's standard input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Stdin {
+    /// Bytes, exactly as typed. A line the user sent ends with a newline.
+    Data(Bytes),
+    /// No more input is coming: the pipe closes, and a program blocked on a
+    /// read gets end-of-file (`Ctrl+D` in the window).
+    Eof,
+}
+
+impl Input {
+    pub fn new(tx: mpsc::Sender<Stdin>) -> Self {
+        Self(tx)
+    }
+
+    /// Send input. Returns whether the run could still take it.
+    pub fn send(&self, data: impl Into<Bytes>) -> bool {
+        self.0.try_send(Stdin::Data(data.into())).is_ok()
+    }
+
+    /// Close the program's input.
+    pub fn eof(&self) -> bool {
+        self.0.try_send(Stdin::Eof).is_ok()
+    }
+}
+
 /// A run in progress. Dropping it does not stop the program; call
 /// [`RunHandle::cancel`].
 #[derive(Debug)]
@@ -108,6 +149,8 @@ pub struct RunHandle {
     pub pid: u32,
     events: mpsc::Receiver<RunEvent>,
     cancel: Cancel,
+    /// Where typed input goes, when this run takes any (work item 04-05).
+    input: Option<Input>,
 }
 
 impl RunHandle {
@@ -118,7 +161,28 @@ impl RunHandle {
             pid,
             events,
             cancel,
+            input: None,
         }
+    }
+
+    /// The same, for a run that can be typed at (work item 04-05).
+    pub fn over_with_input(
+        pid: u32,
+        events: mpsc::Receiver<RunEvent>,
+        cancel: Cancel,
+        input: Input,
+    ) -> Self {
+        Self {
+            pid,
+            events,
+            cancel,
+            input: Some(input),
+        }
+    }
+
+    /// Where to send what the user types, if this run takes input.
+    pub fn input(&self) -> Option<Input> {
+        self.input.clone()
     }
 
     /// Next event. `None` after the final `Exited`, `Cancelled` or `Failed`.
@@ -148,9 +212,34 @@ pub fn run(spec: RunSpec) -> Result<RunHandle, RunError> {
     let kill = child.kill_handle();
     let (tx, rx) = mpsc::channel(256);
 
+    // What the user types, written to the child's pipe by a task of its own so
+    // a program that never reads costs nothing (work item 04-05).
+    let (input_tx, mut input_rx) = mpsc::channel::<Stdin>(64);
+    if let Some(mut pipe) = child.take_stdin() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            while let Some(message) = input_rx.recv().await {
+                match message {
+                    Stdin::Data(bytes) => {
+                        if pipe.write_all(&bytes).await.is_err() || pipe.flush().await.is_err() {
+                            debug!(pid, "the program stopped reading its input");
+                            break;
+                        }
+                    }
+                    // Dropping the pipe is what closes it.
+                    Stdin::Eof => break,
+                }
+            }
+        });
+    }
+
     tokio::spawn(async move {
         if tx
-            .send(RunEvent::Started { pid, warm: false })
+            .send(RunEvent::Started {
+                pid,
+                warm: false,
+                stdin: true,
+            })
             .await
             .is_err()
         {
@@ -179,5 +268,6 @@ pub fn run(spec: RunSpec) -> Result<RunHandle, RunError> {
         pid,
         events: rx,
         cancel: Cancel::Process(kill),
+        input: Some(Input::new(input_tx)),
     })
 }

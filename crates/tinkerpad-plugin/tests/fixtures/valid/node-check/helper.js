@@ -7,6 +7,7 @@
 //   hello     replies `ready`, after writing what it was told to hello.json
 //             in its scratch folder so a test can see what arrived
 //   run       runs the main file and streams its output back
+//   stdin     what the user typed, written to the program's own stdin
 //   cancel    ends that run
 //   hooks     the four of them, each one appending a line to `hooks.log` in
 //             the playground folder so a test can see exactly what arrived
@@ -62,7 +63,11 @@ function run(message) {
   const { spawn } = require("child_process");
   child = spawn(process.execPath, [message.main], {
     cwd: message.dir,
-    stdio: ["ignore", "pipe", "pipe"],
+    // A pipe, so what the user types reaches the program (work item 04-05).
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.on("error", () => {
+    // The program stopped reading; nothing here needs to care.
   });
   child.stdout.on("data", (bytes) => {
     send({ type: "stdout", id: message.id, data: bytes.toString("base64") });
@@ -162,6 +167,17 @@ process.stdin.on("data", (bytes) => {
         break;
       case "run":
         run(message);
+        break;
+      // What the user typed at the running program, and the end of it (04-05).
+      case "stdin":
+        if (running === message.id && child?.stdin?.writable) {
+          child.stdin.write(Buffer.from(message.data ?? "", "base64"));
+        }
+        break;
+      case "stdin_eof":
+        if (running === message.id && child?.stdin?.writable) {
+          child.stdin.end();
+        }
         break;
       case "cancel":
         if (running === message.id) {

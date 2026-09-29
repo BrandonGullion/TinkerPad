@@ -6,15 +6,23 @@
 // handful of DOM operations. The DOM is capped at MAX_LINES; older blocks are
 // dropped with a notice.
 
+import { Ansi, paint, type Style, styled } from "./ansi";
 import { handleDumpKey } from "./dump/nav";
 import { renderRich } from "./dump/render";
 import { disposeTables } from "./dump/table";
 import type { Annotation, RichValue } from "./protocol";
 
-export type Stream = "stdout" | "stderr" | "info";
+export type Stream = "stdout" | "stderr" | "info" | "input";
+
+/**
+ * How long a program can say nothing before the input box is highlighted as
+ * probably waiting for something (work item 04-05). A heuristic: some programs
+ * are simply slow, and nothing breaks if the guess is wrong.
+ */
+const WAITING_MS = 500;
 
 type Pending =
-  | { stream: Stream; text: string }
+  | { stream: Stream; text: string; style?: Style }
   | { rich: RichValue }
   | { annotation: Annotation; onClick: () => void };
 
@@ -26,6 +34,17 @@ export class OutputPane {
   private readonly body: HTMLElement;
   private readonly jump: HTMLButtonElement;
   private readonly trimmedNotice: HTMLElement;
+  /** Where the user types at a running program (work item 04-05). */
+  private readonly inputRow: HTMLElement;
+  private readonly input: HTMLInputElement;
+  /** Called with a line (newline included) when the user sends one. */
+  onInput: (text: string) => void = () => {};
+  /** Called when the user closes the program's input (Ctrl+D). */
+  onInputEnd: () => void = () => {};
+  /** Set while a run that takes input is going. */
+  private waitingTimer = 0;
+  /** Colours a program asked for, carried across chunks (work item 04-05). */
+  private ansi = new Ansi();
 
   private pending: Pending[] = [];
   private frame = 0;
@@ -56,7 +75,24 @@ export class OutputPane {
       this.element.focus();
     });
 
-    this.element.append(this.trimmedNotice, this.body, this.jump);
+    // The input row sits under the output, and is only there while a run
+    // that can be typed at is going (work item 04-05).
+    this.inputRow = document.createElement("div");
+    this.inputRow.className = "output-input";
+    this.inputRow.hidden = true;
+    const prompt = document.createElement("span");
+    prompt.className = "output-prompt";
+    prompt.textContent = ">";
+    this.input = document.createElement("input");
+    this.input.className = "output-input-box";
+    this.input.type = "text";
+    this.input.placeholder = "Type here to send input, Enter to send";
+    this.input.setAttribute("aria-label", "Input for the running program");
+    this.input.addEventListener("keydown", (e) => this.onInputKey(e));
+    this.input.addEventListener("input", () => this.stopWaiting());
+    this.inputRow.append(prompt, this.input);
+
+    this.element.append(this.trimmedNotice, this.body, this.jump, this.inputRow);
 
     this.element.addEventListener("scroll", () => {
       this.stick = this.atBottom();
@@ -77,9 +113,87 @@ export class OutputPane {
     }).observe(this.body);
   }
 
+  /**
+   * Show or hide the input row. Showing it starts the clock that highlights
+   * it when the program has gone quiet (work item 04-05).
+   */
+  setInput(open: boolean): void {
+    this.inputRow.hidden = !open;
+    this.stopWaiting();
+    if (open) this.expectWait();
+    else this.input.value = "";
+  }
+
+  /** Whether the program can be typed at right now. */
+  get takesInput(): boolean {
+    return !this.inputRow.hidden;
+  }
+
+  /** Put the cursor in the input box, if it is there. */
+  focusInput(): void {
+    if (!this.inputRow.hidden) this.input.focus();
+  }
+
+  private onInputKey(e: KeyboardEvent): void {
+    // Ctrl+D is end-of-input everywhere a terminal is, and it is what a
+    // program blocked on "read until EOF" is waiting for.
+    if (e.key === "d" && e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      this.append("info", "^D" + "\n");
+      this.onInputEnd();
+      return;
+    }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const line = this.input.value;
+    this.input.value = "";
+    // Echoed in its own style: what you typed is not what the program said.
+    this.echo(line);
+    this.onInput(line + "\n");
+    this.expectWait();
+  }
+
+  /** Show a line the user sent, so the pane reads like a conversation. */
+  private echo(line: string): void {
+    this.pending.push({ stream: "input", text: line + "\n" });
+    this.schedule();
+  }
+
+  /**
+   * A program that has said nothing for a moment is probably waiting to be
+   * typed at. A guess, so it only draws attention to the box (04-05).
+   */
+  private expectWait(): void {
+    this.stopWaiting();
+    this.waitingTimer = window.setTimeout(() => {
+      this.inputRow.classList.add("waiting");
+    }, WAITING_MS);
+  }
+
+  /** Restart the quiet clock, but only while the box is showing. */
+  private expectWaitIfOpen(): void {
+    if (!this.inputRow.hidden) this.expectWait();
+  }
+
+  private stopWaiting(): void {
+    clearTimeout(this.waitingTimer);
+    this.waitingTimer = 0;
+    this.inputRow.classList.remove("waiting");
+  }
+
   append(stream: Stream, text: string): void {
+    // Anything the program says means it isn't waiting on us just now.
+    if (stream !== "input") this.expectWaitIfOpen();
     if (!text) return;
-    this.pending.push({ stream, text });
+    // A program's own output may carry ANSI colours; the pane's own notes
+    // never do (work item 04-05).
+    if (stream === "stdout" || stream === "stderr") {
+      for (const run of this.ansi.feed(text)) {
+        if (run.text) this.pending.push({ stream, text: run.text, style: run.style });
+      }
+    } else {
+      this.pending.push({ stream, text });
+    }
     this.schedule();
   }
 
@@ -102,6 +216,7 @@ export class OutputPane {
     cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.pending = [];
+    this.ansi = new Ansi();
     disposeTables(this.body);
     this.body.replaceChildren();
     this.lines = 0;
@@ -140,19 +255,27 @@ export class OutputPane {
     let lastStream = last?.dataset.stream;
     let run = "";
     let runStream: Stream | null = null;
+    let runStyle: Style | undefined;
 
     const emit = () => {
       if (runStream === null || !run) return;
-      if (runStream === lastStream && last && fragment.childNodes.length === 0) {
+      // Text that asked for colours is its own span, and never merges with
+      // the one before it.
+      const plain = !runStyle || !styled(runStyle);
+      if (plain && runStream === lastStream && last && fragment.childNodes.length === 0) {
         last.append(run);
       } else {
         const span = document.createElement("span");
         span.className = `out-${runStream}`;
         span.dataset.stream = runStream;
         span.textContent = run;
+        if (!plain && runStyle) {
+          paint(span, runStyle);
+          span.dataset.ansi = "";
+        }
         fragment.append(span);
         last = span;
-        lastStream = runStream;
+        lastStream = plain ? runStream : undefined;
       }
       run = "";
     };
@@ -176,9 +299,10 @@ export class OutputPane {
         lastStream = undefined;
         continue;
       }
-      if (item.stream !== runStream) {
+      if (item.stream !== runStream || !sameStyle(item.style, runStyle)) {
         emit();
         runStream = item.stream;
+        runStyle = item.style;
       }
       run += item.text;
       this.lines += countNewlines(item.text);
@@ -267,4 +391,19 @@ function countNewlines(s: string): number {
   let n = 0;
   for (let i = s.indexOf("\n"); i !== -1; i = s.indexOf("\n", i + 1)) n++;
   return n;
+}
+
+/** Whether two runs of text want the same thing, so they can share a span. */
+function sameStyle(a: Style | undefined, b: Style | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return !styled(a ?? {}) && !styled(b ?? {});
+  return (
+    a.fg === b.fg &&
+    a.bg === b.bg &&
+    !!a.bold === !!b.bold &&
+    !!a.dim === !!b.dim &&
+    !!a.italic === !!b.italic &&
+    !!a.underline === !!b.underline &&
+    !!a.inverse === !!b.inverse
+  );
 }

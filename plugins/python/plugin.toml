@@ -56,7 +56,7 @@ python = { analysis = { autoSearchPaths = true, useLibraryCodeForTypes = true } 
 # Python, started with the same interpreter runs use.
 command = "{toolchain}"
 args = ["-u", "{plugin_dir}/helper/helper.py"]
-hooks = ["run"]
+hooks = ["run", "stdin"]
 # Python's start-up is quick, but a warm interpreter is the point of this, so
 # it stays until the machine has better uses for the memory.
 idle_shutdown = "2h"

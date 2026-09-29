@@ -91,6 +91,36 @@ fn main() {
                     }
                 }
             }
+            // What the user typed at the program (04-05). This helper echoes
+            // it, so a test can see it arrive; a real one writes it to
+            // whatever it is running.
+            "stdin" => {
+                if running.as_deref() == Some(id.as_str()) {
+                    let data = message["data"].as_str().unwrap_or_default();
+                    let bytes = BASE64.decode(data).unwrap_or_default();
+                    let mut echo = b"read: ".to_vec();
+                    echo.extend_from_slice(&bytes);
+                    stream(&id, "stdout", &echo);
+                }
+            }
+            "stdin_eof" => {
+                if running.as_deref() == Some(id.as_str()) {
+                    stream(
+                        &id,
+                        "stdout",
+                        b"end of input
+",
+                    );
+                    send(&json!({
+                        "type": "exited",
+                        "id": id,
+                        "code": 0,
+                        "duration_ms": 1,
+                    }));
+                    running = None;
+                    finished += 1;
+                }
+            }
             "cancel" => {
                 if env("FAKEHELPER_HANG_ON_CANCEL").is_some() {
                     eprintln!("fakehelper: ignoring the cancel of {id}");
@@ -186,6 +216,11 @@ fn run(id: &str, message: &Value) -> bool {
         "slow" => {
             // Started, and nothing more until someone cancels it.
             stream(id, "stdout", b"working\n");
+            return true;
+        }
+        // Waits to be typed at, and echoes what arrives (work item 04-05).
+        "read" => {
+            stream(id, "stdout", b"type something\n");
             return true;
         }
         "crash" => std::process::exit(4),

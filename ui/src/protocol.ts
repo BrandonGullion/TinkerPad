@@ -11,7 +11,7 @@ export type Level = "info" | "warning" | "error";
 
 export type RunEvent =
   /** `warm` when a plugin helper is running it rather than a new process. */
-  | { kind: "started"; warm: boolean }
+  | { kind: "started"; warm: boolean; stdin: boolean }
   /** Not running yet, and what it is waiting for (a helper build, or another
    * playground's turn on the helper). It starts by itself afterwards. */
   | { kind: "waiting"; message: string }

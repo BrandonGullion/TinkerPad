@@ -58,7 +58,7 @@ error_regex = '^(?<file>.+?\.cs)\((?<line>\d+),(?<col>\d+)\): (?<severity>error|
 # folder — an installed plugin may sit somewhere read-only.
 command = "{toolchain}"
 args = ["{scratch}/helper/TinkerPad.CSharp.Helper.dll"]
-hooks = ["run"]
+hooks = ["run", "stdin"]
 env = { DOTNET_NOLOGO = "1", DOTNET_CLI_UI_LANGUAGE = "en", DOTNET_CLI_TELEMETRY_OPTOUT = "1" }
 # Roslyn holds a few hundred MB once it is warm; worth it while you are using
 # C#, not worth it overnight.

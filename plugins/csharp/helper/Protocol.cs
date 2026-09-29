@@ -17,6 +17,29 @@ internal sealed record Message(string Type, JsonObject Body)
     public string Id => Body["id"]?.GetValue<string>() ?? "";
 
     public string? Text(string name) => Body[name]?.GetValue<string>();
+
+    /// <summary>
+    /// A `data` field, which the protocol carries as base64 (work item 04-05).
+    /// Nonsense decodes to nothing rather than throwing: a helper that dies on
+    /// a bad message is worse than one that ignores it.
+    /// </summary>
+    public string? Data()
+    {
+        var raw = Text("data");
+        if (raw is null)
+        {
+            return null;
+        }
+        try
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(raw));
+        }
+        catch (FormatException)
+        {
+            Core.Warn("a stdin message was not base64");
+            return null;
+        }
+    }
 }
 
 /// <summary>The core, on the other end of stdin and stdout.</summary>

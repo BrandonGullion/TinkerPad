@@ -58,6 +58,14 @@ internal static class Program
                     runner.Start(message.Id, main, directory);
                     break;
 
+                case "stdin" when runner is not null:
+                    runner.Typed(message.Id, message.Data() ?? "");
+                    break;
+
+                case "stdin_eof" when runner is not null:
+                    runner.InputEnded(message.Id);
+                    break;
+
                 case "cancel" when runner is not null:
                     runner.Cancel(message.Id);
                     break;

@@ -317,6 +317,8 @@ export class RunController {
           ? record.state.since
           : performance.now();
         this.setState(playground, record, { kind: "running", since, warm: event.warm });
+        // A run that can be typed at gets the input row (work item 04-05).
+        if (event.stdin && output) this.openInput(playground, output);
         break;
       }
       case "waiting": {
@@ -354,10 +356,23 @@ export class RunController {
     }
   }
 
+  /** Wire the pane's input row to this playground's run (work item 04-05). */
+  private openInput(playground: string, output: OutputPane): void {
+    output.onInput = (text) => {
+      void invoke("send_input", { playground, text }).catch(() => {});
+    };
+    output.onInputEnd = () => {
+      void invoke("close_input", { playground }).catch(() => {});
+    };
+    output.setInput(true);
+  }
+
   private finish(playground: string, record: PlaygroundRun, outcome: RunOutcome): void {
     const id = record.current;
     record.current = null;
     const output = this.host.outputFor(playground);
+    // Nothing to type at any more.
+    output?.setInput(false);
     const previousMs = record.previousMs;
     switch (outcome.kind) {
       case "exited":

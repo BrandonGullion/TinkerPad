@@ -47,6 +47,23 @@
   --code-constant: #f78c6c;
   --code-operator: #b0b4bd;
   --code-invalid: #f87171;
+  /* The sixteen ANSI colours a program can ask for (work item 04-05). */
+  --ansi-black: #3f4148;
+  --ansi-red: #f87171;
+  --ansi-green: #4ade80;
+  --ansi-yellow: #fbbf24;
+  --ansi-blue: #60a5fa;
+  --ansi-magenta: #e879f9;
+  --ansi-cyan: #67e8f9;
+  --ansi-white: #d4d4d8;
+  --ansi-bright-black: #6b6e76;
+  --ansi-bright-red: #fca5a5;
+  --ansi-bright-green: #86efac;
+  --ansi-bright-yellow: #fde047;
+  --ansi-bright-blue: #93c5fd;
+  --ansi-bright-magenta: #f0abfc;
+  --ansi-bright-cyan: #a5f3fc;
+  --ansi-bright-white: #f4f4f5;
   color-scheme: dark;
 }
 
@@ -81,6 +98,23 @@
   --code-constant: #a33800;
   --code-operator: #4a4f57;
   --code-invalid: #b3261e;
+  /* The sixteen ANSI colours a program can ask for (work item 04-05). */
+  --ansi-black: #1f2124;
+  --ansi-red: #b3261e;
+  --ansi-green: #0f7a3d;
+  --ansi-yellow: #8a5a00;
+  --ansi-blue: #1553c4;
+  --ansi-magenta: #8a2fb0;
+  --ansi-cyan: #0f6f6a;
+  --ansi-white: #4a4f57;
+  --ansi-bright-black: #5c6068;
+  --ansi-bright-red: #8f1d17;
+  --ansi-bright-green: #0b5c2e;
+  --ansi-bright-yellow: #6b4600;
+  --ansi-bright-blue: #10409a;
+  --ansi-bright-magenta: #6c2489;
+  --ansi-bright-cyan: #0b5450;
+  --ansi-bright-white: #1f2124;
   color-scheme: light;
 }
 
@@ -116,6 +150,23 @@
     --code-constant: #a33800;
     --code-operator: #4a4f57;
     --code-invalid: #b3261e;
+    /* The sixteen ANSI colours a program can ask for (work item 04-05). */
+    --ansi-black: #1f2124;
+    --ansi-red: #b3261e;
+    --ansi-green: #0f7a3d;
+    --ansi-yellow: #8a5a00;
+    --ansi-blue: #1553c4;
+    --ansi-magenta: #8a2fb0;
+    --ansi-cyan: #0f6f6a;
+    --ansi-white: #4a4f57;
+    --ansi-bright-black: #5c6068;
+    --ansi-bright-red: #8f1d17;
+    --ansi-bright-green: #0b5c2e;
+    --ansi-bright-yellow: #6b4600;
+    --ansi-bright-blue: #10409a;
+    --ansi-bright-magenta: #6c2489;
+    --ansi-bright-cyan: #0b5450;
+    --ansi-bright-white: #1f2124;
     color-scheme: light;
   }
 }
@@ -1349,4 +1400,54 @@ button.history-row:focus-visible {
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 600;
+}
+
+/* Typing at a running program (work item 04-05) */
+
+.out-input {
+  color: var(--accent);
+}
+
+.output-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  font-family: var(--font-mono);
+}
+
+.output-prompt {
+  color: var(--muted);
+}
+
+.output-input-box {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  padding: 2px 4px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.output-input-box:focus {
+  outline: none;
+  border-color: var(--border);
+}
+
+/* The program has gone quiet: it is probably waiting for this. */
+.output-input.waiting {
+  background: var(--panel-2);
+}
+
+.output-input.waiting .output-prompt {
+  color: var(--accent);
+}
+
+.output-input.waiting .output-input-box {
+  border-color: var(--accent);
 }

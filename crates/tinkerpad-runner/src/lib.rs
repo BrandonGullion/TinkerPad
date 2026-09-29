@@ -24,6 +24,6 @@ pub use dump::{DumpParser, Dumped};
 pub use helper_run::Waiting;
 pub use helpers::{HelperConfig, HelperHandle, HelperPool, Unavailable, Use};
 pub use output::OutputDecoder;
-pub use run::{Cancel, RunError, RunEvent, RunHandle, RunSpec, run};
+pub use run::{Cancel, Input, RunError, RunEvent, RunHandle, RunSpec, Stdin, run};
 pub use spec::{Package, RunContext, SpecError, deps_command, deps_directive, run_spec};
 pub use utf8::Utf8Stream;

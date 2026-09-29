@@ -229,6 +229,12 @@ impl HelperHandle {
         })
     }
 
+    /// Whether this helper takes typed input while a program runs: it says so
+    /// by declaring `stdin` in its manifest's `hooks` (work item 04-05).
+    pub fn takes_stdin(&self) -> bool {
+        self.config().hooks.iter().any(|hook| hook == "stdin")
+    }
+
     pub fn plugin(&self) -> &str {
         &self.config.plugin
     }

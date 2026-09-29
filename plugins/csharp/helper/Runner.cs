@@ -189,6 +189,26 @@ internal sealed class Runner
     /// won't notice, and the core kills this process two seconds later —
     /// which is what that grace in the protocol is for.
     /// </remarks>
+    /// <summary>What the user typed, for the program to read (04-05).</summary>
+    public void Typed(string runId, string text)
+    {
+        var run = _current;
+        if (run is not null && run.Id == runId)
+        {
+            run.Input?.Feed(text);
+        }
+    }
+
+    /// <summary>The user closed the input: reads return end of input.</summary>
+    public void InputEnded(string runId)
+    {
+        var run = _current;
+        if (run is not null && run.Id == runId)
+        {
+            run.Input?.End();
+        }
+    }
+
     public void Cancel(string runId)
     {
         var run = _current;
@@ -196,6 +216,8 @@ internal sealed class Runner
         {
             return;
         }
+        // A cancelled program is not going to read anything else.
+        run.Input?.End();
         run.Cancelled = true;
         run.Cancellation.Cancel();
         try
@@ -362,8 +384,11 @@ internal sealed class Runner
         var wasDirectory = Directory.GetCurrentDirectory();
         Console.SetOut(stdout);
         Console.SetError(stderr);
-        // stdin belongs to the protocol; a playground that reads it gets EOF.
-        Console.SetIn(TextReader.Null);
+        // Console.ReadLine() waits for what the user types in TinkerPad
+        // (work item 04-05), and reads end of input when they close it.
+        var stdin = new ConsoleInput();
+        run.Input = stdin;
+        Console.SetIn(stdin);
         try
         {
             Directory.SetCurrentDirectory(run.WorkingDirectory);
@@ -531,8 +556,128 @@ internal sealed class Runner
         public string WorkingDirectory { get; } = workingDirectory;
         public Thread? Thread { get; set; }
         public bool Cancelled { get; set; }
+        /// <summary>Where what the user types goes (work item 04-05).</summary>
+        public ConsoleInput? Input { get; set; }
         public CancellationTokenSource Cancellation { get; } = new();
         public long Elapsed => _clock.ElapsedMilliseconds;
+    }
+}
+
+/// <summary>
+/// The playground's standard input: what the user types in TinkerPad, handed
+/// over a line at a time (work item 04-05).
+///
+/// The protocol thread feeds it and the run's thread reads it, so everything
+/// here is under one lock, and a reader waits rather than spinning.
+/// </summary>
+internal sealed class ConsoleInput : TextReader
+{
+    private readonly object _lock = new();
+    private readonly StringBuilder _buffer = new();
+    private bool _ended;
+
+    /// <summary>What the user typed, from the protocol thread.</summary>
+    public void Feed(string text)
+    {
+        lock (_lock)
+        {
+            _buffer.Append(text);
+            Monitor.PulseAll(_lock);
+        }
+    }
+
+    /// <summary>No more input is coming: readers stop waiting.</summary>
+    public void End()
+    {
+        lock (_lock)
+        {
+            _ended = true;
+            Monitor.PulseAll(_lock);
+        }
+    }
+
+    public override string? ReadLine()
+    {
+        lock (_lock)
+        {
+            while (true)
+            {
+                var end = Find('\n');
+                if (end >= 0)
+                {
+                    var line = _buffer.ToString(0, end);
+                    _buffer.Remove(0, end + 1);
+                    return line.EndsWith('\r') ? line[..^1] : line;
+                }
+                if (_ended)
+                {
+                    if (_buffer.Length == 0)
+                    {
+                        return null;
+                    }
+                    var rest = _buffer.ToString();
+                    _buffer.Clear();
+                    return rest;
+                }
+                Monitor.Wait(_lock);
+            }
+        }
+    }
+
+    public override int Read()
+    {
+        lock (_lock)
+        {
+            while (_buffer.Length == 0 && !_ended)
+            {
+                Monitor.Wait(_lock);
+            }
+            if (_buffer.Length == 0)
+            {
+                return -1;
+            }
+            var c = _buffer[0];
+            _buffer.Remove(0, 1);
+            return c;
+        }
+    }
+
+    public override int Peek()
+    {
+        lock (_lock)
+        {
+            while (_buffer.Length == 0 && !_ended)
+            {
+                Monitor.Wait(_lock);
+            }
+            return _buffer.Length == 0 ? -1 : _buffer[0];
+        }
+    }
+
+    public override string ReadToEnd()
+    {
+        lock (_lock)
+        {
+            while (!_ended)
+            {
+                Monitor.Wait(_lock);
+            }
+            var all = _buffer.ToString();
+            _buffer.Clear();
+            return all;
+        }
+    }
+
+    private int Find(char wanted)
+    {
+        for (var i = 0; i < _buffer.Length; i++)
+        {
+            if (_buffer[i] == wanted)
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 }
 

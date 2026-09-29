@@ -377,6 +377,31 @@ once it has. The helper stays alive. A helper that *can't* stop a running progra
 and the core kills and restarts it after the two seconds below. That is a real
 answer; pretending to cancel is not.
 
+**Typing at a program** (work item 04-05; declare `stdin` in `hooks`)
+
+```json
+→ {"type":"stdin","id":"r1","data":"QWRhCg=="}
+→ {"type":"stdin_eof","id":"r1"}
+```
+
+What the user typed, base64 like output, with the newline they pressed already
+in it. A helper hands it to whatever it is running — the program's own standard
+input, or the language's read functions — and `stdin_eof` is the end of it: a
+program blocked reading input gets end-of-file, as `Ctrl+D` does in a terminal.
+
+A helper that doesn't declare `stdin` never gets these, and the window doesn't
+offer an input box for its runs. Declaring it is a promise that a program
+*can* be typed at, not that every program reads.
+
+Two things to get right, both of which cost a hung helper if you don't:
+
+- **Keep your own standard input.** Take a handle on it before a run starts. A
+  helper that points the language's `stdin` at the user's typing and then reads
+  its own protocol from the same place reads the user's input as protocol
+  messages, and answers nothing ever again.
+- **A cancelled run's input ends too.** Close it when the run ends, however it
+  ends, so a reader isn't left waiting on a program that has gone.
+
 **Stepping aside**
 
 ```json

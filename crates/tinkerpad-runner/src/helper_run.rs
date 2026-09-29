@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::helpers::{HelperConfig, HelperHandle, HelperPool, Unavailable, Use};
-use crate::run::{Cancel, RunEvent, RunHandle};
+use crate::run::{Cancel, Input, RunEvent, RunHandle, Stdin};
 
 /// How many events may be queued towards the reader before the driver waits.
 const QUEUE: usize = 256;
@@ -71,10 +71,24 @@ pub async fn start(
     let pid = client.pid();
     let (events, rx) = mpsc::channel(QUEUE);
     let (cancel_tx, cancel_rx) = mpsc::channel(1);
+    let (input_tx, input_rx) = mpsc::channel(64);
+    // A helper takes typed input only if it said it would (work item 04-05).
+    let takes_input = handle.takes_stdin();
     // The one thing in the stream that says a helper ran this.
-    let _ = events.send(RunEvent::Started { pid, warm: true }).await;
-    tokio::spawn(drive(run, events, cancel_rx, hold, slot));
-    Ok(RunHandle::over(pid, rx, Cancel::Helper(cancel_tx)))
+    let _ = events
+        .send(RunEvent::Started {
+            pid,
+            warm: true,
+            stdin: takes_input,
+        })
+        .await;
+    tokio::spawn(drive(run, events, cancel_rx, input_rx, hold, slot));
+    Ok(RunHandle::over_with_input(
+        pid,
+        rx,
+        Cancel::Helper(cancel_tx),
+        Input::new(input_tx),
+    ))
 }
 
 /// Ask the pool for the helper, showing the build while it happens.
@@ -112,6 +126,7 @@ async fn drive(
     mut run: tinkerpad_plugin::helper::HelperRun,
     events: mpsc::Sender<RunEvent>,
     mut cancel: mpsc::Receiver<()>,
+    mut input: mpsc::Receiver<Stdin>,
     _hold: Use,
     _slot: tokio::sync::OwnedMutexGuard<()>,
 ) {
@@ -121,6 +136,15 @@ async fn drive(
             // ending, and that is what closes the stream (03-01).
             Some(()) = cancel.recv() => {
                 run.cancel().await;
+                continue;
+            }
+            // Typed input goes on to the helper, which passes it to the
+            // program (work item 04-05).
+            Some(typed) = input.recv() => {
+                match typed {
+                    Stdin::Data(bytes) => run.stdin(&bytes).await,
+                    Stdin::Eof => run.stdin_eof().await,
+                }
                 continue;
             }
             event = run.recv() => event,
