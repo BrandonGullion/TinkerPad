@@ -75,6 +75,13 @@ pub enum CoreEvent {
     /// Playgrounds were added, removed, renamed, or their metadata changed on
     /// disk. The UI should list them again.
     LibraryChanged,
+    /// A newer TinkerPad is out (work item 04-06). The window says so once,
+    /// without interrupting; installing is the user's to ask for.
+    #[serde(rename_all = "camelCase")]
+    UpdateAvailable {
+        version: String,
+        notes: Option<String>,
+    },
     /// `keybindings.toml` changed (work item 04-03): command id to keys, with
     /// an empty string meaning the command's default key is taken away.
     Keybindings {

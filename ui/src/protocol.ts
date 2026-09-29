@@ -37,6 +37,7 @@ export type CoreEvent =
   | { type: "libraryChanged" }
   | ({ type: "settings" } & Settings)
   | { type: "keybindings"; bindings: Record<string, string> }
+  | { type: "updateAvailable"; version: string; notes: string | null }
   | { type: "sourceChangedOnDisk"; playground: string };
 
 /** A line a plugin's `[deps]` puts at the top of the main file. */

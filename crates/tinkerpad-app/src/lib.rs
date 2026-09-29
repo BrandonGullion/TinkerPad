@@ -24,6 +24,7 @@ mod service_settings;
 mod session;
 mod settings;
 mod toolchains;
+mod update;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -67,6 +68,8 @@ pub struct AppState {
     settings: Arc<settings::Live>,
     /// `keybindings.toml`, the same way (work item 04-03).
     keys: Arc<keys::Live>,
+    /// What the launch check found, if anything (work item 04-06).
+    updates: update::Found,
 
     /// Read-only after startup; `reload` will take the write lock (05-02).
     plugins: RwLock<PluginRegistry>,
@@ -602,6 +605,18 @@ mod commands {
         crate::library::change_root(&app, &state)
     }
 
+    /// What the launch check found, if anything (work item 04-06).
+    #[tauri::command(async)]
+    pub fn update_available(state: State<'_, AppState>) -> Option<crate::update::Available> {
+        state.updates.update.lock().expect("update lock").clone()
+    }
+
+    /// Download the update and restart into it.
+    #[tauri::command(async)]
+    pub async fn install_update(app: tauri::AppHandle) -> Result<(), CommandError> {
+        crate::update::install(app).await
+    }
+
     /// Open the folder containing TinkerPad's log files.
     #[tauri::command]
     pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> {
@@ -918,6 +933,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             match app.path().app_log_dir() {
                 Ok(dir) => {
@@ -983,6 +1000,7 @@ pub fn run() {
                 events: bus,
                 settings: live_settings,
                 keys: live_keys,
+                updates: update::Found::default(),
                 runs,
                 session_path: session::path(&data_dir),
                 data_dir,
@@ -1018,6 +1036,8 @@ pub fn run() {
 
             // Probes run in the background; the window never waits for them.
             toolchains::check_all(app.handle());
+            // And so does the update check, a few seconds later (04-06).
+            update::check_later(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1028,6 +1048,8 @@ pub fn run() {
             commands::close_input,
             commands::run_history,
             commands::open_log_folder,
+            commands::update_available,
+            commands::install_update,
             commands::get_settings,
             commands::save_settings,
             commands::reset_settings,

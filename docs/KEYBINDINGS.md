@@ -66,3 +66,4 @@ binding meant for one platform only.
 | Open keybindings file | — | — | `settings.keybindings` |
 | Copy keybindings as Markdown | — | — | `settings.copyKeybindings` |
 | Open log folder | — | — | `settings.logs` |
+| Install update | — | — | `app.update` |

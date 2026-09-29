@@ -61,6 +61,26 @@ const library = new LibraryPanel(layout.sidebar, {
   languageName: (id) => tabs.languageName(id),
 });
 
+/** The update the launch check found, if any (work item 04-06). */
+let updateWaiting: string | null = null;
+
+subscribe(({ event }) => {
+  if (event.type !== "updateAvailable") return;
+  updateWaiting = event.version;
+  toast("info", `TinkerPad ${event.version} is available.`, {
+    label: "Install and restart",
+    run: () => void installUpdate(),
+  });
+});
+
+/** Download it and restart into it. The app goes away when this works. */
+async function installUpdate(): Promise<void> {
+  if (updateWaiting === null) return;
+  await invoke("install_update").catch(() => {
+    // The core has already said what went wrong.
+  });
+}
+
 window.addEventListener("tinkerpad:toggle-library", () => library.toggle());
 window.addEventListener("tinkerpad:open-settings", () => void openSettings(settingsHost));
 
@@ -142,6 +162,11 @@ function registerEverything(): void {
     "settings.keybindings": () => void invoke("open_keybindings_file").catch(() => {}),
     "settings.copyKeybindings": () => void copyKeybindings(),
     "settings.logs": () => void invoke("open_log_folder").catch(() => {}),
+    "app.update": {
+      run: () => void installUpdate(),
+      // Only there when there is one to install (work item 04-06).
+      enabled: () => updateWaiting !== null,
+    },
   });
 }
 registerEverything();

@@ -21,12 +21,38 @@ function root(): HTMLElement {
   return container;
 }
 
-export function toast(level: Level, message: string): void {
+export function toast(level: Level, message: string, action?: Action): void {
   const el = document.createElement("div");
   el.className = `toast toast-${level}`;
-  el.textContent = message;
+  const text = document.createElement("span");
+  text.className = "toast-text";
+  text.textContent = message;
+  el.append(text);
   el.title = "Click to dismiss";
   el.addEventListener("click", () => el.remove());
+
+  if (action) {
+    // A toast with something to do stays until it is answered: an offer that
+    // disappears while you are reading it is not an offer (work item 04-06).
+    const button = document.createElement("button");
+    button.className = "toast-action";
+    button.textContent = action.label;
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      el.remove();
+      action.run();
+    });
+    el.append(button);
+    root().append(el);
+    return;
+  }
+
   root().append(el);
   setTimeout(() => el.remove(), DISMISS_MS[level]);
+}
+
+/** Something a toast offers to do, shown as a button beside its text. */
+export interface Action {
+  label: string;
+  run: () => void;
 }

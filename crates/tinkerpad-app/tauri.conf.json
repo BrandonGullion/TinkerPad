@@ -6,8 +6,15 @@
   "build": {
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../ui/dist",
-    "beforeDevCommand": { "script": "npm run dev", "cwd": "../../ui", "wait": false },
-    "beforeBuildCommand": { "script": "npm run build", "cwd": "../../ui" }
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../../ui",
+      "wait": false
+    },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../../ui"
+    }
   },
   "app": {
     "windows": [
@@ -39,10 +46,45 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false
+      }
     },
     "linux": {
-      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"] }
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "publisher": "Brandon Gullion",
+    "shortDescription": "A code playground for quick experiments",
+    "longDescription": "TinkerPad is a desktop code playground: write a few lines in any language a plugin supports, press Ctrl+Enter, and see what it does \u2014 with a language server, rich output, and warm runtimes.",
+    "category": "DeveloperTool",
+    "copyright": "\u00a9 Brandon Gullion",
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/BrandonGullion/TinkerPad/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0N0QyNjdCMTFCMTVFRUEKUldUcVhyRVJleVo5ZE9Fa2JrSkYxRnp6QnRWQWd6WWd5YVJJZU44enEvbU5MRXQ3QnRJSjJFTnMK",
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }
