@@ -33,6 +33,8 @@ export interface LibraryHost {
   recent(): string[];
   /** A playground is gone: close its tab if it has one. */
   closed(id: string): void;
+  /** A playground's folder moved: reconnect its tab's language server. */
+  moved(id: string): void;
   /** The language plugin's display name, for the grouping headers. */
   languageName(id: string): string;
 }
@@ -347,6 +349,9 @@ export class LibraryPanel {
     const name = answer?.[0]?.trim();
     if (!name || name === hit.name) return;
     await this.act("rename_playground", { id: hit.id, name });
+    // The folder moved, so a tab showing it is talking about the old path
+    // (work item 02-10).
+    this.host.moved(hit.id);
   }
 
   private async editTags(hit: SearchHit): Promise<void> {

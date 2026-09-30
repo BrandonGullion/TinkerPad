@@ -35,7 +35,7 @@ import type {
   Which,
 } from "./protocol";
 import type { RunController } from "./run";
-import { MAX_PEEKS, type TabManager } from "./tabs";
+import { MAX_PEEKS, type Tab, type TabManager } from "./tabs";
 
 export interface SelftestContext {
   editor: Editor;
@@ -2385,10 +2385,113 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   closeCompletion(view);
 
   await tabs.close(secondTab);
+
+  // Work item 02-10, the repro that found it: an afternoon of creating and
+  // throwing away playgrounds used to leave the shared rust-analyzer holding
+  // documents and linked projects that were gone, after which it answered
+  // completions but published no diagnostics until the app was restarted.
+  //
+  // The tabs are deliberately left open while the playgrounds are deleted.
+  // Closing a tab has always cleaned up after itself (the attachment's own
+  // drop does it), so a loop that closes before deleting tests the path that
+  // already worked. A playground deleted from the library panel, with its tab
+  // still showing it, is the case that did not.
+  const churnAt = performance.now();
+  const churned: string[] = [];
+  const churnTabs: Tab[] = [];
+  let notLoaded = 0;
+  for (let n = 0; n < 10; n++) {
+    const churn = await invoke<Playground>("create_playground", {
+      name: `Lsp Churn ${n}`,
+      language: "rust",
+      kind: "program",
+    });
+    churned.push(churn.id);
+    await openPlayground(editor, ctx.status, churn.id);
+    const churnTab = tabs.activeTab!;
+    churnTabs.push(churnTab);
+    await until(() => churnTab.lsp !== null, 120_000);
+    // Attached is not the same as loaded: rust-analyzer answers the handshake
+    // long before it has read the crate, and a playground it never took on is
+    // one whose deletion costs it nothing. Wait until it answers about this
+    // one; that is what makes this a repro rather than a loop.
+    const live = ["fn main() {", "    let s = String::new();", "    s.", "}", ""].join("\n");
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: live },
+      selection: { anchor: live.indexOf("    s.") + "    s.".length },
+    });
+    let loaded = false;
+    for (let attempt = 0; attempt < 30 && !loaded; attempt++) {
+      startCompletion(view);
+      loaded = await until(() => currentCompletions(view.state).length > 0, 2000);
+    }
+    closeCompletion(view);
+    if (!loaded) notLoaded++;
+  }
+
+  const registeredWhileOpen = (await invoke<ServerStatus[]>("server_status")).find(
+    (server) => server.language === "rust",
+  );
+  await check(
+    "ten open Rust playgrounds are ten projects registered with the one server",
+    (registeredWhileOpen?.projects ?? 0) >= 10,
+    JSON.stringify({ projects: registeredWhileOpen?.projects, notLoaded }),
+  );
+
+  // Now delete every one of them with its tab still open.
+  let deleted = 0;
+  const refused: string[] = [];
+  for (const id of churned) {
+    try {
+      await invoke("delete_playground", { id });
+      deleted++;
+    } catch (e) {
+      // The OS refused to move a folder the server is watching: work item
+      // 04-09, not this one. The detach still has to have happened.
+      refused.push(JSON.stringify(e));
+    }
+  }
+  const afterChurn = (await invoke<ServerStatus[]>("server_status")).find(
+    (server) => server.language === "rust",
+  );
+  await check(
+    "deleting them takes each one out of the server's projects, tabs still open",
+    (afterChurn?.projects ?? 99) === 0,
+    JSON.stringify({ projects: afterChurn?.projects, documents: afterChurn?.documents }),
+  );
+  await report(
+    `INFO ten playgrounds loaded and deleted in ${((performance.now() - churnAt) / 1000).toFixed(1)} s; ` +
+      `${deleted} moved to the trash, ${refused.length} refused by the OS` +
+      (refused.length ? ` (${refused[0]})` : ""),
+  );
+  for (const churnTab of churnTabs) await tabs.close(churnTab);
+
+  const eleventh = await invoke<Playground>("create_playground", {
+    name: "Lsp Eleventh",
+    language: "rust",
+    kind: "program",
+  });
+  await openPlayground(editor, ctx.status, eleventh.id);
+  const lastTab = tabs.activeTab!;
+  await until(() => lastTab.lsp !== null, 120_000);
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: "fn main() {\n    let x: i32 =\n}\n" },
+  });
+  const stillDiagnosing = await until(() => countDiagnostics(view) > 0, 240_000);
+  const atEnd = (await invoke<ServerStatus[]>("server_status")).find(
+    (server) => server.language === "rust",
+  );
+  await check(
+    "after ten playgrounds have been created and deleted, an eleventh still gets diagnostics",
+    stillDiagnosing,
+    `${countDiagnostics(view)} diagnostics, ${atEnd?.projects} projects registered`,
+  );
+  await tabs.close(lastTab);
+
   // The server is rooted elsewhere now, but it has loaded these crates and
   // watches their folders, so Windows can still refuse to delete one while it
   // is running. Reported, not fatal: this scenario is about the editor.
-  for (const id of [second.id, playground.id]) {
+  for (const id of [eleventh.id, second.id, playground.id, ...churned]) {
     try {
       await invoke("delete_playground", { id });
     } catch (e) {
@@ -2412,6 +2515,10 @@ function countDiagnostics(view: EditorView): number {
 interface ServerStatus {
   language: string;
   root: string;
+  /** Documents open, and playgrounds in its registered setting (02-10). */
+  documents: number;
+  projects: number;
+  restarts: number;
   state: { kind: string; pid?: number; rssBytes?: number | null; reason?: string | null };
 }
 
@@ -2599,7 +2706,68 @@ async function lspTypescriptScenario(ctx: SelftestContext, check: Check) {
     landed,
   );
 
-  await tabs.close(tab);
+  // A rename moves the folder, so every path the server knows about this
+  // playground goes stale (work item 02-10). The old document is closed and
+  // unregistered before the move, and the tab is rebuilt afterwards, so the
+  // server is never left pointing at a folder that isn't there.
+  const before = (await invoke<ServerStatus[]>("server_status")).find(
+    (s) => s.language === "typescript",
+  );
+  const wasDir = tabs.summary(playground.id)?.dir ?? "";
+  await invoke<Playground>("rename_playground", { id: playground.id, name: "Lsp Renamed" });
+  await tabs.refreshListing();
+  await tabs.languageMoved(playground.id);
+  const movedDir = tabs.summary(playground.id)?.dir ?? "";
+  const renamedTab = tabs.tabs.find((t) => t.id === playground.id);
+  const reconnected = await until(() => (renamedTab?.lsp ?? null) !== null, 60_000);
+  const after = (await invoke<ServerStatus[]>("server_status")).find(
+    (s) => s.language === "typescript",
+  );
+  await check(
+    "renaming moves the folder, and the tab comes back with a live server",
+    movedDir !== wasDir && movedDir.length > 0 && reconnected && after?.state.kind === "ready",
+    JSON.stringify({
+      from: wasDir,
+      to: movedDir,
+      reconnected,
+      state: after?.state.kind,
+      restarts: after?.restarts,
+      wasRestarts: before?.restarts,
+    }),
+  );
+  await check(
+    "and the rename costs the server nothing: same process, no crash",
+    after?.state.pid === before?.state.pid && after?.restarts === before?.restarts,
+    JSON.stringify({ pid: after?.state.pid, was: before?.state.pid }),
+  );
+
+  // How long until it answers about the file at its new path. tsserver has to
+  // notice the moved folder in the workspace it watches, which is not
+  // instant; the editor works throughout, so this is reported rather than
+  // asserted on.
+  const askedAt = performance.now();
+  const renamedView = ctx.editor.view;
+  renamedView.dispatch({
+    changes: {
+      from: 0,
+      to: renamedView.state.doc.length,
+      insert: "const after = [1, 2, 3];\nafter.\n",
+    },
+    selection: { anchor: "const after = [1, 2, 3];\nafter.".length },
+  });
+  let answered = false;
+  for (let attempt = 0; attempt < 60 && !answered; attempt++) {
+    startCompletion(renamedView);
+    answered = await until(() => currentCompletions(renamedView.state).length > 0, 2000);
+  }
+  closeCompletion(renamedView);
+  await report(
+    answered
+      ? `INFO completions about the renamed playground came back after ${((performance.now() - askedAt) / 1000).toFixed(1)} s`
+      : "INFO the server had not answered about the renamed path within two minutes; the editor kept working",
+  );
+
+  if (renamedTab) await tabs.close(renamedTab);
   try {
     await invoke("delete_playground", { id: playground.id });
   } catch (e) {
