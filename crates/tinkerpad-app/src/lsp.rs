@@ -18,6 +18,7 @@ use tinkerpad_lsp::jsonrpc::RawMessage;
 use tinkerpad_lsp::{EditorSink, LspPool, Proxy, ServerConfig};
 use tinkerpad_plugin::{IdleShutdown, Plugin, Resolver, Workspace, placeholders};
 use tokio::sync::mpsc;
+use tracing::{debug, info};
 
 use crate::AppState;
 use crate::events::EventBus;
@@ -39,6 +40,10 @@ pub struct ServerStatus {
     pub restarts: u32,
     /// Documents it has open.
     pub documents: usize,
+    /// Playgrounds in its registered setting, for a server that takes one
+    /// (`[lsp.register]`, 02-07). This is the number that used to keep
+    /// growing as playgrounds were deleted (work item 02-10).
+    pub projects: usize,
     /// Messages it has sent since it started, and how quickly it answers.
     pub messages: u64,
     pub requests: u64,
@@ -81,6 +86,7 @@ pub fn status(state: &AppState) -> Vec<ServerStatus> {
                 uptime_ms: stats.uptime_ms,
                 restarts: server.restarts(),
                 documents: server.open_docs().len(),
+                projects: server.registrations().len(),
                 messages: stats.messages,
                 requests: stats.requests,
                 p50_ms: stats.p50_us as f64 / 1000.0,
@@ -180,6 +186,70 @@ pub async fn open(
         attachment,
         Arc::new(ChannelSink(channel)),
     ))
+}
+
+/// A playground is going away — deleted, or renamed so its folder moves.
+/// Tell whatever server has it, before the folder does (work item 02-10).
+///
+/// This runs from the library's delete and rename paths rather than from a
+/// tab's close path, because the tab may have been closed an hour ago, or may
+/// never have existed: a playground can be deleted from the library panel
+/// without being opened. Doing it twice is harmless — a `didClose` for a
+/// document the server no longer has is ignored — and doing it not at all is
+/// what leaves a shared server holding a project that isn't there any more.
+///
+/// Nothing here fails: a server that has already stopped, or never started, is
+/// exactly the case where there is nothing to do.
+pub async fn detach(state: &AppState, playground: &Playground) {
+    // A tab still showing this playground is talking to the server through the
+    // proxy; that has to stop before the document does, or its next message
+    // reopens what this is closing.
+    state.proxy.close_tab(playground.id.as_str()).await;
+
+    let Some(plugin) = state
+        .plugins
+        .read()
+        .expect("plugins lock")
+        .get(playground.language.as_str())
+        .cloned()
+    else {
+        return;
+    };
+    let Ok(root) = root_for(
+        &plugin,
+        Some(playground),
+        &state.library.root(),
+        &state.scratch_root(),
+    ) else {
+        return;
+    };
+    let Some(server) = state.lsp.get(plugin.id.as_str(), root.as_deref()) else {
+        return; // Never started, or already gone.
+    };
+
+    let uri = tinkerpad_lsp::path_to_uri(&playground.main_file);
+    if let Err(error) = server.did_close(&uri).await {
+        debug!(%error, uri, "didClose for a playground going away");
+    }
+    // Takes it out of `[lsp.register]`, tells the server, and sends the
+    // plugin's reload request if it named one. For rust-analyzer that is
+    // `rust-analyzer/reloadWorkspace`, which is what stops it holding a
+    // linked project whose Cargo.toml is in the recycle bin.
+    server.unregister(&uri).await;
+
+    // A server with no reload request of its own — typescript-language-server
+    // is the case — is told and left to notice. Restarting it here was tried
+    // and measured: it does not bring completions about the new path back any
+    // sooner, because what is stale is tsserver's own project cache rather
+    // than anything TinkerPad holds, and a restart on every delete is a real
+    // cost for no gain. The document is closed and unregistered either way,
+    // which is what this is for.
+
+    info!(
+        playground = %playground.id,
+        language = %plugin.id,
+        "detached a playground from its language server"
+    );
 }
 
 /// The workspace root this plugin's server would be given for a playground:

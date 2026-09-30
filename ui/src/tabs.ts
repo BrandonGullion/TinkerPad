@@ -570,6 +570,26 @@ export class TabManager implements RunHost {
     await work;
   }
 
+  /**
+   * A playground's folder moved (a rename, 01-04). Its language server was
+   * told the old document is gone before the move (02-10); this gives the tab
+   * a connection under the new path, so the rename costs nothing but a moment
+   * of no completions.
+   */
+  async languageMoved(id: string): Promise<void> {
+    const tab = this.tabs.find((t) => t.id === id);
+    if (!tab?.lsp) return;
+    const wasActive = tab === this.active;
+    // The tab is rebuilt rather than reconnected in place. Swapping the client
+    // inside a live editor leaves the server with no document: the old client
+    // says `didClose` as its plugin is destroyed, and however that is ordered
+    // against the new one's `didOpen`, the close is the one that sticks.
+    // Reopening costs a tab's position in the strip and nothing else — the
+    // close saves first — and it is the path every other tab takes.
+    await this.close(tab);
+    await this.open(id, wasActive);
+  }
+
   /** Put an extension into the tab's language compartment, wherever it lives. */
   private reconfigure(tab: Tab, extensions: Extension): void {
     const effects = tab.language.reconfigure(extensions);
@@ -994,6 +1014,8 @@ export class TabManager implements RunHost {
         try {
           await invoke<Playground>("rename_playground", { id: tab.id, name });
           await this.refreshListing();
+          // The folder moved with the name (work item 02-10).
+          await this.languageMoved(tab.id);
         } catch {
           // Shown as a toast.
         }

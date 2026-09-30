@@ -58,6 +58,7 @@ const library = new LibraryPanel(layout.sidebar, {
   activePlayground: () => tabs.activePlayground(),
   recent: () => tabs.recent(),
   closed: (id) => tabs.closed(id),
+  moved: (id) => void tabs.languageMoved(id),
   languageName: (id) => tabs.languageName(id),
 });
 

@@ -129,6 +129,8 @@ export interface ServerStatus {
   uptimeMs: number;
   restarts: number;
   documents: number;
+  /** Playgrounds in its registered setting (02-07, 02-10). */
+  projects: number;
   messages: number;
   requests: number;
   p50Ms: number;
