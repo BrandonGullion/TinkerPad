@@ -2459,9 +2459,18 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
     (afterChurn?.projects ?? 99) === 0,
     JSON.stringify({ projects: afterChurn?.projects, documents: afterChurn?.documents }),
   );
+  // Work item 04-09: a playground whose folder the language server is watching
+  // still goes to the recycle bin. On Windows rust-analyzer holds a handle
+  // that refuses the move outright, so the app stops the server and tries
+  // again rather than handing the user a filesystem error.
+  await check(
+    "every playground is deleted even with its language server watching the folder",
+    deleted === 10,
+    JSON.stringify({ deleted, refused: refused.slice(0, 1) }),
+  );
   await report(
     `INFO ten playgrounds loaded and deleted in ${((performance.now() - churnAt) / 1000).toFixed(1)} s; ` +
-      `${deleted} moved to the trash, ${refused.length} refused by the OS` +
+      `${deleted} moved to the trash, ${refused.length} refused` +
       (refused.length ? ` (${refused[0]})` : ""),
   );
   for (const churnTab of churnTabs) await tabs.close(churnTab);
@@ -2486,7 +2495,27 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
     stillDiagnosing,
     `${countDiagnostics(view)} diagnostics, ${atEnd?.projects} projects registered`,
   );
-  await tabs.close(lastTab);
+
+  // Work item 04-09's other half: a rename moves the folder too, so it is
+  // refused for the same reasons. This one has rust-analyzer watching it and
+  // a tab open on it.
+  const beforeRename = tabs.summary(eleventh.id)?.dir ?? "";
+  let renameFailed: string | null = null;
+  try {
+    await invoke<Playground>("rename_playground", { id: eleventh.id, name: "Lsp Renamed Rust" });
+  } catch (e) {
+    renameFailed = JSON.stringify(e);
+  }
+  await tabs.refreshListing();
+  const afterRename = tabs.summary(eleventh.id)?.dir ?? "";
+  await check(
+    "renaming works too, with the server watching the folder",
+    renameFailed === null && afterRename !== beforeRename && afterRename.length > 0,
+    JSON.stringify({ from: beforeRename, to: afterRename, error: renameFailed }),
+  );
+  await tabs.languageMoved(eleventh.id);
+  const stillThere = tabs.tabs.find((t) => t.id === eleventh.id);
+  if (stillThere) await tabs.close(stillThere);
 
   // The server is rooted elsewhere now, but it has loaded these crates and
   // watches their folders, so Windows can still refuse to delete one while it

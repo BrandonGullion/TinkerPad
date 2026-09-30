@@ -273,17 +273,9 @@ mod commands {
         id: tinkerpad_core::PlaygroundId,
         name: String,
     ) -> Result<tinkerpad_core::Playground, CommandError> {
-        // A rename moves the folder, so every URI under it is about to be
-        // wrong. Tell the server before it happens rather than leaving it
-        // pointing at a path that no longer exists (work item 02-10); the tab
-        // reattaches under the new URI once the rename has gone through.
-        if let Some(playground) = state.library.get(&id) {
-            crate::lsp::detach(&state, &playground).await;
-        }
-        state
-            .library
-            .rename(&id, &name)
-            .map_err(crate::library::to_command_error)
+        // Detaches from the language server first (02-10), and deals with a
+        // folder something still has open (04-09).
+        crate::library::rename(&state, &id, &name).await
     }
 
     /// The playgrounds matching `query`, best first (work item 04-01). An
@@ -377,17 +369,9 @@ mod commands {
         state: State<'_, AppState>,
         id: tinkerpad_core::PlaygroundId,
     ) -> Result<(), CommandError> {
-        // Before the folder moves to the trash, whatever server has this
-        // playground open is told it is going (work item 02-10). Without it a
-        // shared server keeps the document and the project, and — for
-        // rust-analyzer — stops publishing diagnostics for anything.
-        if let Some(playground) = state.library.get(&id) {
-            crate::lsp::detach(&state, &playground).await;
-        }
-        state
-            .library
-            .delete(&id)
-            .map_err(crate::library::to_command_error)
+        // Detaches from the language server first (02-10), and deals with a
+        // folder something still has open (04-09).
+        crate::library::delete(&state, &id).await
     }
 
     #[tauri::command(async)]
