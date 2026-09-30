@@ -163,6 +163,11 @@ pub struct Lsp {
     pub os: Option<Vec<Os>>,
     /// How to get the server, when it isn't installed (work item 04-08a).
     pub acquire: Option<Acquire>,
+    /// A path inside the workspace the server needs to find there, such as
+    /// `node_modules/typescript` (work item 04-08b).
+    pub workspace_needs: Option<String>,
+    /// How to put it there. Runs in the workspace root.
+    pub workspace_acquire: Option<Acquire>,
 }
 
 /// How to get a tool this plugin needs (work item 04-08a).
@@ -176,6 +181,11 @@ pub enum Acquire {
     Command {
         /// The program and its arguments, as an array: there is never a shell.
         command: Vec<String>,
+        /// Environment for the command, which is how a package manager is
+        /// pointed at `{tools_dir}` instead of wherever it installs by
+        /// default (work item 04-08b).
+        #[serde(default)]
+        env: BTreeMap<String, String>,
         /// What must already exist for this to work, such as `rustup`. Shown
         /// as the reason when it doesn't.
         needs: Option<String>,

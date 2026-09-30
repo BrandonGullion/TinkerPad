@@ -66,6 +66,17 @@ workspace = "scratch_workspace"
 idle_shutdown = "30m"
 env = { GOWORK = "{scratch}/go.work" }
 
+[lsp.acquire]
+# `go install` normally lands in GOPATH/bin, which is on PATH for some people
+# and not others. GOBIN points it at TinkerPad's own tools folder instead: the
+# resolver looks there, nothing needs elevation, and deleting that folder
+# undoes it (work item 04-08b).
+kind = "command"
+command = ["go", "install", "golang.org/x/tools/gopls@latest"]
+needs = "go"
+env = { GOBIN = "{tools_dir}" }
+label = "go install golang.org/x/tools/gopls@latest"
+
 [helper]
 # Not a warm runner: `go build` caches well enough that a second run is quick.
 # This helper exists for the two hooks, and does nothing else.

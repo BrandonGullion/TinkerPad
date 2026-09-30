@@ -156,6 +156,7 @@ function registerEverything(): void {
 
     "view.library": () => library.toggle(),
     "view.commands": () => void openCommandPalette(),
+    "view.tools": () => statusBar.tools.toggle(),
 
     "settings.open": () => void openSettings(settingsHost),
     "settings.file": () => void invoke("open_settings_file").catch(() => {}),
@@ -254,6 +255,12 @@ subscribe((env) => {
     case "helper":
       statusBar.servers.changed();
       break;
+    case "toolchain":
+      statusBar.tools.changed();
+      break;
+    case "tool":
+      statusBar.tools.progress(event.plugin, event.line);
+      break;
     case "libraryChanged":
       void tabs.libraryChanged().catch(() => {});
       break;
@@ -268,6 +275,15 @@ await invoke("ping");
 
 // The language servers in the status bar refresh themselves from here on.
 statusBar.servers.start();
+// And what each language needs, which only changes when a check does.
+void statusBar.tools.refresh();
+
+// A run that failed for want of a tool is exactly when an offer is wanted, and
+// the only time one arrives unasked (work item 04-08b).
+runs.onFailed = (playground) => {
+  const language = tabs.summary(playground)?.language;
+  if (language) void statusBar.tools.offerFor(language);
+};
 
 // Self-tests start from no tabs (unless they're testing session restore);
 // normal launches reopen the last session.

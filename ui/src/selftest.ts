@@ -21,6 +21,7 @@ import type { StatusBar } from "./layout";
 import { LOCKED_HINT, MISMATCH_NOTE, openPlayground } from "./playground";
 import type { OutputPane } from "./output";
 import type {
+  LanguageNeeds,
   LanguageToolchain,
   Listing,
   Peek,
@@ -31,6 +32,7 @@ import type {
   PluginsStatus,
   RunEvent,
   Session,
+  Which,
 } from "./protocol";
 import type { RunController } from "./run";
 import { MAX_PEEKS, type TabManager } from "./tabs";
@@ -4291,9 +4293,313 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   settings: settingsScenario,
   history: historyScenario,
   hooks: hooksScenario,
+  tools: toolsScenario,
+  "tools-acquire": toolsAcquireScenario,
   packages: packagesScenario,
   "packages-live": packagesLiveScenario,
 };
+
+/**
+ * What each language needs, and the offers for what is missing (work item
+ * 04-08b).
+ *
+ * Nothing here installs anything: the point is that an offer appears where it
+ * should, says exactly what it would do before doing it, and can be turned off.
+ * The acquisition itself is covered by the Rust tests, which have a fake
+ * package manager and a local file server to aim at.
+ */
+async function toolsScenario(ctx: SelftestContext, check: Check) {
+  const panel = ctx.status.tools;
+  const button = panel.element;
+  const popover = () => document.querySelector<HTMLElement>(".tools-popover");
+  const rows = () => [...(popover()?.querySelectorAll<HTMLElement>(".tools-need") ?? [])];
+  const rowFor = (language: string, label: string) => {
+    const block = [...(popover()?.querySelectorAll<HTMLElement>(".tools-language") ?? [])].find(
+      (b) => b.querySelector(".tools-language-name")?.textContent?.startsWith(name(language)),
+    );
+    return [...(block?.querySelectorAll<HTMLElement>(".tools-need") ?? [])].find(
+      (r) => r.querySelector(".tools-need-label")?.textContent === label,
+    );
+  };
+
+  // Wait for every toolchain check to settle, so the list isn't a guess.
+  const plugins = await invoke<PluginsStatus>("list_plugins");
+  for (const plugin of plugins.plugins) await settledToolchain(plugin.id);
+
+  const status = await invoke<LanguageNeeds[]>("tools_status");
+  const name = (language: string) =>
+    status.find((entry) => entry.language === language)?.name ?? language;
+
+  await check(
+    "every loaded plugin is in the list, with at least its toolchain",
+    status.length === plugins.plugins.length &&
+      status.every((entry) => entry.needs.some((need) => need.label === "Toolchain")),
+    JSON.stringify(status.map((entry) => [entry.language, entry.needs.map((n) => n.label)])),
+  );
+
+  // A language with a server has a row for it; one without has none. C# is the
+  // bundled plugin with no `[lsp]` at all.
+  const withServer = status.find((entry) => entry.needs.some((n) => n.label === "Language server"));
+  const csharp = status.find((entry) => entry.language === "csharp");
+  await check(
+    "a language with a server gets a row for it, and one without doesn't",
+    withServer !== undefined && csharp?.needs.every((n) => n.label !== "Language server") === true,
+    JSON.stringify({ withServer: withServer?.language, csharp: csharp?.needs.map((n) => n.label) }),
+  );
+
+  // TypeScript's server needs something in the library folder, not on PATH.
+  const workspace = status
+    .find((entry) => entry.language === "typescript")
+    ?.needs.find((need) => need.label === "Workspace");
+  await check(
+    "a workspace dependency is a need of its own, with a path rather than a program",
+    workspace?.what === "node_modules/typescript",
+    JSON.stringify(workspace ?? null),
+  );
+
+  // Nothing is offered for something that is already there.
+  const present = status.flatMap((entry) => entry.needs).filter((need) => need.present);
+  await check(
+    "nothing is offered for a tool that is already installed",
+    present.length > 0 && present.every((need) => need.offer === null),
+    JSON.stringify(present.map((need) => [need.what, need.offer])),
+  );
+  await report(
+    `INFO present: ${present.map((n) => n.what).join(", ") || "none"}; missing: ${status
+      .flatMap((e) => e.needs)
+      .filter((n) => !n.present)
+      .map((n) => n.what)
+      .join(", ") || "none"}`,
+  );
+
+  // The button opens the list, and says nothing loud when there is nothing to say.
+  const missingCount = status.flatMap((entry) => entry.needs).filter((need) => !need.present).length;
+  await check(
+    "the status bar says how many things are missing, and only when some are",
+    button.querySelector<HTMLElement>(".tools-count")?.hidden === (missingCount === 0),
+    JSON.stringify({ missingCount, badge: button.querySelector(".tools-count")?.textContent }),
+  );
+
+  button.click();
+  await frame();
+  await check(
+    "clicking it opens a panel with a block per language",
+    popover() !== null && rows().length >= status.length,
+    JSON.stringify({ open: popover() !== null, rows: rows().length, languages: status.length }),
+  );
+
+  // A language with everything it needs says so as plainly as one without.
+  const readyBlock = [...(popover()?.querySelectorAll(".tools-language") ?? [])].find((b) =>
+    b.querySelector(".tools-ok"),
+  );
+  await check(
+    "a language with everything it needs says so",
+    status.some((entry) => entry.needs.every((need) => need.present)) === (readyBlock !== undefined),
+    JSON.stringify({ readyBlock: readyBlock?.textContent?.slice(0, 40) ?? null }),
+  );
+
+  // The offer itself. Whichever language is missing something it can install,
+  // the button must confirm before anything runs.
+  const offerable = status.find((entry) =>
+    entry.needs.some((need) => !need.present && need.offer && !need.offer.blocked),
+  );
+  if (offerable) {
+    const need = offerable.needs.find((n) => !n.present && n.offer && !n.offer.blocked);
+    const row = rowFor(offerable.language, need?.label ?? "");
+    const install = row?.querySelector<HTMLButtonElement>(".tools-install");
+    await check(
+      `${offerable.name}: a missing tool with an offer gets a button`,
+      install !== null && install !== undefined,
+      JSON.stringify({ language: offerable.language, label: need?.label, row: !!row }),
+    );
+    install?.click();
+    await frame();
+    const confirm = rowFor(offerable.language, need?.label ?? "")?.querySelector<HTMLElement>(
+      ".tools-confirm-detail",
+    );
+    const shown = confirm?.textContent ?? "";
+    await check(
+      "the button confirms first, showing exactly what would happen",
+      shown.includes(need?.offer?.label ?? "\u0000") &&
+        (need?.offer?.kind !== "download" || shown.includes(need.offer.sha256 ?? "\u0000")),
+      JSON.stringify({ shown: shown.slice(0, 120), offer: need?.offer }),
+    );
+    // And "Not now" leaves it exactly as it was, having run nothing.
+    rowFor(offerable.language, need?.label ?? "")
+      ?.querySelector<HTMLButtonElement>(".tools-cancel")
+      ?.click();
+    await frame();
+    const after = rowFor(offerable.language, need?.label ?? "");
+    await check(
+      "declining puts the button back and installs nothing",
+      after?.querySelector(".tools-confirm") === null &&
+        after?.querySelector(".tools-install") !== null,
+      JSON.stringify({ confirm: !!after?.querySelector(".tools-confirm") }),
+    );
+  } else {
+    await report("INFO nothing on this machine is both missing and installable, so the offer checks were skipped");
+  }
+
+  // A language missing something shows the plugin's own instructions too —
+  // once, not once per row, because it is the same sentence either way.
+  const languagesWithHint = status.filter((entry) =>
+    entry.needs.some((need) => !need.present && need.hint),
+  ).length;
+  const hintsShown = [...(popover()?.querySelectorAll(".tools-hint") ?? [])].length;
+  await check(
+    "a language missing something shows the plugin's own instructions, once",
+    hintsShown === languagesWithHint,
+    JSON.stringify({ hintsShown, expected: languagesWithHint }),
+  );
+
+  // Switched off in settings: the hint stays, the button goes.
+  const settings = await invoke<Settings>("get_settings");
+  try {
+    await invoke("save_settings", {
+      settings: { ...settings, tools: { ...settings.tools, acquire: "never" } },
+    });
+    await frame();
+    const off = await invoke<LanguageNeeds[]>("tools_status");
+    const blocked = off.flatMap((entry) => entry.needs).filter((need) => !need.present && need.offer);
+    await check(
+      'acquire = "never" blocks every offer and keeps the hints',
+      blocked.every((need) => (need.offer?.blocked ?? "").includes("switched off")),
+      JSON.stringify(blocked.map((need) => need.offer?.blocked)),
+    );
+    await panel.refresh();
+    await frame();
+    await check(
+      "and the panel shows no Install button at all",
+      popover()?.querySelector(".tools-install") === null ||
+        popover()?.querySelector(".tools-install") === undefined,
+      JSON.stringify({ buttons: popover()?.querySelectorAll(".tools-install").length }),
+    );
+  } finally {
+    await invoke("save_settings", { settings });
+    await frame();
+  }
+
+  button.click();
+  await frame();
+  await check("clicking again closes the panel", popover() === null);
+}
+
+/**
+ * Accepting an offer, for real (work item 04-08b).
+ *
+ * A scenario of its own rather than part of `tools`, because it installs
+ * something: it runs a package manager and reaches the network. Nothing in the
+ * default batch or in CI names it. What it verifies is the half the offline
+ * tests can't — that a tool acquired through the app is then found by the app,
+ * with no restart.
+ *
+ * It installs TinkerPad's own copy of the TypeScript language server, under
+ * `<app-data>/tools/typescript/`. Deleting that folder undoes it.
+ */
+async function toolsAcquireScenario(ctx: SelftestContext, check: Check) {
+  const language = "typescript";
+  const rowsFor = async () =>
+    (await invoke<LanguageNeeds[]>("tools_status")).find((entry) => entry.language === language)
+      ?.needs ?? [];
+  const rowFor = async (which: Which) => (await rowsFor()).find((need) => need.which === which);
+
+  await settledToolchain(language);
+  const before = await rowFor("lsp");
+  if (!before) {
+    await check("TypeScript has a language server row", false, "no row");
+    return;
+  }
+  if (before.present) {
+    await report(
+      `INFO the server is already at ${before.foundAt}; nothing to acquire, so this scenario checked nothing`,
+    );
+    return;
+  }
+  await check(
+    "before: the server is missing, and the offer says what it would run",
+    before.offer !== null && !before.offer.blocked && before.offer.kind === "command",
+    JSON.stringify(before.offer),
+  );
+
+  /** What the Install button does, minus the click. */
+  const accept = async (which: Which, what: string) => {
+    const lines: string[] = [];
+    const stop = subscribe((env) => {
+      if (env.event.type === "tool") lines.push(env.event.line);
+    });
+    const started = performance.now();
+    let failure: string | null = null;
+    try {
+      await withTimeout(invoke("acquire_tool", { language, which }), 10 * 60_000, `acquiring ${what}`);
+    } catch (error) {
+      failure = String((error as { message?: string } | null)?.message ?? error);
+    }
+    const tookMs = Math.round(performance.now() - started);
+    stop();
+    await check(`accepting the offer for ${what} runs without an error`, failure === null, failure ?? "");
+    await check(
+      `and says what it is doing while it does ${what}`,
+      lines.length > 0,
+      JSON.stringify(lines.slice(-2)),
+    );
+    await report(`INFO ${what}: ${tookMs} ms, ${lines.length} lines of output`);
+  };
+
+  await accept("lsp", "the language server");
+
+  // The core re-probes on its own, so the answer to the same question changes
+  // without anything being restarted.
+  const after = await rowFor("lsp");
+  await check(
+    "afterwards the app finds the server, with no restart",
+    after?.present === true,
+    JSON.stringify(after ?? null),
+  );
+  await check(
+    "and it is inside TinkerPad's own tools folder, so deleting that undoes it",
+    (after?.foundAt ?? "").includes("tools"),
+    after?.foundAt ?? "",
+  );
+  await check(
+    "nothing is offered for it any more",
+    after?.offer === null,
+    JSON.stringify(after?.offer ?? null),
+  );
+
+  // A workspace dependency counts as a tool too: this server needs a
+  // TypeScript of its own in the library folder, and won't stay up without one.
+  const workspace = await rowFor("workspace");
+  if (workspace && !workspace.present) {
+    await accept("workspace", "the TypeScript its workspace needs");
+    const now = await rowFor("workspace");
+    await check(
+      "and the workspace dependency is then there too",
+      now?.present === true,
+      JSON.stringify(now ?? null),
+    );
+  }
+
+  // Usable means usable: the server starts and reaches ready, with no restart
+  // of the app anywhere in this scenario.
+  for (const t of [...ctx.tabs.tabs]) await ctx.tabs.close(t);
+  const made = await invoke<Playground>("create_playground", {
+    name: "Acquired Server Test",
+    language,
+  });
+  await openPlayground(ctx.editor, ctx.status, made.id);
+  let server: ServerStatus | undefined;
+  for (let i = 0; i < 300; i++) {
+    server = (await invoke<ServerStatus[]>("server_status")).find((s) => s.language === language);
+    if (server?.state.kind === "ready" || server?.state.kind === "crashed") break;
+    await sleep(200);
+  }
+  await check(
+    "and the language server it just installed starts and becomes ready",
+    server?.state.kind === "ready",
+    JSON.stringify(server?.state ?? null),
+  );
+  await invoke("delete_playground", { id: made.id }).catch(() => {});
+}
 
 /**
  * Plugin helpers: built when their source changes, warm in between, and shown

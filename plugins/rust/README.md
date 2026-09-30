@@ -115,6 +115,9 @@ rustup:
 rustup component add rust-analyzer
 ```
 
+The **Languages** button in the status bar offers to run that for you, after
+showing you the command (work item 04-08b).
+
 One rust-analyzer serves every Rust playground. It is rooted at a folder of
 TinkerPad's own (`<app-data>/scratch/rust`) rather than at any playground, and
 each open playground adds its `Cargo.toml` to the server's `linkedProjects`

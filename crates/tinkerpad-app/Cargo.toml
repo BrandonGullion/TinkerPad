@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# There is more than one binary here (the test stand-in below), so `cargo run`
+# and `tauri dev` need telling which one is the app.
+default-run = "tinkerpad"
 
 [[bin]]
 name = "tinkerpad"

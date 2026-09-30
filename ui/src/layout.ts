@@ -1,6 +1,7 @@
 // Editor-over-panel layout with a draggable splitter, and the status bar.
 
 import { ServerStrip } from "./servers";
+import { ToolsPanel } from "./tools";
 
 const SPLIT_KEY = "tinkerpad.split";
 const SIDE_KEY = "tinkerpad.sidebar";
@@ -179,6 +180,8 @@ export class StatusBar {
   readonly element: HTMLElement;
   /** The language servers, with their own refresh (work item 02-08). */
   readonly servers = new ServerStrip();
+  /** What each language needs, and the offers for what is missing (04-08b). */
+  readonly tools = new ToolsPanel();
   private readonly language: HTMLElement;
   private readonly note: HTMLElement;
   private readonly run: HTMLButtonElement;
@@ -235,6 +238,7 @@ export class StatusBar {
       this.note,
       spacer,
       this.servers.element,
+      this.tools.element,
       this.run,
       this.cancelButton,
       logs,

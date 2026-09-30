@@ -62,8 +62,14 @@ Go 1.21 or newer on `PATH`, and `gopls` for completions and diagnostics:
 go install golang.org/x/tools/gopls@latest
 ```
 
-`go install` puts it in `$(go env GOPATH)/bin`, which is not on `PATH` on a
-fresh machine. Add it, or point TinkerPad at the binary in `settings.toml`:
+The **Languages** button in the status bar offers to run exactly that for you,
+with `GOBIN` pointed at TinkerPad's own folder so the result is found without
+touching your `PATH` (work item 04-08b). Go itself is a hint rather than an
+offer: installing an SDK is not something an editor should be doing behind a
+button.
+
+By hand, `go install` puts it in `$(go env GOPATH)/bin`, which is not on `PATH`
+on a fresh machine. Add it, or point TinkerPad at the binary in `settings.toml`:
 
 ```toml
 [toolchains.go]

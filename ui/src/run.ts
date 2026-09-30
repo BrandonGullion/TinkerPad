@@ -90,6 +90,13 @@ export class RunController {
   private clickedAt = 0;
   private firstOutputAt: number | null = null;
 
+  /**
+   * Called when a run failed before it ran — a missing toolchain, a command
+   * that couldn't start. Not for a program that ran and exited non-zero: that
+   * is the program's business, not the app's (work item 04-08b).
+   */
+  onFailed: (playground: string, message: string) => void = () => {};
+
   constructor(private readonly host: RunHost) {}
 
   /** Whether the active tab's playground is running or starting. */
@@ -390,6 +397,7 @@ export class RunController {
       case "failed":
         output?.append("stderr", `${outcome.message}\n`);
         this.setState(playground, record, { kind: "failed" });
+        this.onFailed(playground, outcome.message);
         break;
     }
     if (id !== null) {

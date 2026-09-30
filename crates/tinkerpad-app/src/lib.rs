@@ -606,6 +606,15 @@ mod commands {
         crate::library::change_root(&app, &state)
     }
 
+    /// What every language needs, whether it is there, and what could be done
+    /// about each gap (work item 04-08b). Answering changes nothing, needs no
+    /// network, and covers every loaded plugin, so the window can show a whole
+    /// picture instead of a trickle of toasts.
+    #[tauri::command(async)]
+    pub fn tools_status(state: State<'_, AppState>) -> Vec<crate::tools::LanguageNeeds> {
+        crate::tools::status(&state, &crate::tools::Env::of(&state))
+    }
+
     /// What a language needs that isn't here, and what could be done about
     /// it (work item 04-08a). Answering changes nothing and needs no network.
     #[tauri::command(async)]
@@ -1098,6 +1107,7 @@ pub fn run() {
             commands::close_input,
             commands::run_history,
             commands::open_log_folder,
+            commands::tools_status,
             commands::tool_offer,
             commands::acquire_tool,
             commands::update_available,
