@@ -808,7 +808,47 @@ The template for each kind already imports the helper, so a new playground can c
 - **Conformance:** `tinkerpad plugin check <dir>` validates the manifest, probes the
   toolchain, scaffolds a playground of every kind, runs each, asserts a `dump` round
   trip, and (if a helper exists) exercises every declared hook. Contributors run it
-  locally; CI runs it on bundled plugins.
+  locally; CI runs it on bundled plugins. See §8.1.
+
+### 8.1 `tinkerpad plugin check`
+
+```
+$ tinkerpad plugin check plugins/python
+Checking plugins/python
+  ok   manifest           loads, no warnings
+  ok   toolchain          py 3.13.1 at C:\…\py.exe
+  ok   templates          2 kinds, 0 scaffold files
+  ok   run:statements     exit 0 in 72 ms, 173 bytes of stdout
+  ok   run:expression     exit 0 in 71 ms, 107 bytes of stdout
+5 passed, 0 failed, 0 skipped
+```
+
+It is a subcommand of the app's own binary, so the code it checks with is the
+code that will run the plugin: the same loader, the same scaffolder, the same
+runner. A checker with its own copies would pass plugins the app rejects.
+
+| Check | Passes when |
+|---|---|
+| `manifest` | The folder loads. Warnings are reported but don't fail it. |
+| `toolchain` | A `[toolchain].probe` entry succeeds. |
+| `templates` | Every kind's template renders and every `[scaffold]` file is written. |
+| `run:<kind>` | A fresh playground of that kind exits 0 within 60 s and prints something. |
+
+- **A missing toolchain is a skip, not a failure.** A machine without Go can
+  still say whether the Go plugin's manifest is sound, so the exit code stays 0
+  and everything needing the toolchain is skipped with the plugin's own
+  `install_hint`.
+- **Exit code** is 0 unless something failed.
+- `--json` prints the report as JSON, for CI.
+- `--only <check>` runs one: `manifest`, `toolchain`, `templates`, `run`, or one
+  kind's run such as `run:statements`. It skips the work of the others rather
+  than doing it and discarding the result, so `--only manifest` is instant.
+- Everything is scaffolded into a temporary library that is removed afterwards.
+  The check never touches yours.
+
+Running a playground is the easy half; `dump`, `[output].error_regex`, helpers
+and language servers are checked too, from a `check/` folder the plugin
+provides (work item 05-01b).
 
 ## 9. Highlighters
 

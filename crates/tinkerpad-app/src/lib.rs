@@ -8,6 +8,7 @@
 //! [`commands`], return `Result<T, CommandError>`, and report progress by
 //! publishing on the [`EventBus`].
 
+pub mod check;
 pub mod events;
 mod helpers;
 mod hooks;

@@ -43,6 +43,13 @@ Any real code. Any UI.
 Name the app crate's binary `tinkerpad` so the CLI in Phase 5 can be a subcommand
 of the same binary or a sibling; decide then.
 
+**Decided in 05-01a: a subcommand of the same binary.** `tinkerpad plugin check`
+runs in the one binary users already have, with no second thing to install, no
+second thing to sign (04-06), and no chance of a CLI built from different code
+than the app it is checking — which is the whole point of the checker. The cost
+is that the binary is a GUI-subsystem program on Windows, so its output goes
+through the same console handling `--version` uses.
+
 ## Results
 
 Implemented 2026-09-14. All criteria met.

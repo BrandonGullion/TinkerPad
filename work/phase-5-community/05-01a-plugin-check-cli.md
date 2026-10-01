@@ -33,10 +33,10 @@ those need somewhere to be reported.
 
 ## Expectations
 
-- [ ] Shipped as `tinkerpad plugin check <dir>`, a subcommand of the main
+- [x] Shipped as `tinkerpad plugin check <dir>`, a subcommand of the main
       binary rather than a second one. Decide it here and note it in 00-01's
       gotcha. (It must not open a window: a check is a terminal thing.)
-- [ ] Each check reported pass/fail/skip with a one-line reason:
+- [x] Each check reported pass/fail/skip with a one-line reason:
       1. **Manifest loads** — 01-01's errors and warnings surfaced verbatim,
          including the "did you mean" suggestions.
       2. **Toolchain probe succeeds** — on failure, every later check is
@@ -47,12 +47,81 @@ those need somewhere to be reported.
          that is removed afterwards.
       4. **Each kind runs** — a fresh playground of every kind exits 0 and
          produces some stdout within 60 s.
-- [ ] `--json` for CI and `--only <check>` to iterate on one.
-- [ ] The same code paths as the app: the same loader, the same scaffolder, the
+- [x] `--json` for CI and `--only <check>` to iterate on one.
+- [x] The same code paths as the app: the same loader, the same scaffolder, the
       same runner. Not a reimplementation, or it will pass plugins the app
       rejects.
-- [ ] A test that runs the checker over a fixture plugin that passes and one
+- [x] A test that runs the checker over a fixture plugin that passes and one
       that fails each check, asserting the exit code and the report.
+
+## Results
+
+Measured on Windows 11, 2026-09-30.
+
+**The decision 00-01 asked for: a subcommand of the same binary.** `tinkerpad
+plugin check` runs in the binary users already have — nothing extra to install,
+nothing extra to sign (04-06), and no chance of a CLI built from different code
+than the app it is checking, which is the whole point. Noted in 00-01's gotcha.
+The cost is that the binary is a GUI-subsystem program on Windows, so its
+output goes through the same console handling `--version` uses; that already
+existed.
+
+**Every bundled plugin, checked:**
+
+| Plugin | Result |
+|---|---|
+| C# | 6 passed — 3 kinds, runs in 3.2–3.9 s each |
+| Go | 1 passed, 3 skipped — `go` isn't on this machine |
+| PowerShell | 4 passed — one kind, 430 ms |
+| Python | 5 passed — 72 and 71 ms |
+| Rust | 5 passed — `program` 5.2 s cold, `expression` 480 ms |
+| TypeScript | 5 passed — 220 and 72 ms |
+
+Go skipping rather than failing is the point of that distinction: this machine
+not having Go says nothing about the Go plugin.
+
+**A bug the checker found in itself, immediately.** The first run of
+`plugin check plugins/python` failed both kinds with
+`ModuleNotFoundError: No module named 'tinkerpad'`. The cause was the checker's
+own: it passed the folder through as typed, so `{plugin_dir}` stayed relative,
+and `PYTHONPATH = "{plugin_dir}/dump"` resolved against the playground folder
+rather than the repository. The app never has this problem because it loads
+plugins from absolute paths. Fixed by making the folder absolute before
+loading — which is exactly the class of bug the "same code paths as the app"
+rule exists to prevent, caught by the first thing it was pointed at.
+
+**A second one, found by the tests.** The temporary workspace was named
+`tinkerpad-check-<plugin>-<pid>`, so two checks of the same plugin in one
+process — a test suite, or a CI matrix running in parallel — would share a
+folder and delete each other's work. Now unique per check.
+
+**`--only` skips the work, not just the reporting.** `--only manifest` on a
+plugin whose run sleeps two seconds returns in under 1.5 s, asserted by a test;
+a flag for iterating on one check is worthless if it still waits for the
+others.
+
+**Tests** — `crates/tinkerpad-app/tests/check.rs`, nine of them, using
+`tinkerpad-faketool` as the fixture plugin's entire toolchain so they are
+deterministic and need no language installed:
+
+| Test | What it pins down |
+|---|---|
+| a plugin that works passes every check | the happy path, and the summary line |
+| a manifest that doesn't load fails and says why verbatim | the loader's own words and its "did you mean" |
+| a toolchain that isn't here skips rather than fails | exit 0, and the plugin's `install_hint` in the reason |
+| a run that fails is reported with what it said | the exit code and the last line of stderr |
+| a run that prints nothing is a failure even at exit 0 | an empty output pane is not a working plugin |
+| a template that isn't there fails before anything runs | — |
+| `--only` runs one check and doesn't do the others' work | the timing above |
+| `--only` can name one kind's run | `run:statements` |
+| nothing is left behind | the temporary library is gone afterwards |
+
+`tinkerpad-faketool`, added in 04-08a as a stand-in package manager, gained
+`stderr` and `sleep` steps for these, matching `tinkerpad-fakeprobe`'s
+vocabulary.
+
+**Documented** in PLUGINS.md §8.1: what each check means, that a missing
+toolchain is a skip, the flags, and that nothing touches the user's library.
 
 ## Out of scope
 
