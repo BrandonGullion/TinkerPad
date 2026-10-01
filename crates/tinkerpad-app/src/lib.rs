@@ -13,6 +13,7 @@ pub mod cli;
 pub mod events;
 mod helpers;
 mod hooks;
+pub mod install;
 mod keys;
 mod library;
 mod logging;
@@ -606,6 +607,73 @@ mod commands {
         crate::library::change_root(&app, &state)
     }
 
+    /// Install a plugin from a folder or a git URL (work item 05-02).
+    ///
+    /// The manifest has to load before anything is copied, so a folder that
+    /// isn't a plugin is refused rather than installed and then complained
+    /// about. The registry is reloaded afterwards, so the language is usable
+    /// without a restart.
+    #[tauri::command(async)]
+    pub async fn install_plugin(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+        source: String,
+    ) -> Result<String, CommandError> {
+        let dir = crate::cli::plugins_dir().ok_or_else(|| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::Io,
+                "could not work out where TinkerPad keeps its plugins".to_owned(),
+            )
+        })?;
+        let events = state.events.clone();
+        let installed =
+            crate::install::install(&crate::install::Source::read(&source), &dir, &mut |line| {
+                events.publish(
+                    Scope::App,
+                    CoreEvent::Toast {
+                        level: Level::Info,
+                        message: line.to_owned(),
+                    },
+                );
+            })
+            .map_err(|e| {
+                CommandError::new(tinkerpad_core::ErrorCode::InvalidInput, e.to_string())
+            })?;
+
+        let name = installed.name.clone();
+        crate::plugins::reload(&app)
+            .await
+            .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e))?;
+        Ok(name)
+    }
+
+    /// Move an installed plugin to the recycle bin (work item 05-02).
+    #[tauri::command(async)]
+    pub async fn remove_plugin(app: tauri::AppHandle, id: String) -> Result<(), CommandError> {
+        let dir = crate::cli::plugins_dir().ok_or_else(|| {
+            CommandError::new(
+                tinkerpad_core::ErrorCode::Io,
+                "could not work out where TinkerPad keeps its plugins".to_owned(),
+            )
+        })?;
+        crate::install::remove(&id, &dir).map_err(|e| {
+            CommandError::new(tinkerpad_core::ErrorCode::InvalidInput, e.to_string())
+        })?;
+        crate::plugins::reload(&app)
+            .await
+            .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e))?;
+        Ok(())
+    }
+
+    /// Load the plugin folders again, without restarting (work item 05-02).
+    #[tauri::command(async)]
+    pub async fn reload_plugins(app: tauri::AppHandle) -> Result<(), CommandError> {
+        crate::plugins::reload(&app)
+            .await
+            .map(|_| ())
+            .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e))
+    }
+
     /// What every language needs, whether it is there, and what could be done
     /// about each gap (work item 04-08b). Answering changes nothing, needs no
     /// network, and covers every loaded plugin, so the window can show a whole
@@ -1122,6 +1190,9 @@ pub fn run() {
             commands::open_keybindings_file,
             commands::change_library_root,
             commands::list_plugins,
+            commands::install_plugin,
+            commands::remove_plugin,
+            commands::reload_plugins,
             commands::toolchain_status,
             commands::recheck_toolchains,
             commands::list_playgrounds,

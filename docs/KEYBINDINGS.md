@@ -57,6 +57,7 @@ binding meant for one platform only.
 | Library panel | ⌘B | Ctrl+B | `view.library` |
 | Commands… | ⇧⌘P | Ctrl+Shift+P | `view.commands` |
 | What each language needs | — | — | `view.tools` |
+| Plugins… | — | — | `view.plugins` |
 
 ## Settings
 

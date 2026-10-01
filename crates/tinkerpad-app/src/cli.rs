@@ -412,6 +412,216 @@ fn confirm(out: &mut dyn FnMut(&str)) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
+// --- plugins (work item 05-02) --------------------------------------------
+
+/// Where user plugins live, for the install subcommands.
+pub fn plugins_dir() -> Option<PathBuf> {
+    data_dir().map(|data| user_plugins(&data))
+}
+
+/// `tinkerpad plugin install <path|url>`.
+pub fn plugin_install(what: &str, out: &mut dyn FnMut(&str)) -> i32 {
+    let Some(dir) = plugins_dir() else {
+        out("could not work out where TinkerPad keeps its plugins");
+        return 2;
+    };
+    let source = crate::install::Source::read(what);
+    out(crate::install::TRUST_NOTICE);
+    out("");
+    match crate::install::install(&source, &dir, out) {
+        Ok(installed) => {
+            out(&format!(
+                "{} {}{} at {}",
+                if installed.replaced {
+                    "Replaced"
+                } else {
+                    "Installed"
+                },
+                installed.name,
+                installed
+                    .version
+                    .as_ref()
+                    .map(|v| format!(" {v}"))
+                    .unwrap_or_default(),
+                installed.dir.display()
+            ));
+            // What it needs, now that the app knows it exists. A toolchain
+            // that isn't here doesn't stop the install: the user may be
+            // installing the plugin in order to go and get it.
+            report_toolchain(&installed.id, out);
+            0
+        }
+        Err(error) => {
+            out(&error.to_string());
+            1
+        }
+    }
+}
+
+/// `tinkerpad plugin update <id>`.
+pub fn plugin_update(id: &str, out: &mut dyn FnMut(&str)) -> i32 {
+    let Some(dir) = plugins_dir() else {
+        out("could not work out where TinkerPad keeps its plugins");
+        return 2;
+    };
+    match crate::install::update(id, &dir, out) {
+        Ok(installed) => {
+            out(&format!(
+                "{} is up to date at {}",
+                installed.name,
+                installed.dir.display()
+            ));
+            0
+        }
+        Err(error) => {
+            out(&error.to_string());
+            1
+        }
+    }
+}
+
+/// `tinkerpad plugin remove <id>`.
+pub fn plugin_remove(id: &str, out: &mut dyn FnMut(&str)) -> i32 {
+    let Some(dir) = plugins_dir() else {
+        out("could not work out where TinkerPad keeps its plugins");
+        return 2;
+    };
+    match crate::install::remove(id, &dir) {
+        Ok(gone) => {
+            out(&format!(
+                "{} moved to the recycle bin. Restart TinkerPad, or use the \
+                 plugins panel, for the window to notice.",
+                gone.display()
+            ));
+            0
+        }
+        Err(error) => {
+            out(&error.to_string());
+            1
+        }
+    }
+}
+
+/// `tinkerpad plugin list`.
+pub fn plugin_list(json: bool, out: &mut dyn FnMut(&str)) -> i32 {
+    let Some(data) = data_dir() else {
+        out("could not work out where TinkerPad keeps its data");
+        return 2;
+    };
+    let registry = tinkerpad_plugin::PluginRegistry::load(bundled_plugins(), user_plugins(&data));
+    let rows: Vec<PluginRow> = registry
+        .all()
+        .iter()
+        .map(|entry| PluginRow {
+            id: entry.plugin.id.to_string(),
+            name: entry.plugin.name.clone(),
+            version: entry.plugin.version.clone(),
+            source: match entry.source {
+                tinkerpad_plugin::Source::Bundled => "bundled".to_owned(),
+                tinkerpad_plugin::Source::User => {
+                    std::fs::read_to_string(entry.plugin.dir.join(crate::install::SOURCE_FILE))
+                        .map(|url| url.trim().to_owned())
+                        .unwrap_or_else(|_| entry.plugin.dir.display().to_string())
+                }
+            },
+            overridden: false,
+            dir: entry.plugin.dir.display().to_string(),
+        })
+        // A bundled plugin a user plugin of the same id has replaced is
+        // listed too, marked, so it is obvious why behaviour changed.
+        .chain(registry.overrides().iter().map(|over| PluginRow {
+            id: over.id.to_string(),
+            name: over.id.to_string(),
+            version: None,
+            source: "bundled".to_owned(),
+            overridden: true,
+            dir: over.bundled_dir.display().to_string(),
+        }))
+        .collect();
+
+    if json {
+        match serde_json::to_string_pretty(&rows) {
+            Ok(text) => out(&text),
+            Err(error) => {
+                out(&format!("{{\"error\":\"{error}\"}}"));
+                return 2;
+            }
+        }
+        return 0;
+    }
+    for row in &rows {
+        out(&format!(
+            "{:<14} {:<16} {:<10} {}{}",
+            row.id,
+            row.name,
+            row.version.as_deref().unwrap_or("—"),
+            row.source,
+            if row.overridden {
+                "  (overridden by a user plugin of the same id)"
+            } else {
+                ""
+            }
+        ));
+    }
+    for failure in registry.failures() {
+        out(&format!(
+            "{:<14} {}",
+            failure
+                .dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            "failed to load"
+        ));
+    }
+    0
+}
+
+/// One row of `plugin list --json`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginRow {
+    id: String,
+    name: String,
+    version: Option<String>,
+    /// `bundled`, the URL it came from, or the folder it was copied from.
+    source: String,
+    /// A bundled plugin a user plugin of the same id has replaced.
+    overridden: bool,
+    dir: String,
+}
+
+/// Say what a just-installed plugin needs, if anything.
+fn report_toolchain(id: &str, out: &mut dyn FnMut(&str)) {
+    let mut quiet = |_: &str| {};
+    let Ok(context) = Context::open(&mut quiet) else {
+        return;
+    };
+    let Some(plugin) = context
+        .plugins
+        .iter()
+        .find(|plugin| plugin.id.as_str() == id)
+    else {
+        return;
+    };
+    let needs = tools::needs(&context.env, plugin, context.state_of(id));
+    let missing: Vec<&tools::Need> = needs.iter().filter(|need| !need.present).collect();
+    if missing.is_empty() {
+        out("It has everything it needs.");
+        return;
+    }
+    out("It still needs:");
+    for need in missing {
+        out(&format!("  {} {}", need.label, need.what));
+        if let Some(hint) = &need.hint {
+            out(&format!("    {hint}"));
+        }
+    }
+    out(&format!(
+        "`tinkerpad tools install {id}` can get what it can."
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

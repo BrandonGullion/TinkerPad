@@ -15,7 +15,9 @@ mod fsutil;
 pub mod history;
 mod library;
 mod meta;
-mod platform;
+/// Moving a folder to the recycle bin, which the plugin installer needs too
+/// (work item 05-02).
+pub mod platform;
 mod search;
 mod slug;
 

@@ -20,6 +20,7 @@ import {
 } from "./commands";
 import { jumpBack } from "./definition";
 import { pickerOpen } from "./picker";
+import { PluginsPanel } from "./plugins";
 import { setTabManager } from "./playground";
 import { RunController } from "./run";
 import { maybeRunSelftest, type SelftestContext } from "./selftest";
@@ -53,6 +54,7 @@ tabs.runs = runs;
 setTabManager(tabs);
 
 const history = new RunHistory(tabs, runs);
+const plugins = new PluginsPanel();
 const library = new LibraryPanel(layout.sidebar, {
   open: (id) => tabs.open(id),
   activePlayground: () => tabs.activePlayground(),
@@ -158,6 +160,7 @@ function registerEverything(): void {
     "view.library": () => library.toggle(),
     "view.commands": () => void openCommandPalette(),
     "view.tools": () => statusBar.tools.toggle(),
+    "view.plugins": () => void plugins.toggle(),
 
     "settings.open": () => void openSettings(settingsHost),
     "settings.file": () => void invoke("open_settings_file").catch(() => {}),
@@ -258,6 +261,14 @@ subscribe((env) => {
       break;
     case "toolchain":
       statusBar.tools.changed();
+      void plugins.refresh();
+      break;
+    case "pluginsChanged":
+      // The languages changed under the window: the panel, the status strip's
+      // list of what is missing, and the tabs all want to know (05-02).
+      void plugins.refresh();
+      statusBar.tools.changed();
+      void tabs.refreshListing().catch(() => {});
       break;
     case "tool":
       statusBar.tools.progress(event.plugin, event.line);

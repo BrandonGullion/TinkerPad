@@ -86,7 +86,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [05-01a `tinkerpad plugin check`: the tool and the first four checks](phase-5-community/05-01a-plugin-check-cli.md) · M
 - [x] [05-01b `plugin check`: dump, errors, helpers and servers](phase-5-community/05-01b-plugin-check-deep.md) · M
 - [x] [05-01c `tinkerpad tools list` and `tinkerpad tools install`](phase-5-community/05-01c-tools-cli.md) · S
-- [ ] [05-02 Plugin install](phase-5-community/05-02-plugin-install.md) · M
+- [x] [05-02 Plugin install](phase-5-community/05-02-plugin-install.md) · M
 - [ ] [05-03 Plugin template repo](phase-5-community/05-03-plugin-template.md) · S
 - [ ] [05-04 Published docs and versioning policy](phase-5-community/05-04-docs-and-versioning.md) · M
 - [ ] [05-05 Registry index](phase-5-community/05-05-registry.md) · S

@@ -58,6 +58,10 @@ pub struct Language {
     /// Where the main file lives inside a playground. Defaults to
     /// `main.<extension>`.
     pub main_path: Option<String>,
+    /// The plugin's own version, for the plugins panel and `plugin list`
+    /// (work item 05-02). Optional, and never interpreted: `api` is the
+    /// compatibility contract, not this.
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
