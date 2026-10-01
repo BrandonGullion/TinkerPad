@@ -9,6 +9,7 @@
 //! publishing on the [`EventBus`].
 
 pub mod check;
+pub mod cli;
 pub mod events;
 mod helpers;
 mod hooks;

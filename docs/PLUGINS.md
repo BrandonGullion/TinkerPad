@@ -854,6 +854,35 @@ runner. A checker with its own copies would pass plugins the app rejects.
 - Everything is scaffolded into a temporary library that is removed afterwards.
   The check never touches yours.
 
+### 8.1a `tinkerpad tools`
+
+What every language needs, and the ability to get it, without a window — for a
+CI runner, a container, or a machine being set up (work item 05-01c).
+
+```
+$ tinkerpad tools list
+Go
+  Toolchain        missing  go  Install Go: https://go.dev/dl
+  Language server  missing  gopls  go isn't installed, and it is what installs this
+TypeScript
+  Toolchain        ready    node 24.14.0  /usr/local/bin/node
+  Language server  ready    typescript-language-server  <app-data>/tools/typescript/acquired/…
+
+$ tinkerpad tools install typescript --which lsp --yes
+Language server: npm install typescript-language-server (into TinkerPad's own folder)
+  added 3 packages in 5s
+Done.
+```
+
+- `list` takes `--json`. It is the same answer the Languages button shows.
+- `install <language>` takes `--which toolchain|lsp|workspace` to pick one, and
+  `--yes` to skip the confirmation. Without `--yes` it shows the command or the
+  URL and checksum and asks; with no terminal to ask, it says so and does
+  nothing.
+- `[tools] acquire = "never"` refuses here as it does in the window.
+- The exit code is 0 when there was nothing to do or everything worked, 1 when
+  something failed or was refused, 2 for a usage mistake.
+
 ### 8.2 The `check/` folder
 
 Running a playground is the easy half. A plugin whose `Dump` emits malformed

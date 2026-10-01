@@ -9,8 +9,10 @@
 /// subcommand, and nothing a dependency would make clearer.
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("plugin") {
-        std::process::exit(plugin_subcommand(&args[1..]));
+    match args.first().map(String::as_str) {
+        Some("plugin") => std::process::exit(plugin_subcommand(&args[1..])),
+        Some("tools") => std::process::exit(tools_subcommand(&args[1..])),
+        _ => {}
     }
     for arg in &args {
         match arg.as_str() {
@@ -70,6 +72,84 @@ fn plugin_subcommand(args: &[String]) -> i32 {
     report.exit_code()
 }
 
+/// `tinkerpad tools list|install` (work item 05-01c).
+///
+/// The same offers the window makes, for a machine with no window: a CI
+/// runner, a container, or a laptop being set up.
+fn tools_subcommand(args: &[String]) -> i32 {
+    let mut rest = args.iter().map(String::as_str);
+    let verb = rest.next();
+    let mut json = false;
+    let mut yes = false;
+    let mut which = None;
+    let mut language = None;
+    while let Some(arg) = rest.next() {
+        match arg {
+            "--json" => json = true,
+            "--yes" | "-y" => yes = true,
+            "--which" => {
+                which = match rest.next() {
+                    Some("toolchain") => Some(tinkerpad_app::tools::Which::Toolchain),
+                    Some("lsp") => Some(tinkerpad_app::tools::Which::Lsp),
+                    Some("workspace") => Some(tinkerpad_app::tools::Which::Workspace),
+                    other => {
+                        say(&format!(
+                            "--which takes toolchain, lsp or workspace, not {}.",
+                            other.unwrap_or("nothing")
+                        ));
+                        return 2;
+                    }
+                }
+            }
+            "-h" | "--help" => {
+                say(TOOLS_HELP);
+                return 0;
+            }
+            other if other.starts_with('-') => {
+                say(&format!("Unknown option `{other}`.\n\n{TOOLS_HELP}"));
+                return 2;
+            }
+            value => language = Some(value.to_owned()),
+        }
+    }
+
+    match verb {
+        Some("list") => tinkerpad_app::cli::list(json, &mut |line| say(line)),
+        Some("install") => match language {
+            Some(language) => {
+                tinkerpad_app::cli::install(&language, which, yes, &mut |line| say(line))
+            }
+            None => {
+                say(&format!("Install what?\n\n{TOOLS_HELP}"));
+                2
+            }
+        },
+        _ => {
+            say(TOOLS_HELP);
+            2
+        }
+    }
+}
+
+const TOOLS_HELP: &str = "\
+What each language needs, and how to get it.
+
+USAGE:
+    tinkerpad tools list [--json]
+    tinkerpad tools install <language> [--which toolchain|lsp|workspace] [--yes]
+
+OPTIONS:
+        --json           Print the list as JSON, for CI
+        --which <what>   Install only the toolchain, the language server, or
+                         what the server needs in its workspace
+    -y, --yes            Don't ask before running or downloading
+    -h, --help           Print this and exit
+
+`install` shows what it is about to run or fetch and asks first. It installs
+into TinkerPad's own folder where it can, so nothing needs administrator
+rights and deleting that folder undoes it. `[tools] acquire = \"never\"` in
+settings.toml refuses here as it does in the window.";
+
 const PLUGIN_HELP: &str = "\
 Check that a plugin folder works.
 
@@ -105,6 +185,10 @@ const HELP: &str = concat!(
     "
 ",
     "    tinkerpad plugin check <dir>
+",
+    "    tinkerpad tools list
+",
+    "    tinkerpad tools install <language>
 ",
     "
 ",

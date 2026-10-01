@@ -34,19 +34,100 @@ needs to check the bundled plugins.
 
 ## Expectations
 
-- [ ] `tinkerpad tools list`, with `--json`, printing what `tools_status`
+- [x] `tinkerpad tools list`, with `--json`, printing what `tools_status`
       already answers: every language, everything it needs, whether it is
       there, where it was found, and whether TinkerPad could install it.
-- [ ] `tinkerpad tools install <language> [--which toolchain|lsp|workspace]`,
+- [x] `tinkerpad tools install <language> [--which toolchain|lsp|workspace]`,
       running exactly what the window's Install button runs, streaming the same
       output, and exiting non-zero if it fails.
-- [ ] It prints what it is about to do before doing it, as the window does.
+- [x] It prints what it is about to do before doing it, as the window does.
       `--yes` for a script that can't answer; without it, a download asks.
-- [ ] `[tools] acquire = "never"` refuses here too, with the same sentence.
-- [ ] Shares `tools::status`, `tools::offer` and `tools::acquire` with the app
+- [x] `[tools] acquire = "never"` refuses here too, with the same sentence.
+- [x] Shares `tools::status`, `tools::offer` and `tools::acquire` with the app
       (04-08a) rather than reimplementing any of it.
-- [ ] A test that lists and installs against the fake plugin and local server
+- [x] A test that lists and installs against the fake plugin and local server
       the 04-08a tests already use. Nothing reaches the network.
+
+## Results
+
+Measured on Windows 11, 2026-09-30.
+
+**It is the window's answer, from a terminal.** `tools_status` and
+`tools::acquire` are called unchanged; what this item added is the two things a
+terminal needs and a window doesn't — somewhere to find the app's folders
+without Tauri's path resolver, and somewhere for progress to go.
+
+```
+$ tinkerpad tools list
+C#
+  Toolchain        ready    dotnet 10.0.201  C:\Program Files\dotnet\dotnet.exe
+Go
+  Toolchain        missing  go  Install Go: https://go.dev/dl
+  Language server  missing  gopls  go isn't installed, and it is what installs this
+TypeScript
+  Toolchain        ready    node 24.14.0  C:\Program Files\nodejs\node.exe
+  Language server  ready    typescript-language-server  …\tools\typescript\acquired\…
+  Workspace        ready    node_modules/typescript  C:\Users\Brandon\TinkerPad\node_modules/typescript
+3 things missing. `tinkerpad tools install <language>` can get what it can.
+```
+
+That TypeScript row is the one worth looking at: the server it found is the one
+the **window** installed into `<app-data>/tools` in 04-08b. The CLI builds the
+same resolver — settings overrides, then acquired tools, then the discovered
+`PATH` — so the two agree about what is installed. That is also the gap 05-01b
+had to leave open; `plugin check` can close it now.
+
+**Installing, for real.** The acquired server was deleted and put back through
+the command line:
+
+```
+$ tinkerpad tools install typescript --which lsp
+Language server: npm install typescript-language-server (into TinkerPad's own folder)
+Nothing here runs without being asked: add --yes to go ahead.
+Nothing was installed.                                            (exit 1)
+
+$ tinkerpad tools install typescript --which lsp --yes
+Language server: npm install typescript-language-server (into TinkerPad's own folder)
+  added 3 packages in 5s
+Done.                                                             (exit 0)
+```
+
+**Asking, with nobody there.** A terminal gets a prompt. A pipe gets told to
+pass `--yes` and nothing runs — the alternative is a script that installs
+software because it was run, which is the one thing the whole `[tools]` design
+is against.
+
+**Exit codes**: 0 when there was nothing to do or everything worked, 1 when
+something failed or was refused, 2 for a usage mistake.
+
+**Finding the app's folders without Tauri.** `dirs::data_dir()` plus the bundle
+identifier gives the same path `app_data_dir()` does. The identifier is a
+constant here, which could drift from `tauri.conf.json` without anyone
+noticing, so a test reads that file and compares — if they ever disagree, the
+CLI would quietly report on a folder the window cannot see, and this says so
+instead. The plugins folder is found beside the executable, then in
+`Contents/Resources` for macOS, then the repository, which is the same order
+the window's resolver ends up at.
+
+**Tests** — nine in `crates/tinkerpad-app/tests/tools_cli.rs`, over the same
+fake package manager and local file server the acquisition tests use (04-08a).
+Nothing reaches the network.
+
+| Test | What it pins down |
+|---|---|
+| list says what is missing and whether it can be installed | the common case |
+| list says why when it cannot | a plugin with no `acquire` falls back to its hint |
+| list as JSON is the same answer the window gets | shape and field names |
+| install asks before it runs anything | exit 1, nothing run, `--yes` named |
+| install with `--yes` runs it and says what it said | the tool's own output is forwarded |
+| install downloads through the mirror and says where it landed | URL and checksum shown first, `<app-data>/tools` after |
+| a download that fails its checksum is reported | exit 1, the reason quoted |
+| `acquire = "never"` refuses here too | exit 1, nothing run |
+| a language that is not here says so | exit 2 |
+
+`Context::over` exists for those tests: `Context::open` reads the machine's own
+settings, plugins and `PATH`, which is right for the command line and useless
+for a test.
 
 ## Out of scope
 
