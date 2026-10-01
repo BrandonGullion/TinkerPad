@@ -141,13 +141,13 @@ flips from missing to present when the path appears.
 
 **Deliberately not done.** No control for `[tools] acquire` in the settings
 window: the file documents it in place, and the offers themselves are where the
-decision is actually made. The CLI (`tinkerpad tools list` / `install`) is 05-01
+decision is actually made. The CLI (`tinkerpad tools list` / `install`) is 05-01c
 and shares `tools_status` and `acquire_tool` as they now stand.
 
 ## Out of scope
 
 The acquisition machinery itself (04-08a). The CLI (`tinkerpad tools list` and
-`tinkerpad tools install <language>`), which is a subcommand in 05-01 and shares
+`tinkerpad tools install <language>`), which is a subcommand in 05-01c and shares
 the same code.
 
 ## Gotchas

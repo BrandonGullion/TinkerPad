@@ -39,7 +39,7 @@ only way to keep macOS and Linux honest from a Windows desk.
 ## Out of scope
 
 Release bundling, signing, cross builds for arm64 Linux / x64 macOS (04-06).
-Toolchain installs for plugin checks (added when 05-01 exists).
+Toolchain installs for plugin checks (added when 05-01b exists).
 
 ## Gotchas
 

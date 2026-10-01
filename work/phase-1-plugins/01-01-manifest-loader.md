@@ -23,7 +23,7 @@ impression of the whole plugin system.
       every *section* struct, but the top-level document collects unknown tables
       into a `HashMap` and logs a warning naming each. (DEBUGGING.md D6: a plugin
       can ship a `[debug]` section that older cores ignore. `plugin check` in
-      05-01 treats unknown top-level tables as errors in strict mode so typos like
+      05-01a treats unknown top-level tables as errors in strict mode so typos like
       `[lps]` are still caught.)
 - [x] `Plugin::load(dir) -> Result<Plugin, ManifestError>` reads and validates:
       `api == 1`; `id` matches `[a-z0-9-]+`; at least one kind, exactly one
