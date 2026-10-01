@@ -56,6 +56,10 @@ sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
+# Finding the app's own data folder from the command line, where there is no
+# Tauri path resolver to ask (work item 05-01c). Already in the tree: Tauri's
+# own resolver uses it.
+dirs = "6"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }

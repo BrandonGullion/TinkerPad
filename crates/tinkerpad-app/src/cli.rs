@@ -1,0 +1,447 @@
+//! `tinkerpad tools list` and `tinkerpad tools install` (work item 05-01c).
+//!
+//! What every language needs, and the ability to get it, without opening a
+//! window. A CI runner, a new machine or a Dockerfile wants exactly what the
+//! Languages button offers, and has no display to offer it on.
+//!
+//! The work is [`crate::tools`]'s, unchanged: the same status, the same
+//! offers, the same acquisition the window performs. What is here is the two
+//! things a terminal needs that a window doesn't — somewhere to find the app's
+//! folders without Tauri's path resolver, and somewhere to put the progress
+//! that normally arrives as events.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use tinkerpad_core::{CoreEvent, Settings, ToolchainState};
+use tinkerpad_plugin::{PROBE_TIMEOUT, Plugin, Resolver, ToolchainOverrides, env::discover_path};
+
+use crate::events::EventBus;
+use crate::tools::{self, Env, Which};
+
+/// The bundle identifier, which names the app's data folder.
+///
+/// It has to agree with `tauri.conf.json`; a test below reads that file and
+/// says so if it ever stops agreeing. Without this the CLI would look in a
+/// different folder from the window and report tools it cannot see.
+const IDENTIFIER: &str = "io.github.brandongullion.tinkerpad";
+
+/// `<app-data>`: the same folder Tauri's `app_data_dir()` resolves to.
+pub fn data_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join(IDENTIFIER))
+}
+
+/// Where playgrounds live, by the same rules the window uses
+/// (`crate::library::root`), minus the parts that need an app handle.
+fn library_root(settings: &Settings) -> PathBuf {
+    if let Some(dir) = std::env::var_os(crate::library::LIBRARY_ENV).filter(|v| !v.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    if let Some(root) = settings
+        .library
+        .root
+        .as_ref()
+        .filter(|r| !r.as_os_str().is_empty())
+    {
+        return root.clone();
+    }
+    dirs::home_dir()
+        .map(|home| home.join("TinkerPad"))
+        .unwrap_or_default()
+}
+
+/// The bundled plugins folder, for a build with no resource resolver to ask.
+///
+/// Beside the executable in a packaged build, inside the repository in a
+/// development one — the two places `plugins::bundled_plugins_dir` looks,
+/// reached without an app handle.
+fn bundled_plugins() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        for candidate in [
+            dir.join("plugins"),
+            // macOS: the binary is in `Contents/MacOS`, resources next door.
+            dir.join("../Resources/plugins"),
+        ] {
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
+    repo.is_dir().then(|| repo.canonicalize().unwrap_or(repo))
+}
+
+fn user_plugins(data: &std::path::Path) -> PathBuf {
+    std::env::var_os(crate::plugins::USER_PLUGINS_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data.join("plugins"))
+}
+
+/// Everything the two subcommands need, worked out once.
+///
+/// Public so a test can build one over a fake plugin and a temporary folder:
+/// `open` reads the machine's own settings, plugins and `PATH`, which is right
+/// for the command line and useless for a test.
+pub struct Context {
+    plugins: Vec<Arc<Plugin>>,
+    env: Env,
+    states: Vec<(String, ToolchainState)>,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl Context {
+    /// A context over a given plugin set and environment, for tests.
+    pub fn over(
+        plugins: Vec<Arc<Plugin>>,
+        env: Env,
+        states: Vec<(String, ToolchainState)>,
+    ) -> Result<Context, String> {
+        Ok(Context {
+            plugins,
+            env,
+            states,
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| e.to_string())?,
+        })
+    }
+
+    fn open(out: &mut dyn FnMut(&str)) -> Result<Context, String> {
+        let Some(data) = data_dir() else {
+            return Err("could not work out where TinkerPad keeps its data".to_owned());
+        };
+        let settings = crate::settings::read(&crate::settings::path(&data))
+            .map_err(|problem| problem.message.clone())
+            .unwrap_or_default();
+
+        let registry =
+            tinkerpad_plugin::PluginRegistry::load(bundled_plugins(), user_plugins(&data));
+        for failure in registry.failures() {
+            out(&format!(
+                "warning: {} could not be loaded and was skipped",
+                failure.dir.display()
+            ));
+        }
+        let plugins: Vec<Arc<Plugin>> = registry
+            .all()
+            .iter()
+            .map(|entry| entry.plugin.clone())
+            .collect();
+        if plugins.is_empty() {
+            return Err("no language plugins were found".to_owned());
+        }
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        // The same resolver the window builds: settings overrides, then
+        // whatever TinkerPad has acquired, then the discovered PATH (04-08a).
+        let path = runtime.block_on(discover_path());
+        let resolver = Arc::new(
+            Resolver::new(path, ToolchainOverrides::of(&settings))
+                .with_acquired(tools::search_paths(&data)),
+        );
+
+        let scratch_root = data.join("scratch");
+        let states = runtime.block_on(async {
+            let mut found = Vec::new();
+            for plugin in &plugins {
+                let scratch = scratch_root.join(plugin.id.as_str());
+                let state =
+                    tinkerpad_plugin::probe(plugin, &resolver, &scratch, PROBE_TIMEOUT).await;
+                found.push((plugin.id.to_string(), state));
+            }
+            found
+        });
+
+        let env = Env {
+            data_dir: data,
+            events: Arc::new(EventBus::new()),
+            resolver,
+            mirror: settings
+                .tools
+                .mirror
+                .clone()
+                .filter(|mirror| !mirror.is_empty()),
+            offers: settings.tools.offers(),
+            library_root: library_root(&settings),
+            scratch_root,
+        };
+        Ok(Context {
+            plugins,
+            env,
+            states,
+            runtime,
+        })
+    }
+
+    fn state_of(&self, id: &str) -> Option<ToolchainState> {
+        self.states
+            .iter()
+            .find(|(plugin, _)| plugin == id)
+            .map(|(_, state)| state.clone())
+    }
+
+    fn needs(&self) -> Vec<tools::LanguageNeeds> {
+        self.plugins
+            .iter()
+            .map(|plugin| tools::LanguageNeeds {
+                language: plugin.id.clone(),
+                name: plugin.name.clone(),
+                needs: tools::needs(&self.env, plugin, self.state_of(plugin.id.as_str())),
+            })
+            .collect()
+    }
+}
+
+/// `tinkerpad tools list [--json]`.
+pub fn list(json: bool, out: &mut dyn FnMut(&str)) -> i32 {
+    let context = match Context::open(out) {
+        Ok(context) => context,
+        Err(error) => {
+            out(&error);
+            return 2;
+        }
+    };
+    list_in(&context, json, out)
+}
+
+/// The same, over a context already built.
+pub fn list_in(context: &Context, json: bool, out: &mut dyn FnMut(&str)) -> i32 {
+    let needs = context.needs();
+
+    if json {
+        match serde_json::to_string_pretty(&needs) {
+            Ok(text) => out(&text),
+            Err(error) => {
+                out(&format!("{{\"error\":\"{error}\"}}"));
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    let mut missing = 0;
+    for entry in &needs {
+        out(&entry.name);
+        for need in &entry.needs {
+            if !need.present {
+                missing += 1;
+            }
+            let state = if need.present { "ready" } else { "missing" };
+            // What to do about it, in the same column as where it was found:
+            // either this can install it, or here is why it can't.
+            let where_ = if need.present {
+                need.found_at.clone().unwrap_or_default()
+            } else {
+                match &need.offer {
+                    Some(offer) => match &offer.blocked {
+                        None => "can install".to_owned(),
+                        Some(why) => why.clone(),
+                    },
+                    None => need
+                        .hint
+                        .clone()
+                        .unwrap_or_else(|| "install it by hand".to_owned()),
+                }
+            };
+            let version = need
+                .version
+                .as_ref()
+                .map(|v| format!(" {v}"))
+                .unwrap_or_default();
+            out(format!(
+                "  {:<16} {:<8} {}{}  {where_}",
+                need.label, state, need.what, version
+            )
+            .trim_end());
+        }
+    }
+    out(&match missing {
+        0 => "Every language has what it needs.".to_owned(),
+        1 => {
+            "1 thing missing. `tinkerpad tools install <language>` can get what it can.".to_owned()
+        }
+        n => {
+            format!("{n} things missing. `tinkerpad tools install <language>` can get what it can.")
+        }
+    });
+    0
+}
+
+/// `tinkerpad tools install <language> [--which …] [--yes]`.
+pub fn install(language: &str, which: Option<Which>, yes: bool, out: &mut dyn FnMut(&str)) -> i32 {
+    let context = match Context::open(out) {
+        Ok(context) => context,
+        Err(error) => {
+            out(&error);
+            return 2;
+        }
+    };
+    install_in(&context, language, which, yes, out)
+}
+
+/// The same, over a context already built.
+pub fn install_in(
+    context: &Context,
+    language: &str,
+    which: Option<Which>,
+    yes: bool,
+    out: &mut dyn FnMut(&str),
+) -> i32 {
+    let Some(plugin) = context
+        .plugins
+        .iter()
+        .find(|plugin| plugin.id.as_str() == language)
+        .cloned()
+    else {
+        out(&format!(
+            "No plugin for `{language}`. `tinkerpad tools list` says what there is."
+        ));
+        return 2;
+    };
+
+    let needs = tools::needs(&context.env, &plugin, context.state_of(plugin.id.as_str()));
+    // Everything missing that can be installed, or just the one asked for.
+    let wanted: Vec<&tools::Need> = needs
+        .iter()
+        .filter(|need| which.is_none_or(|only| only == need.which))
+        .filter(|need| !need.present)
+        .collect();
+
+    if wanted.is_empty() {
+        out(&format!("{} has everything it needs.", plugin.name));
+        return 0;
+    }
+    let blocked: Vec<&tools::Need> = wanted
+        .iter()
+        .copied()
+        .filter(|need| need.offer.as_ref().is_none_or(|o| o.blocked.is_some()))
+        .collect();
+    let doable: Vec<Which> = wanted
+        .iter()
+        .filter(|need| need.offer.as_ref().is_some_and(|o| o.blocked.is_none()))
+        .map(|need| need.which)
+        .collect();
+
+    for need in &blocked {
+        let why = need
+            .offer
+            .as_ref()
+            .and_then(|offer| offer.blocked.clone())
+            .unwrap_or_else(|| format!("{} doesn't say how to install this", plugin.name));
+        out(&format!("{}: {why}", need.label));
+        if let Some(hint) = &need.hint {
+            out(&format!("  {hint}"));
+        }
+    }
+    if doable.is_empty() {
+        return 1;
+    }
+
+    // What is about to happen, before it happens — the same thing the window
+    // shows, in the place a terminal shows things.
+    for need in wanted
+        .iter()
+        .filter(|need| need.offer.as_ref().is_some_and(|o| o.blocked.is_none()))
+    {
+        let offer = need.offer.as_ref().expect("checked just above");
+        out(&format!("{}: {}", need.label, offer.label));
+        if let Some(url) = &offer.url {
+            out(&format!("  {url}"));
+        }
+        if let Some(sha) = &offer.sha256 {
+            out(&format!("  sha256 {sha}"));
+        }
+    }
+    if !yes && !confirm(out) {
+        out("Nothing was installed.");
+        return 1;
+    }
+
+    // Progress reaches a window as events; here it is lines on stdout.
+    let mut failed = false;
+    for which in doable {
+        let mut listening = context.env.events.subscribe();
+        let acquired = context.runtime.block_on(async {
+            let work = tools::acquire(&context.env, &plugin, which);
+            tokio::pin!(work);
+            loop {
+                tokio::select! {
+                    event = listening.recv() => {
+                        if let Ok(envelope) = event
+                            && let CoreEvent::Tool { line, .. } = envelope.event
+                        {
+                            out(&format!("  {line}"));
+                        }
+                    }
+                    result = &mut work => return result,
+                }
+            }
+        });
+        match acquired {
+            Ok(Some(path)) => out(&format!("Installed at {}", path.display())),
+            Ok(None) => out("Done."),
+            Err(error) => {
+                out(&format!("Failed: {error}"));
+                failed = true;
+            }
+        }
+    }
+    i32::from(failed)
+}
+
+/// Ask before doing something that runs a program or reaches the network.
+fn confirm(out: &mut dyn FnMut(&str)) -> bool {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        out("Nothing here runs without being asked: add --yes to go ahead.");
+        return false;
+    }
+    out("Go ahead? [y/N]");
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The data folder is the window's, or the CLI reports on tools nobody
+    /// else can see.
+    #[test]
+    fn the_identifier_is_the_one_tauri_is_configured_with() {
+        let conf = include_str!("../tauri.conf.json");
+        let value: serde_json::Value = serde_json::from_str(conf).expect("tauri.conf.json");
+        assert_eq!(
+            value.get("identifier").and_then(|v| v.as_str()),
+            Some(IDENTIFIER),
+            "src/cli.rs must use the identifier from tauri.conf.json"
+        );
+    }
+
+    #[test]
+    fn the_library_is_the_env_var_before_the_setting() {
+        let mut settings = Settings::default();
+        settings.library.root = Some(PathBuf::from("/from/settings"));
+        // Safety: the test is single-threaded in its own process section and
+        // puts the variable back.
+        let before = std::env::var_os(crate::library::LIBRARY_ENV);
+        unsafe { std::env::set_var(crate::library::LIBRARY_ENV, "/from/the/env") };
+        assert_eq!(library_root(&settings), PathBuf::from("/from/the/env"));
+        unsafe { std::env::remove_var(crate::library::LIBRARY_ENV) };
+        assert_eq!(library_root(&settings), PathBuf::from("/from/settings"));
+        if let Some(value) = before {
+            unsafe { std::env::set_var(crate::library::LIBRARY_ENV, value) };
+        }
+    }
+}
