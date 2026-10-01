@@ -27,6 +27,10 @@ fn main() {
                 println!("{value}");
                 std::io::stdout().flush().unwrap();
             }
+            "stderr" => eprintln!("{value}"),
+            "sleep" => {
+                std::thread::sleep(std::time::Duration::from_millis(value.parse().unwrap_or(0)))
+            }
             "exit" => std::process::exit(value.parse().unwrap_or(1)),
             other => {
                 eprintln!("faketool: unknown step {other:?}");
