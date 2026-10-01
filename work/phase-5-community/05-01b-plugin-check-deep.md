@@ -25,26 +25,103 @@ plugin bug found by hand so far (04-07 alone found four).
 
 ## Expectations
 
-- [ ] A documented `check/` folder convention: `check/dump.<ext>`,
+- [x] A documented `check/` folder convention: `check/dump.<ext>`,
       `check/error.<ext>`, `check/hang.<ext>`. A plugin without one skips the
       checks that need it, with a message saying which file to add.
-- [ ] **Dump** — `check/dump.<ext>` dumps a known table; the checker asserts a
+- [x] **Dump** — `check/dump.<ext>` dumps a known table; the checker asserts a
       `table` node arrives with the expected columns and row count, through the
       same parser the app uses (01-07).
-- [ ] **Errors** — `check/error.<ext>` has a compile or runtime error; at least
+- [x] **Errors** — `check/error.<ext>` has a compile or runtime error; at least
       one annotation with a line number is produced by `[output].error_regex`.
-- [ ] **Helper**, if `[helper]` is declared: `build` succeeds if present;
+- [x] **Helper**, if `[helper]` is declared: `build` succeeds if present;
       `hello`/`ready` within 10 s; a `run` works; `cancel` on
       `check/hang.<ext>` completes within 3 s; every declared hook answers
       within 5 s with a well-formed `result`; `shutdown` exits cleanly.
-- [ ] **Language server**, if `[lsp]` is declared: it spawns, `initialize`
+- [x] **Language server**, if `[lsp]` is declared: it spawns, `initialize`
       succeeds, and a `didOpen` of the dump playground produces zero error
       diagnostics within 30 s.
-- [ ] Every bundled plugin passes, and gets whatever `check/` files it needs.
-- [ ] CI runs `plugin check` over every bundled plugin, on the platforms whose
+- [x] Every bundled plugin passes, and gets whatever `check/` files it needs.
+- [x] CI runs `plugin check` over every bundled plugin, on the platforms whose
       toolchains the workflow installs.
-- [ ] The convention documented in PLUGINS.md §8, so 05-03's template repo can
+- [x] The convention documented in PLUGINS.md §8, so 05-03's template repo can
       ship it.
+
+## Results
+
+Measured on Windows 11, 2026-09-30.
+
+**A bug in the app, found by the first thing this was pointed at.** PowerShell
+errors were never annotated — not by the checker, and not by the window
+either. PowerShell 7 colours its error output even when that output is a pipe,
+so the escape sequence sits between the newline and the `At ` the plugin's
+`error_regex` is anchored on, and the pattern silently never matches.
+
+Fixed in `Annotator::line`, which now strips SGR sequences before matching.
+That is the right place: a pattern should match what a tool said, not what
+colour it said it in, and the fix covers every language rather than the one
+that was noticed. `line 30:1: this is the mistake` now, where before there was
+nothing at all.
+
+**Every bundled plugin, after being given a `check/` folder:**
+
+| Plugin | Result |
+|---|---|
+| C# | 12 passed — dump, errors, and a helper that builds in 4.5 s and cancels in 8 ms |
+| Go | 1 passed, 3 skipped — no Go on this machine |
+| PowerShell | 6 passed — including the errors check that was broken |
+| Python | 11 passed, 1 skipped — server not installed |
+| Rust | 8 passed — including rust-analyzer finding nothing wrong with the sample |
+| TypeScript | 11 passed, 1 skipped — server not installed |
+
+Nothing failed. **Go could not be checked beyond its manifest**: this machine
+has no Go toolchain, so its `check/` files are written but unverified. The CI
+job will be the first thing to run them.
+
+**Numbers worth keeping**, from the helper checks:
+
+| Plugin | ready | warm run | cancel | shutdown |
+|---|---|---|---|---|
+| Python | 71 ms | 13 ms | 1 ms | 9 ms |
+| TypeScript | 65 ms | 26 ms | **2,015 ms** | 0 ms |
+| C# | 4,545 ms | 57 ms | 8 ms | 16 ms |
+
+TypeScript's cancel is two seconds — inside the three the item allows, but an
+order of magnitude slower than the others, and worth knowing before someone
+notices it by pressing the button. C#'s four and a half seconds to ready is a
+compile, and only on the first run.
+
+**The `check/` convention.** `check/dump.<ext>`, `check/error.<ext>`,
+`check/hang.<ext>`, documented in PLUGINS.md §8.2. Two decisions worth
+recording:
+
+- **The table is fixed** — columns `name` and `n`, rows `ada`/1 and
+  `grace`/2 — so the checker can assert rather than guess. Column names are
+  compared without case, so C#, Go and PowerShell can name fields the way
+  those languages do.
+- **A sample is written between the kind's locked lines, not over them.**
+  PowerShell's `Dump` is defined in its kind's prelude; a sample written over
+  the top of that would be testing a function that isn't there. So a sample is
+  what a person would type, which is also what makes it readable.
+
+**Not installed is a skip, everywhere.** A missing language server skips, as a
+missing toolchain does: this machine lacking basedpyright says nothing about
+the Python plugin. One gap is recorded in the code: the checker searches `PATH`
+and the settings overrides, but not the folder the window acquires tools into
+(04-08a), because it has no app data directory of its own. A server installed
+only through the Languages button therefore skips here. `tinkerpad tools`
+(05-01c) brings that directory to the command line and can close it.
+
+**Tests** — eight more in `crates/tinkerpad-app/tests/check.rs`, seventeen in
+total, all using `tinkerpad-faketool`: a dump that matches, one with a renamed
+column, a run that dumps nothing, a missing `check/` folder (asserting the
+report names the file to add), an error sample that produces a position, one
+the pattern misses, one that succeeds when it should fail, and a plugin with no
+`[output]` section. `tinkerpad-faketool` gained a `table` step that writes a
+dump payload on the wire, so these need no language installed.
+
+**CI** runs `plugin check` over every plugin folder on all three platforms. A
+toolchain a runner hasn't got is a skip, so the job stays useful as languages
+are added rather than becoming a list of exclusions.
 
 ## Out of scope
 

@@ -833,6 +833,14 @@ runner. A checker with its own copies would pass plugins the app rejects.
 | `toolchain` | A `[toolchain].probe` entry succeeds. |
 | `templates` | Every kind's template renders and every `[scaffold]` file is written. |
 | `run:<kind>` | A fresh playground of that kind exits 0 within 60 s and prints something. |
+| `dump` | `check/dump.<ext>` produces the table below. |
+| `errors` | `check/error.<ext>` fails, and `[output].error_regex` finds a position in it. |
+| `helper:start` | The helper builds (if it declares a build), says `hello`, and reaches `ready`. |
+| `helper:run` | A run through the helper produces the same table. |
+| `helper:cancel` | `check/hang.<ext>` stops within 3 s of being cancelled. |
+| `helper:<hook>` | Each declared hook answers within 5 s with a well-formed result. |
+| `helper:shutdown` | The helper exits when asked. |
+| `server` | `[lsp]` starts, initialises, and reports no errors in `check/dump.<ext>` within 30 s. |
 
 - **A missing toolchain is a skip, not a failure.** A machine without Go can
   still say whether the Go plugin's manifest is sound, so the exit code stays 0
@@ -846,9 +854,47 @@ runner. A checker with its own copies would pass plugins the app rejects.
 - Everything is scaffolded into a temporary library that is removed afterwards.
   The check never touches yours.
 
-Running a playground is the easy half; `dump`, `[output].error_regex`, helpers
-and language servers are checked too, from a `check/` folder the plugin
-provides (work item 05-01b).
+### 8.2 The `check/` folder
+
+Running a playground is the easy half. A plugin whose `Dump` emits malformed
+nodes, whose `error_regex` never matches, or whose helper ignores `cancel` is
+one that looks fine until someone uses it. Those checks need sample
+playgrounds, and the plugin provides them in a `check/` folder:
+
+| File | What it must do |
+|---|---|
+| `check/dump.<ext>` | Dump the table below, and nothing else that is a table. |
+| `check/error.<ext>` | Fail, with a position `[output].error_regex` can find. |
+| `check/hang.<ext>` | Run until it is cancelled. |
+
+A plugin without one of these skips the checks that need it, and the report
+says which file to add. Nothing is required: a plugin with no `check/` folder
+still passes the first four checks.
+
+**The table.** Fixed so the checker can assert rather than guess, and small
+enough to write in three lines of any language:
+
+| name | n |
+|---|---|
+| ada | 1 |
+| grace | 2 |
+
+Column names are compared without case, so C#, Go and PowerShell can name
+fields the way those languages do. Here it is in Python:
+
+```python
+from tinkerpad import dump
+
+dump([{"name": "ada", "n": 1}, {"name": "grace", "n": 2}], "check")
+```
+
+**Samples are the part a person types.** Each is written *between* the default
+kind's locked lines, not over them — PowerShell's `Dump` is defined in its
+kind's prelude, and a sample written over the top of that would be testing a
+function that isn't there. So write `check/dump.<ext>` the way you would write
+the playground, not the way the file ends up on disk.
+
+The bundled plugins' `check/` folders are worth copying from.
 
 ## 9. Highlighters
 

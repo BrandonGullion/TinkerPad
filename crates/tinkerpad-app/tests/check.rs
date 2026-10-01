@@ -29,6 +29,14 @@ impl Scratch {
         std::fs::write(self.0.join("plugin.toml"), manifest).unwrap();
         &self.0
     }
+
+    /// Put a file in the plugin's `check/` folder.
+    fn sample(&self, name: &str, text: &str) -> &Self {
+        let dir = self.0.join("check");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.x")), text).unwrap();
+        self
+    }
 }
 
 impl Drop for Scratch {
@@ -90,6 +98,15 @@ fn outcome(report: &tinkerpad_app::check::Report, id: &str) -> Option<Outcome> {
         .iter()
         .find(|check| check.id == id)
         .map(|check| check.outcome)
+}
+
+/// A manifest whose run prints `run_steps`, with an `[output]` pattern that
+/// finds `line N: message`.
+fn manifest_with_output(run_steps: &str) -> String {
+    format!(
+        "{}\n[output]\nerror_regex = 'line (?<line>\\d+): (?<message>.+)'\n",
+        manifest(run_steps)
+    )
 }
 
 #[test]
@@ -256,5 +273,147 @@ fn nothing_is_left_behind_in_the_users_library() {
         left_behind(),
         0,
         "the check's temporary library should be gone"
+    );
+}
+
+// --- the checks that need a `check/` folder (work item 05-01b) -------------
+
+#[test]
+fn a_dump_that_matches_the_convention_passes() {
+    let s = Scratch::new("dump-good");
+    let dir = s.plugin(&manifest(r#""table", "good""#)).to_path_buf();
+    s.sample("dump", "ignored: the fake tool prints the table itself");
+    let (report, _) = run_check(&dir, Some("dump"));
+
+    assert_eq!(
+        outcome(&report, "dump"),
+        Some(Outcome::Pass),
+        "{:#?}",
+        report.checks
+    );
+    assert!(
+        report.checks[0].detail.contains("2 rows"),
+        "{:?}",
+        report.checks[0]
+    );
+}
+
+#[test]
+fn a_dump_with_the_wrong_columns_says_which() {
+    let s = Scratch::new("dump-columns");
+    let dir = s.plugin(&manifest(r#""table", "columns""#)).to_path_buf();
+    s.sample("dump", "x");
+    let (report, _) = run_check(&dir, Some("dump"));
+
+    assert_eq!(outcome(&report, "dump"), Some(Outcome::Fail));
+    let detail = &report.checks[0].detail;
+    assert!(detail.contains("born"), "{detail}");
+    assert!(detail.contains("expected"), "{detail}");
+}
+
+#[test]
+fn a_run_that_dumps_nothing_is_a_failed_dump_check() {
+    let s = Scratch::new("dump-none");
+    let dir = s
+        .plugin(&manifest(r#""print", "no dump here""#))
+        .to_path_buf();
+    s.sample("dump", "x");
+    let (report, _) = run_check(&dir, Some("dump"));
+
+    assert_eq!(outcome(&report, "dump"), Some(Outcome::Fail));
+    assert!(
+        report.checks[0].detail.contains("no table"),
+        "{:?}",
+        report.checks[0]
+    );
+}
+
+#[test]
+fn no_check_folder_skips_and_says_what_to_add() {
+    let s = Scratch::new("dump-missing");
+    let dir = s.plugin(&manifest(r#""print", "x""#)).to_path_buf();
+    let (report, _) = run_check(&dir, Some("dump"));
+
+    assert_eq!(outcome(&report, "dump"), Some(Outcome::Skip));
+    // The reason names the file the author has to write.
+    assert!(
+        report.checks[0].detail.contains("check/dump.x"),
+        "{:?}",
+        report.checks[0]
+    );
+}
+
+#[test]
+fn an_error_sample_that_produces_a_position_passes() {
+    let s = Scratch::new("error-good");
+    let dir = s
+        .plugin(&manifest_with_output(
+            r#""stderr", "line 7: it went wrong", "exit", "1""#,
+        ))
+        .to_path_buf();
+    s.sample("error", "x");
+    let (report, _) = run_check(&dir, Some("errors"));
+
+    assert_eq!(
+        outcome(&report, "errors"),
+        Some(Outcome::Pass),
+        "{:#?}",
+        report.checks
+    );
+    assert!(
+        report.checks[0].detail.contains("line 7"),
+        "{:?}",
+        report.checks[0]
+    );
+}
+
+#[test]
+fn an_error_sample_the_pattern_misses_fails() {
+    let s = Scratch::new("error-missed");
+    let dir = s
+        .plugin(&manifest_with_output(
+            r#""stderr", "something went wrong somewhere", "exit", "1""#,
+        ))
+        .to_path_buf();
+    s.sample("error", "x");
+    let (report, _) = run_check(&dir, Some("errors"));
+
+    assert_eq!(outcome(&report, "errors"), Some(Outcome::Fail));
+    assert!(
+        report.checks[0].detail.contains("matched nothing"),
+        "{:?}",
+        report.checks[0]
+    );
+}
+
+#[test]
+fn an_error_sample_that_succeeds_is_not_testing_anything() {
+    let s = Scratch::new("error-passes");
+    let dir = s
+        .plugin(&manifest_with_output(r#""print", "all fine""#))
+        .to_path_buf();
+    s.sample("error", "x");
+    let (report, _) = run_check(&dir, Some("errors"));
+
+    assert_eq!(outcome(&report, "errors"), Some(Outcome::Fail));
+    assert!(
+        report.checks[0].detail.contains("should contain a mistake"),
+        "{:?}",
+        report.checks[0]
+    );
+}
+
+#[test]
+fn a_plugin_with_no_output_section_skips_the_error_check() {
+    let s = Scratch::new("error-nopattern");
+    let dir = s.plugin(&manifest(r#""print", "x""#)).to_path_buf();
+    s.sample("error", "x");
+    let (report, _) = run_check(&dir, Some("errors"));
+
+    assert_eq!(outcome(&report, "errors"), Some(Outcome::Skip));
+    assert!(
+        report.checks[0].detail.contains("no [output].error_regex"),
+        "{:?}",
+        report.checks[0]
     );
 }
