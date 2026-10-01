@@ -188,6 +188,28 @@ pub async fn open(
     ))
 }
 
+/// The running server that would have this playground's folder open, if there
+/// is one. Used when something refuses to let go of it (work item 04-09).
+pub fn server_for(
+    state: &AppState,
+    playground: &Playground,
+) -> Option<Arc<tinkerpad_lsp::ServerHandle>> {
+    let plugin = state
+        .plugins
+        .read()
+        .expect("plugins lock")
+        .get(playground.language.as_str())
+        .cloned()?;
+    let root = root_for(
+        &plugin,
+        Some(playground),
+        &state.library.root(),
+        &state.scratch_root(),
+    )
+    .ok()?;
+    state.lsp.get(plugin.id.as_str(), root.as_deref())
+}
+
 /// A playground is going away — deleted, or renamed so its folder moves.
 /// Tell whatever server has it, before the folder does (work item 02-10).
 ///

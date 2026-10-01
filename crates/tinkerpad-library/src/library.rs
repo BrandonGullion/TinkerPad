@@ -148,6 +148,36 @@ pub struct Library {
     known_source: Mutex<HashMap<PathBuf, u64>>,
 }
 
+/// How long to keep trying an operation another process is refusing, and how
+/// often. A file watcher letting go of a handle is a race, not a permanent
+/// state, so the first refusal is not the answer (work item 04-09).
+///
+/// Six attempts over about a second: long enough for a watcher that is on its
+/// way out, short enough that a folder something really is holding says so
+/// while the user is still looking at it.
+const RETRY_DELAYS_MS: [u64; 5] = [30, 70, 150, 300, 450];
+
+/// Run a file operation that another process may briefly refuse, retrying on
+/// the kinds of failure that pass.
+///
+/// `Err` from the last attempt is what comes back, so the message is about the
+/// state the folder was actually in rather than the first thing that went
+/// wrong.
+fn retrying<T, E>(mut attempt: impl FnMut() -> Result<T, E>) -> Result<T, E> {
+    if let Ok(value) = attempt() {
+        return Ok(value);
+    }
+    let mut last = None;
+    for delay in RETRY_DELAYS_MS {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(error) => last = Some(error),
+        }
+    }
+    Err(last.expect("the loop runs at least once"))
+}
+
 impl Library {
     /// Open the library at `root`, creating it (with a README) if needed, and
     /// index it.
@@ -383,7 +413,10 @@ impl Library {
         if !slug.eq_ignore_ascii_case(&current_folder) {
             let folder = slug::unique_folder(&self.root(), &slug, Some(&current_folder));
             let new_dir = self.root().join(folder);
-            std::fs::rename(&old_dir, &new_dir).map_err(|e| LibraryError::io(&old_dir, e))?;
+            // A rename moves the folder, so a watcher can refuse it exactly
+            // as it refuses a delete (work item 04-09).
+            retrying(|| std::fs::rename(&old_dir, &new_dir))
+                .map_err(|e| LibraryError::io(&old_dir, e))?;
             let old_main = p.main_file.clone();
             let rel = old_main.strip_prefix(&old_dir).unwrap_or(&old_main);
             p.main_file = new_dir.join(rel);
@@ -413,7 +446,12 @@ impl Library {
             .get(id)
             .cloned()
             .ok_or_else(|| LibraryError::NotFound(id.clone()))?;
-        platform::move_to_trash(&p.dir).map_err(|message| LibraryError::Trash {
+        // A language server watching the folder can refuse this, and on
+        // Windows always does while it holds a handle without
+        // FILE_SHARE_DELETE. Retried rather than failed on: the app has just
+        // told that server the playground is going (02-10), and letting go
+        // takes it a moment (work item 04-09).
+        retrying(|| platform::move_to_trash(&p.dir)).map_err(|message| LibraryError::Trash {
             path: p.dir.clone(),
             message,
         })?;
@@ -803,4 +841,61 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
     h.finish()
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::retrying;
+    use std::cell::Cell;
+
+    #[test]
+    fn something_that_works_first_time_is_not_slept_on() {
+        let started = std::time::Instant::now();
+        let calls = Cell::new(0);
+        let result: Result<u32, ()> = retrying(|| {
+            calls.set(calls.get() + 1);
+            Ok(7)
+        });
+        assert_eq!(result, Ok(7));
+        assert_eq!(calls.get(), 1);
+        assert!(started.elapsed() < std::time::Duration::from_millis(20));
+    }
+
+    #[test]
+    fn a_refusal_that_passes_is_waited_out() {
+        let calls = Cell::new(0);
+        // Refused twice, as a watcher on its way out would.
+        let result: Result<&str, &str> = retrying(|| {
+            calls.set(calls.get() + 1);
+            if calls.get() < 3 {
+                Err("busy")
+            } else {
+                Ok("moved")
+            }
+        });
+        assert_eq!(result, Ok("moved"));
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
+    fn a_refusal_that_stays_gives_back_the_last_words() {
+        let calls = Cell::new(0);
+        let result: Result<(), String> = retrying(|| {
+            calls.set(calls.get() + 1);
+            Err(format!("still busy ({})", calls.get()))
+        });
+        // Every delay is tried, and the message is from the final attempt
+        // rather than the first.
+        assert_eq!(calls.get(), super::RETRY_DELAYS_MS.len() + 1);
+        assert_eq!(result, Err("still busy (6)".to_owned()));
+    }
+
+    #[test]
+    fn it_gives_up_in_about_a_second() {
+        let total: u64 = super::RETRY_DELAYS_MS.iter().sum();
+        assert!(
+            (700..=1500).contains(&total),
+            "long enough for a watcher, short enough to answer while the user is looking: {total} ms"
+        );
+    }
 }
