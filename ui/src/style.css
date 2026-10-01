@@ -1657,3 +1657,144 @@ button.history-row:focus-visible {
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+
+/* The plugins panel (work item 05-02). A centred sheet rather than a popover:
+   it is a list with actions, opened deliberately, not a glance at state. */
+.plugins-panel {
+  position: fixed;
+  top: 10vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(620px, calc(100vw - 32px));
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px var(--shadow);
+  font-size: 13px;
+}
+
+.plugins-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plugins-head h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.plugins-close {
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.plugins-close:hover {
+  color: var(--fg);
+}
+
+.plugins-list {
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.plugins-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plugins-row:last-child {
+  border-bottom: none;
+}
+
+.plugins-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.plugins-version {
+  font-weight: 400;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.plugins-note {
+  grid-column: 1;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* A folder path is as long as it is; one line and an ellipsis, with the whole
+   of it in the tooltip. */
+.plugins-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugins-overridden .plugins-name,
+.plugins-failed .plugins-name {
+  color: var(--muted);
+}
+
+.plugins-failed .plugins-note {
+  color: var(--error);
+}
+
+.plugins-action {
+  grid-row: span 3;
+  white-space: nowrap;
+  align-self: center;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.plugins-action:hover {
+  border-color: var(--accent);
+}
+
+.plugins-remove:hover {
+  border-color: var(--error);
+}
+
+.plugins-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.plugins-actions .plugins-action {
+  grid-row: auto;
+}
+
+.plugins-actions .plugins-note {
+  grid-column: auto;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

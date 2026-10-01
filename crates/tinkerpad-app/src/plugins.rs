@@ -4,9 +4,11 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-use tinkerpad_core::Level;
+use tinkerpad_core::{CoreEvent, Level, Scope};
 use tinkerpad_plugin::{PluginRegistry, Source};
 use tracing::{info, warn};
+
+use crate::AppState;
 
 /// Overrides the user plugin folder. Meant for tests and portable setups.
 pub const USER_PLUGINS_ENV: &str = "TINKERPAD_USER_PLUGINS";
@@ -74,6 +76,73 @@ pub fn load(app: &AppHandle) -> tauri::Result<(PluginRegistry, Vec<(Level, Strin
     Ok((registry, notices))
 }
 
+/// Load the registry again, after a plugin was installed or removed
+/// (work item 05-02).
+///
+/// Everything a plugin owns goes first: its language server and its helper are
+/// processes started from a folder that may no longer be there, and a reloaded
+/// registry that still had them running would be lying about the state of the
+/// machine. They start again on demand, from whatever is there now.
+///
+/// Open tabs are left alone. A tab whose language has just been removed keeps
+/// its text and stops having a language — the editor is still an editor, and
+/// nothing the user typed is worth losing over a plugin they uninstalled.
+pub async fn reload(app: &AppHandle) -> Result<Vec<(Level, String)>, String> {
+    let state = app.state::<AppState>();
+    let before: Vec<String> = state
+        .plugins
+        .read()
+        .expect("plugins lock")
+        .all()
+        .iter()
+        .map(|entry| entry.plugin.id.to_string())
+        .collect();
+
+    let (registry, notices) = load(app).map_err(|e| e.to_string())?;
+    let after: Vec<String> = registry
+        .all()
+        .iter()
+        .map(|entry| entry.plugin.id.to_string())
+        .collect();
+
+    // Anything whose folder has changed underneath it: gone, or replaced by a
+    // different copy of itself.
+    for id in &before {
+        state.helpers.stop(id).await;
+        for server in state.lsp.servers() {
+            if server.language() == id {
+                server.stop().await;
+            }
+        }
+    }
+
+    *state.plugins.write().expect("plugins lock") = registry;
+    info!(
+        before = before.len(),
+        after = after.len(),
+        "plugins reloaded"
+    );
+
+    // What each language needs may be a different question now.
+    crate::toolchains::check_all(app);
+    state.events.publish(
+        Scope::App,
+        CoreEvent::PluginsChanged {
+            languages: after.clone(),
+        },
+    );
+
+    let gone: Vec<&String> = before.iter().filter(|id| !after.contains(id)).collect();
+    let mut notices = notices;
+    for id in gone {
+        notices.push((
+            Level::Info,
+            format!("`{id}` is no longer installed. Tabs open in it keep their text."),
+        ));
+    }
+    Ok(notices)
+}
+
 /// What the UI needs to know about the plugin setup.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +151,9 @@ pub struct PluginsStatus {
     pub user_dir: String,
     pub load_ms: f64,
     pub plugins: Vec<PluginSummary>,
+    /// Bundled plugins a user plugin of the same id has replaced, so it is
+    /// obvious why behaviour changed (work item 05-02).
+    pub overridden: Vec<String>,
     pub failures: Vec<FailureSummary>,
 }
 
@@ -91,7 +163,11 @@ pub struct PluginSummary {
     pub id: String,
     pub name: String,
     pub extension: String,
+    /// What the plugin calls itself, if it says (work item 05-02).
+    pub version: Option<String>,
     pub source: Source,
+    /// Where it came from, for a user plugin installed from a URL.
+    pub origin: Option<String>,
     pub dir: String,
     pub kinds: Vec<KindSummary>,
     /// The CodeMirror language the UI highlights with (docs/PLUGINS.md §9).
@@ -134,7 +210,12 @@ impl PluginsStatus {
                     id: e.plugin.id.to_string(),
                     name: e.plugin.name.clone(),
                     extension: e.plugin.extension.clone(),
+                    version: e.plugin.version.clone(),
                     source: e.source,
+                    origin: std::fs::read_to_string(e.plugin.dir.join(crate::install::SOURCE_FILE))
+                        .ok()
+                        .map(|url| url.trim().to_owned())
+                        .filter(|url| !url.is_empty()),
                     dir: e.plugin.dir.display().to_string(),
                     kinds: e
                         .plugin
@@ -160,6 +241,11 @@ impl PluginsStatus {
                         programs
                     },
                 })
+                .collect(),
+            overridden: r
+                .overrides()
+                .iter()
+                .map(|over| over.id.to_string())
                 .collect(),
             failures: r
                 .failures()

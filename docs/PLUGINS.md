@@ -179,6 +179,7 @@ one you're on, so a mistake that only affects macOS still fails on Windows.
 | Key | Meaning |
 |---|---|
 | `[language].main_path` | The main file inside a playground. Default `main.<extension>`. Rust uses `src/main.rs`. |
+| `[language].version` | What the plugin calls itself, for the plugins panel and `plugin list`. Optional, and never interpreted: `api` is the compatibility contract (work item 05-02). |
 | `[scaffold].files` | `[{ path = "Cargo.toml", template = "Cargo.toml" }]`. `path` is relative to the playground, `template` to `templates/`. |
 | `[helper].args`, `[helper].env` | As for `[run]`. |
 | `[lsp].args`, `[lsp].env` | As for `[run]`. |
@@ -797,6 +798,7 @@ The template for each kind already imports the helper, so a new playground can c
 
 - **Install** = a folder under `<app-data>/plugins/<id>/`. `tinkerpad plugin install
   <path|git-url>` copies or clones it; the UI's plugins panel does the same.
+  See §8.3.
 - **Helper binaries are built, not shipped.** `[helper.build]` runs on first use with
   the toolchain the plugin already requires. Prebuilt binaries in `helper/bin/<os>-<arch>/`
   are allowed as an optimisation, never required.
@@ -924,6 +926,54 @@ function that isn't there. So write `check/dump.<ext>` the way you would write
 the playground, not the way the file ends up on disk.
 
 The bundled plugins' `check/` folders are worth copying from.
+
+### 8.3 Installing
+
+```
+$ tinkerpad plugin install ./my-plugin
+A plugin is a program. It runs with your privileges, like an editor extension:
+it can read and write your files and start other programs. Install plugins you
+would run by hand.
+
+Installed My Language 0.3.1 at <app-data>/plugins/mylang
+It still needs:
+  Toolchain mylang
+    Install it from https://example.invalid
+`tinkerpad tools install mylang` can get what it can.
+```
+
+| Command | What it does |
+|---|---|
+| `plugin install <path\|git-url>` | Copies a folder, or `git clone --depth 1` of a URL, into `<app-data>/plugins/<id>/` |
+| `plugin update <id>` | Clones again, for a plugin installed from a URL |
+| `plugin remove <id>` | Moves the folder to the recycle bin |
+| `plugin list [--json]` | What is installed, where each came from, and what each calls itself |
+
+The same four are in the window's **Plugins** panel (`Mod+Shift+P` →
+"Plugins…").
+
+- **The manifest loads before anything is copied.** A folder that isn't a
+  plugin is refused, with the loader's own words — the same loader the app
+  uses, so a plugin that installs is a plugin that runs. A *missing toolchain*
+  is not a refusal: the install says what is still needed and carries on,
+  because installing the plugin is often how someone finds out what to install
+  next.
+- **The id in the manifest names the folder**, not whatever the source was
+  called. Installing over an existing plugin of the same id replaces it, and
+  the old folder goes to the recycle bin first.
+- **`.git`, `node_modules`, `target`, `bin` and `obj` are not copied.** A
+  repository is not a plugin, and helper binaries are built on first use.
+- **A plugin runs with your privileges**, like an editor extension. Both the
+  CLI and the panel say so on every install, not once ever.
+- **Installing or removing reloads the registry**, so a language is usable, or
+  gone, without restarting. A plugin's language server and helper are stopped
+  first: they are processes started from a folder that may no longer be there.
+  Tabs already open keep their text.
+- **A user plugin with the same id as a bundled one replaces it.** Both are
+  listed, with the bundled one marked, so it is obvious why behaviour changed.
+- `[language].version` is optional and never interpreted. `api` is the
+  compatibility contract; `version` is what the plugin calls itself, for the
+  list.
 
 ## 9. Highlighters
 

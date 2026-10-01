@@ -71,6 +71,8 @@ pub struct Plugin {
     pub name: String,
     /// File extension without the dot.
     pub extension: String,
+    /// What the plugin calls itself, if it says (work item 05-02).
+    pub version: Option<String>,
     pub highlighter: Option<String>,
     /// Main file inside a playground folder, relative to it.
     pub main_path: PathBuf,
@@ -453,6 +455,7 @@ impl Validator<'_> {
             id: LanguageId::new(lang.id),
             name: lang.name,
             extension: lang.extension,
+            version: lang.version.filter(|v| !v.trim().is_empty()),
             highlighter: lang.highlighter,
             main_path,
             probes,

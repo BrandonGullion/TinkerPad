@@ -31,7 +31,11 @@ fn main() {
 /// useful on a laptop that has three languages and a CI runner that has one.
 fn plugin_subcommand(args: &[String]) -> i32 {
     let mut rest = args.iter().map(String::as_str);
-    if rest.next() != Some("check") {
+    let verb = rest.next();
+    if !matches!(
+        verb,
+        Some("check" | "install" | "update" | "remove" | "list")
+    ) {
         say(PLUGIN_HELP);
         return 2;
     }
@@ -59,17 +63,31 @@ fn plugin_subcommand(args: &[String]) -> i32 {
             path => dir = Some(std::path::PathBuf::from(path)),
         }
     }
+    // `list` is the only one that needs no argument.
+    if verb == Some("list") {
+        return tinkerpad_app::cli::plugin_list(json, &mut |line| say(line));
+    }
     let Some(dir) = dir else {
-        say(&format!("Which plugin folder?\n\n{PLUGIN_HELP}"));
+        say(&format!(
+            "Which plugin{}?\n\n{PLUGIN_HELP}",
+            if verb == Some("check") { " folder" } else { "" }
+        ));
         return 2;
     };
+    let named = dir.to_string_lossy().into_owned();
 
-    let options = tinkerpad_app::check::Options { dir, json, only };
-    if !options.json {
-        say(&format!("Checking {}", options.dir.display()));
+    match verb {
+        Some("install") => tinkerpad_app::cli::plugin_install(&named, &mut |line| say(line)),
+        Some("update") => tinkerpad_app::cli::plugin_update(&named, &mut |line| say(line)),
+        Some("remove") => tinkerpad_app::cli::plugin_remove(&named, &mut |line| say(line)),
+        _ => {
+            let options = tinkerpad_app::check::Options { dir, json, only };
+            if !options.json {
+                say(&format!("Checking {}", options.dir.display()));
+            }
+            tinkerpad_app::check::check(&options, &mut |line| say(line)).exit_code()
+        }
     }
-    let report = tinkerpad_app::check::check(&options, &mut |line| say(line));
-    report.exit_code()
 }
 
 /// `tinkerpad tools list|install` (work item 05-01c).
@@ -151,21 +169,30 @@ rights and deleting that folder undoes it. `[tools] acquire = \"never\"` in
 settings.toml refuses here as it does in the window.";
 
 const PLUGIN_HELP: &str = "\
-Check that a plugin folder works.
+Plugins: check one, install one, or see what is installed.
 
 USAGE:
-    tinkerpad plugin check <dir> [OPTIONS]
+    tinkerpad plugin check <dir> [--json] [--only <check>]
+    tinkerpad plugin install <path|git-url>
+    tinkerpad plugin update <id>
+    tinkerpad plugin remove <id>
+    tinkerpad plugin list [--json]
 
 OPTIONS:
-        --json           Print the report as JSON, for CI
+        --json           Print the report, or the list, as JSON
         --only <check>   Run only this check: manifest, toolchain, templates,
                          run, or one kind's run such as run:statements
     -h, --help           Print this and exit
 
-The check loads the manifest, probes the toolchain, scaffolds a playground of
-every kind into a temporary folder, and runs each one. It exits 0 unless
-something failed; a toolchain this machine hasn't got is a skip, not a
-failure.";
+`check` loads the manifest, probes the toolchain, scaffolds a playground of
+every kind into a temporary folder, runs each one, and exercises whatever the
+plugin's `check/` folder provides. It exits 0 unless something failed; a
+toolchain this machine hasn't got is a skip, not a failure.
+
+`install` copies a folder, or clones a URL, into TinkerPad's plugins folder —
+after loading the manifest, so a folder that isn't a plugin is refused rather
+than copied. A plugin runs with your privileges; `install` says so every time.
+`remove` moves it to the recycle bin.";
 
 const NAME: &str = "TinkerPad";
 
@@ -185,6 +212,10 @@ const HELP: &str = concat!(
     "
 ",
     "    tinkerpad plugin check <dir>
+",
+    "    tinkerpad plugin install <path|git-url>
+",
+    "    tinkerpad plugin list
 ",
     "    tinkerpad tools list
 ",

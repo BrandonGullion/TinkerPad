@@ -34,6 +34,8 @@ export type CoreEvent =
   | { type: "toolchain"; language: string; state: ToolchainState }
   /** A line of progress while a tool is being acquired (work item 04-08a). */
   | { type: "tool"; plugin: string; line: string }
+  /** A plugin was installed or removed (work item 05-02). */
+  | { type: "pluginsChanged"; languages: string[] }
   | { type: "server"; language: string; root: string; state: ServerState }
   | { type: "helper"; plugin: string; state: ServerState }
   | { type: "libraryChanged" }
@@ -255,6 +257,8 @@ export interface PluginsStatus {
   userDir: string;
   loadMs: number;
   plugins: PluginSummary[];
+  /** Bundled plugins a user plugin of the same id has replaced (05-02). */
+  overridden: string[];
   failures: { dir: string; source: PluginSource; message: string }[];
 }
 
@@ -262,7 +266,11 @@ export interface PluginSummary {
   id: string;
   name: string;
   extension: string;
+  /** What the plugin calls itself, if it says (work item 05-02). */
+  version: string | null;
   source: PluginSource;
+  /** The URL it was installed from, for a user plugin that came from one. */
+  origin: string | null;
   dir: string;
   kinds: { id: string; name: string; default: boolean }[];
   /** The CodeMirror language to highlight with, from `[language].highlighter`. */

@@ -57,6 +57,12 @@ pub enum CoreEvent {
         language: crate::LanguageId,
         state: ToolchainState,
     },
+    /// The set of loaded plugins changed: one was installed or removed
+    /// (work item 05-02).
+    PluginsChanged {
+        /// Every language that is loaded now.
+        languages: Vec<String>,
+    },
     /// A language server changed state (work item 02-02).
     Server {
         language: crate::LanguageId,

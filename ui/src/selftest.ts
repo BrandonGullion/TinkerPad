@@ -4490,6 +4490,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   settings: settingsScenario,
   history: historyScenario,
   hooks: hooksScenario,
+  "plugins-panel": pluginsPanelScenario,
   tools: toolsScenario,
   "tools-acquire": toolsAcquireScenario,
   packages: packagesScenario,
@@ -4796,6 +4797,138 @@ async function toolsAcquireScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify(server?.state ?? null),
   );
   await invoke("delete_playground", { id: made.id }).catch(() => {});
+}
+
+/**
+ * The plugins panel (work item 05-02): what is installed, where each came
+ * from, and the three things worth doing about them.
+ *
+ * It writes a plugin of its own, installs it, and removes it again, so the
+ * whole loop is exercised — including the reload, which is what makes a
+ * plugin usable without restarting.
+ */
+async function pluginsPanelScenario(_ctx: SelftestContext, check: Check) {
+  const panel = () => document.querySelector<HTMLElement>(".plugins-panel");
+  const rows = () => [...(panel()?.querySelectorAll<HTMLElement>(".plugins-row") ?? [])];
+  const rowFor = (name: string) =>
+    rows().find((row) => row.querySelector(".plugins-name")?.textContent?.startsWith(name));
+
+  const before = await invoke<PluginsStatus>("list_plugins");
+
+  await runCommand("Plugins");
+  const opened = await until(() => panel() !== null, 10_000);
+  await check("the palette opens the plugins panel", opened);
+  await frame();
+
+  await check(
+    "every loaded plugin is listed",
+    rows().length >= before.plugins.length,
+    JSON.stringify({ rows: rows().length, plugins: before.plugins.length }),
+  );
+  const bundled = before.plugins.find((p) => p.source === "bundled");
+  const bundledRow = bundled && rowFor(bundled.name);
+  await check(
+    "a bundled plugin says so, and offers no Remove",
+    bundledRow !== undefined &&
+      (bundledRow?.textContent ?? "").includes("bundled") &&
+      bundledRow?.querySelector(".plugins-remove") === null,
+    JSON.stringify({ name: bundled?.name, text: bundledRow?.textContent?.slice(0, 70) }),
+  );
+
+  // A plugin of this scenario's own, written beside the user plugin folder.
+  const folder = `${before.userDir}/../panel-demo-source`;
+  const manifest = [
+    "api = 1",
+    "",
+    "[language]",
+    'id = "panel-demo"',
+    'name = "Panel Demo"',
+    'extension = "pd"',
+    'version = "0.1.0"',
+    "",
+    "[toolchain]",
+    'probe = [{ command = "tp-nothing-at-all" }]',
+    'install_hint = "Nothing to install; this is a test plugin."',
+    "",
+    "[[kind]]",
+    'id = "k"',
+    'name = "Demo"',
+    'template = "main.pd"',
+    "default = true",
+    "",
+    "[run]",
+    'command = "tp-nothing-at-all"',
+    "",
+  ].join("\n");
+  const wrote = await invoke("selftest_write_file", {
+    path: `${folder}/plugin.toml`,
+    text: manifest,
+  })
+    .then(() => true)
+    .catch(() => false);
+  await invoke("selftest_write_file", {
+    path: `${folder}/templates/main.pd`,
+    text: "demo\n",
+  }).catch(() => {});
+  if (!wrote) {
+    await report("INFO could not write a plugin folder; the install checks were skipped");
+    await runCommand("Plugins");
+    return;
+  }
+
+  const installed = await invoke<string>("install_plugin", { source: folder }).catch(
+    (e: { message?: string }) => e.message ?? "failed",
+  );
+  await check(
+    "installing a folder loads the plugin without a restart",
+    installed === "Panel Demo",
+    String(installed),
+  );
+
+  const after = await invoke<PluginsStatus>("list_plugins");
+  const demo = after.plugins.find((p) => p.id === "panel-demo");
+  await check(
+    "and it appears with the version and source its manifest gives",
+    demo?.version === "0.1.0" && demo?.source === "user",
+    JSON.stringify({ version: demo?.version, source: demo?.source }),
+  );
+
+  // The panel refreshes itself from the `pluginsChanged` event.
+  const showed = await until(() => rowFor("Panel Demo") !== undefined, 10_000);
+  const demoRow = rowFor("Panel Demo");
+  await check(
+    "the panel notices by itself, and offers Remove for a plugin that isn't bundled",
+    showed && demoRow?.querySelector(".plugins-remove") !== null,
+    JSON.stringify({ showed, text: demoRow?.textContent?.slice(0, 80) }),
+  );
+
+  // A language with no toolchain is still a language: it loads, and says what
+  // it needs rather than failing to appear.
+  const needs = await invoke<{ language: string; needs: { present: boolean }[] }[]>(
+    "tools_status",
+  );
+  await check(
+    "a new language shows up in what each language needs",
+    needs.some((entry) => entry.language === "panel-demo"),
+    JSON.stringify(needs.map((entry) => entry.language)),
+  );
+
+  await invoke("remove_plugin", { id: "panel-demo" }).catch(() => {});
+  const gone = await invoke<PluginsStatus>("list_plugins");
+  await check(
+    "removing it takes it out of the registry, again without a restart",
+    gone.plugins.every((p) => p.id !== "panel-demo"),
+    JSON.stringify(gone.plugins.map((p) => p.id)),
+  );
+  await check(
+    "and the count is back where it started",
+    gone.plugins.length === before.plugins.length,
+    JSON.stringify({ before: before.plugins.length, after: gone.plugins.length }),
+  );
+
+  await runCommand("Plugins");
+  await frame();
+  await check("the command closes it again", panel() === null);
 }
 
 /**
