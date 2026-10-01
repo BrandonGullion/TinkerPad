@@ -219,6 +219,23 @@ jobs:
           grep -q "selftest: PASS a second playground waits for the helper" lsp.log
           grep -q "selftest: PASS and the user is told what is being used instead" lsp.log
 
+      # Every bundled plugin, through the same loader, scaffolder and runner the
+      # app uses (work items 05-01a, 05-01b). A toolchain this runner hasn't
+      # got is a skip, not a failure, so this stays useful as languages are
+      # added to the matrix rather than becoming a list of exclusions.
+      - name: Plugin conformance
+        shell: bash
+        run: |
+          set -o pipefail
+          tinkerpad=target/debug/tinkerpad
+          [ -x "$tinkerpad" ] || tinkerpad=target/debug/tinkerpad.exe
+          failed=0
+          for dir in plugins/*/; do
+            echo "== $dir"
+            "$tinkerpad" plugin check "$dir" || failed=1
+          done
+          exit $failed
+
       - name: Session restore across two launches (Linux)
         if: runner.os == 'Linux'
         env:

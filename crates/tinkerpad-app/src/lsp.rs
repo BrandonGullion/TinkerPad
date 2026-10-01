@@ -317,6 +317,32 @@ pub fn root_for(
     })
 }
 
+/// The same `[lsp]` config, for a caller with no `AppState`: the plugin check
+/// (work item 05-01b).
+///
+/// It is the app's own `config` with the arguments passed in rather than read
+/// off the app, so the checker starts the server the app would start.
+#[allow(clippy::too_many_arguments)]
+pub fn config_for_check(
+    plugin: &Plugin,
+    playground: &Playground,
+    resolver: &Resolver,
+    library_root: &std::path::Path,
+    scratch_root: &std::path::Path,
+    toolchain_program: &str,
+    toolchain_version: &str,
+) -> Result<ServerConfig, CommandError> {
+    let _ = (toolchain_program, toolchain_version);
+    config(
+        plugin,
+        Some(playground),
+        resolver,
+        library_root,
+        scratch_root,
+        &ServiceSettings::default(),
+    )
+}
+
 /// What the plugin's `[lsp]` section says, as the pool wants it.
 ///
 /// The workspace strategy decides the root: the playground's own folder, or

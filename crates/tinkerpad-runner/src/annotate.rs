@@ -37,7 +37,16 @@ impl Annotator {
 
     /// Feed one output line (without its newline) and get the annotation it
     /// completes, if any.
+    ///
+    /// Colour is taken out before matching. A tool that colours its errors —
+    /// PowerShell 7 does, even when its output is a pipe — otherwise puts an
+    /// escape sequence between the newline and the `At ` a pattern is
+    /// anchored on, and the pattern silently never matches. The text the
+    /// annotation carries is the plain text too, so a clickable line in the
+    /// output pane reads as what it says.
     pub fn line(&mut self, line: &str) -> Option<Annotation> {
+        let plain = strip_ansi(line);
+        let line = plain.as_str();
         if !self.spec.multiline {
             return self.capture(line, line);
         }
@@ -87,6 +96,36 @@ fn annotation(captures: &regex::Captures<'_>, text: &str) -> Option<Annotation> 
         severity,
         text: text.to_owned(),
     })
+}
+
+/// A line without its SGR escape sequences.
+///
+/// Only `ESC [ … m` and the other CSI forms are removed, which is what a
+/// colouring tool emits; anything else is left alone, since a pattern that
+/// wants it should see it. Borrowed-free fast path: a line with no escape at
+/// all is copied once, like every other line here.
+fn strip_ansi(line: &str) -> String {
+    if !line.contains('\u{1b}') {
+        return line.to_owned();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        // CSI: ESC [ … final byte in @..~. Anything else is a two-character
+        // sequence, and both are dropped.
+        if chars.next() == Some('[') {
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

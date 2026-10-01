@@ -8,6 +8,17 @@
 
 use std::io::Write;
 
+const DUMP_PREFIX: &str = "\u{1b}]1337;TinkerPad=";
+/// The table `tinkerpad plugin check` expects (docs/PLUGINS.md 8.1).
+const GOOD_TABLE: &str = r#"{"v":1,"title":"check","kind":"table","columns":[{"name":"name"},{"name":"n"}],"rows":[["ada",1],["grace",2]]}"#;
+/// The same, with a column renamed: what a plugin that changed a field and
+/// forgot would send.
+const COLUMNS_WRONG: &str = r#"{"v":1,"kind":"table","columns":[{"name":"name"},{"name":"born"}],"rows":[["ada",1],["grace",2]]}"#;
+/// A dump that isn't a table at all.
+const NOT_A_TABLE: &str = r#"{"v":1,"kind":"value","value":42}"#;
+
+const DUMP_END: &str = "\u{1b}\\";
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -28,6 +39,19 @@ fn main() {
                 std::io::stdout().flush().unwrap();
             }
             "stderr" => eprintln!("{value}"),
+            // The wire form a dump takes (docs/PLUGINS.md 6), so the
+            // checker's dump assertions can be tested without a language. The
+            // payloads are built here rather than passed in, because a
+            // manifest reads `{` as the start of a placeholder.
+            "table" => {
+                let payload = match value.as_str() {
+                    "columns" => COLUMNS_WRONG,
+                    "value" => NOT_A_TABLE,
+                    _ => GOOD_TABLE,
+                };
+                print!("{DUMP_PREFIX}{payload}{DUMP_END}");
+                std::io::stdout().flush().unwrap();
+            }
             "sleep" => {
                 std::thread::sleep(std::time::Duration::from_millis(value.parse().unwrap_or(0)))
             }

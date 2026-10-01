@@ -1,0 +1,4 @@
+# The table `tinkerpad plugin check` expects (docs/PLUGINS.md §8.1).
+from tinkerpad import dump
+
+dump([{"name": "ada", "n": 1}, {"name": "grace", "n": 2}], "check")
