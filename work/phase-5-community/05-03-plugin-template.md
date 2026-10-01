@@ -1,6 +1,6 @@
 # 05-03 · Plugin template repo
 
-**Phase:** 5 · **Size:** S · **Crate/area:** separate repo `tinkerpad-plugin-template` · **Depends on:** 05-01, 03-04
+**Phase:** 5 · **Size:** S · **Crate/area:** separate repo `tinkerpad-plugin-template` · **Depends on:** 05-01b, 03-04
 **Design:** PLAN.md §5 Phase 5
 
 ## What

@@ -1,6 +1,6 @@
 # 05-02 · Plugin install
 
-**Phase:** 5 · **Size:** M · **Crate/area:** `tinkerpad-cli`, `tinkerpad-plugin`, `ui/` · **Depends on:** 01-02, 05-01
+**Phase:** 5 · **Size:** M · **Crate/area:** `tinkerpad-cli`, `tinkerpad-plugin`, `ui/` · **Depends on:** 01-02, 05-01a
 **Design:** PLUGINS.md §8
 
 ## What
@@ -19,7 +19,7 @@ contributors and users.
 - [ ] Install from a local folder: copy to `<app-data>/plugins/<id>/` (id read
       from the manifest, which must load first). From a git URL: `git clone
       --depth 1` into a temp dir, then the same. `git` missing → clear error.
-- [ ] Before copying, run the manifest-load and toolchain checks from 05-01 and
+- [ ] Before copying, run the manifest-load and toolchain checks from 05-01a and
       show the result; install proceeds on manifest success even if the toolchain
       is missing (the user may install it later).
 - [ ] Trust notice shown once per install: plugins run with your privileges.

@@ -1,6 +1,6 @@
 # 05-04 · Published docs and versioning policy
 
-**Phase:** 5 · **Size:** M · **Crate/area:** `docs/`, CI · **Depends on:** 05-01, 05-03
+**Phase:** 5 · **Size:** M · **Crate/area:** `docs/`, CI · **Depends on:** 05-01b, 05-03
 **Design:** PLAN.md §5 Phase 5, §6 (protocol churn)
 
 ## What
