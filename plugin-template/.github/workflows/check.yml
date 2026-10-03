@@ -1,0 +1,67 @@
+# Runs `tinkerpad plugin check` on every push and pull request.
+#
+# This is the file that makes a plugin repository trustworthy without anyone
+# reading it: if this is green, the plugin loads, its toolchain is found, every
+# kind runs, `Dump` produces what the window expects, errors are clickable, and
+# the helper honours the protocol.
+#
+# It needs the `tinkerpad` binary. While TinkerPad has no public releases, the
+# two ways to get one are below — uncomment whichever suits you.
+
+name: Plugin check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Whatever your language needs, so the toolchain probe finds it. This
+      # template runs playgrounds with Python, which the runner already has.
+      #
+      # - uses: actions/setup-go@v5
+      #   with: { go-version: "1.24" }
+
+      # --- Getting the checker -------------------------------------------
+      #
+      # 1. From a release, once there is one:
+      #
+      # - name: Install TinkerPad
+      #   run: |
+      #     gh release download --repo <owner>/TinkerPad --pattern 'tinkerpad*linux*'
+      #     chmod +x tinkerpad && sudo mv tinkerpad /usr/local/bin/
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+      #
+      # 2. Or build it, which needs no release and no token:
+      - name: Build the checker
+        run: |
+          git clone --depth 1 https://github.com/BrandonGullion/TinkerPad tinkerpad-src
+          cd tinkerpad-src
+          cargo build --release -p tinkerpad-app --bin tinkerpad
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+
+      - name: Check the plugin
+        run: tinkerpad plugin check .
+
+      # `plugin check` exits 0 when a toolchain simply isn't on the runner, so
+      # a green tick could mean "skipped everything". This insists the checks
+      # that matter actually ran.
+      - name: And that it checked something
+        run: |
+          tinkerpad plugin check . --json > report.json
+          python3 - <<'PY'
+          import json, sys
+          report = json.load(open("report.json"))
+          by_id = {c["id"]: c["outcome"] for c in report["checks"]}
+          for want in ("manifest", "toolchain"):
+              if by_id.get(want) != "pass":
+                  sys.exit(f"{want} did not pass: {by_id.get(want)}")
+          if not any(k.startswith("run:") and v == "pass" for k, v in by_id.items()):
+              sys.exit("nothing ran")
+          print("checked:", ", ".join(f"{k}={v}" for k, v in by_id.items()))
+          PY

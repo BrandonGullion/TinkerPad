@@ -230,7 +230,10 @@ jobs:
           tinkerpad=target/debug/tinkerpad
           [ -x "$tinkerpad" ] || tinkerpad=target/debug/tinkerpad.exe
           failed=0
-          for dir in plugins/*/; do
+          # The template is checked with the bundled plugins: it is what a
+          # contributor starts from, so it has to pass before they touch it
+          # (work item 05-03).
+          for dir in plugins/*/ plugin-template/; do
             echo "== $dir"
             "$tinkerpad" plugin check "$dir" || failed=1
           done

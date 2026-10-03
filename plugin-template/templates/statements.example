@@ -1,0 +1,5 @@
+from tinkerpad import dump
+
+# {{name}}, created {{date}}. Mod+Enter runs it.
+
+dump([{"name": "ada", "n": 1}, {"name": "grace", "n": 2}], "people")
