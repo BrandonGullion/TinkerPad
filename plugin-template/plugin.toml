@@ -1,0 +1,124 @@
+# The manifest. Everything TinkerPad knows about your language is here.
+#
+# This template works before you change anything: it runs playgrounds with
+# Python, so `tinkerpad plugin check .` is green on a fresh clone. The four
+# places marked CHANGE ME are what make it your language instead.
+#
+# The whole schema is docs/PLUGINS.md §2 in the TinkerPad repository. Unknown
+# keys are errors with a "did you mean", so a typo tells you rather than being
+# quietly ignored.
+
+api = 1                       # manifest schema version; not your version
+
+[language]
+# CHANGE ME (1 of 4): who you are.
+id = "example"                # stable, lowercase, [a-z0-9-]; names your folder
+name = "Example"              # shown in menus and the status bar
+extension = "example"         # playground files are main.<extension>
+version = "0.1.0"             # optional, and yours; `api` above is the contract
+# highlighter = "python"      # a CodeMirror language from PLUGINS.md §9, if one fits
+
+[toolchain]
+# CHANGE ME (2 of 4): the program that runs your language, and how to tell it
+# is there. Probes run in order and the first to succeed wins; its program is
+# `{toolchain}` in the commands below, and the version it printed is
+# `{version}`. Entries may be limited with `os = ["windows"]`.
+#
+# Several entries is the normal case, not a complication: `python3` doesn't
+# exist on Windows and `python` is a Store stub there, so both are listed.
+probe = [
+  { command = "python3", args = ["--version"], min_version = "3.11", os = ["macos", "linux"] },
+  { command = "python", args = ["--version"], min_version = "3.11", os = ["macos", "linux"] },
+  { command = "python", args = ["--version"], min_version = "3.11", os = ["windows"] },
+  { command = "py", args = ["--version"], min_version = "3.11", os = ["windows"] },
+]
+# Shown when the probe finds nothing. Say where to get it, not that it is missing.
+install_hint = "Install Python 3.11 or newer: https://python.org/downloads"
+
+# How TinkerPad could install it for the user, if it can (docs/PLUGINS.md §2.1).
+# Delete this if there is no sensible one-liner; the hint above is then what
+# people get, which is fine.
+#
+# [toolchain.acquire]
+# kind = "command"
+# command = ["your-package-manager", "install", "your-language"]
+# needs = "your-package-manager"
+
+# A kind is a shape of playground. One is enough; this template has two so you
+# can see both forms.
+[[kind]]
+id = "statements"
+name = "Example Statements"
+template = "statements.example"   # in templates/; {{name}} and {{date}} are substituted
+default = true                    # exactly one kind is the default
+
+# A kind with locked lines: the user edits the middle, and the wrapper above and
+# below is theirs but not editable. Good for "evaluate one expression".
+[[kind]]
+id = "expression"
+name = "Example Expression"
+template = "expression.example"
+prelude = "from tinkerpad import dump\n\ndump((\n"
+postlude = "\n))\n"
+
+# Files written into every new playground besides the main one: a project file,
+# a lockfile, whatever your language needs to run a folder. Delete if none.
+#
+# [scaffold]
+# files = [{ path = "project.json", template = "project.json" }]
+
+[run]
+# CHANGE ME (3 of 4): how one playground runs.
+#
+# `{toolchain}` is the probe's program, `{main}` the file, `{dir}` the folder.
+# The working directory is the playground. There is no shell: the command and
+# each argument are passed as they are written.
+command = "{toolchain}"
+args = ["-u", "{main}"]
+env = { PYTHONPATH = "{plugin_dir}/dump", PYTHONIOENCODING = "utf-8" }
+
+# "Add package" in the window and the palette. Two shapes: a command your
+# package manager understands, or a line written at the top of the file.
+# Delete if adding a dependency isn't a thing in your language.
+#
+# [deps]
+# kind = "command"
+# add = ["your-package-manager", "add", "{name}@{version}"]
+#
+# ...or, for a language where a dependency is a comment at the top of the file:
+#
+# [deps]
+# kind = "inline-directive"
+# directive = "#:package {name}@{version}"
+
+[output]
+# CHANGE ME (4 of 4): how to find a position in an error.
+#
+# Every completed line of output is matched. `line` and `message` are required;
+# `file`, `col` and `severity` are optional. A match becomes a clickable line in
+# the output pane and a mark in the editor.
+#
+# This one reads a Python traceback: the last frame has the position, and the
+# exception line after it has the message, so it matches across lines.
+error_regex = '(?m)^  File "(?<file>[^"]+)", line (?<line>\d+).*\n(?:.*\n)*?(?<message>\w*(?:Error|Warning|Exception)\b.*)$'
+error_regex_multiline = true
+
+# A warm helper: a long-lived process that runs playgrounds without paying for
+# a start-up each time, and answers hooks. Delete this section, and the helper/
+# folder, if your language starts quickly enough not to need one.
+#
+# The protocol is docs/PLUGINS.md §5. helper/helper.py here is the reference
+# implementation, meant to be read and copied.
+[helper]
+command = "{toolchain}"
+args = ["-u", "{plugin_dir}/helper/helper.py"]
+env = { PYTHONPATH = "{plugin_dir}/dump", PYTHONIOENCODING = "utf-8" }
+hooks = ["run"]
+idle_shutdown = "30m"
+
+# A language server, if your language has one. Delete if it doesn't.
+#
+# [lsp]
+# command = "your-language-server"
+# args = ["--stdio"]
+# workspace = "playground_dir"    # or library_root, or scratch_workspace

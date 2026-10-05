@@ -988,6 +988,18 @@ Loading highlighters from the plugin folder is a possible later addition.
 
 ## 10. Adding a language: the checklist
 
+Start from `plugin-template/` in this repository rather than an empty folder:
+it is a working plugin that passes `tinkerpad plugin check` before you change
+anything, with every section of the manifest commented and the four places to
+edit marked. Its README walks through the steps below with the command to run
+after each.
+
+```sh
+cp -r plugin-template ../my-language
+cd ../my-language && tinkerpad plugin check .
+```
+
+
 1. Create the folder with `plugin.toml`, `templates/`, and `dump/`.
 2. Fill in `[language]`, `[toolchain]`, one `[[kind]]`, and `[run]`. Run
    `tinkerpad plugin check`. Hello-world should pass.
