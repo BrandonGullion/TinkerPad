@@ -1,0 +1,89 @@
+# Clones every plugin in the index and runs `tinkerpad plugin check` on it,
+# once a week, writing what happened to status.json (work item 05-05).
+#
+# An entry that stops working is marked rather than removed: a plugin that is
+# broken today may be fixed tomorrow, and deleting someone's entry because
+# their repository was briefly unreachable is rude.
+
+name: Verify
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Whatever the listed plugins' toolchains need. A plugin whose toolchain
+      # isn't here *skips* rather than fails, so this list is a courtesy and
+      # not a gate.
+      - uses: actions/setup-node@v4
+        with: { node-version: lts/* }
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Build the checker
+        run: |
+          git clone --depth 1 https://github.com/BrandonGullion/TinkerPad tinkerpad-src
+          cd tinkerpad-src
+          cargo build --release -p tinkerpad-app --bin tinkerpad
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+          echo "TINKERPAD_VERSION=$(./target/release/tinkerpad --version)" >> "$GITHUB_ENV"
+
+      - name: Check every listed plugin
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, tempfile, datetime
+          index = json.load(open("index.json"))
+          results = {}
+          for entry in index["plugins"]:
+              if entry.get("bundled"):
+                  continue
+              url = entry.get("git")
+              with tempfile.TemporaryDirectory() as into:
+                  clone = subprocess.run(
+                      ["git", "clone", "--depth", "1", url, into],
+                      capture_output=True, text=True)
+                  if clone.returncode != 0:
+                      results[entry["id"]] = {
+                          "ok": False,
+                          "why": "could not be cloned",
+                          "detail": clone.stderr.strip().splitlines()[-1:] or [],
+                      }
+                      continue
+                  check = subprocess.run(
+                      ["tinkerpad", "plugin", "check", into, "--json"],
+                      capture_output=True, text=True)
+                  report = {}
+                  try:
+                      report = json.loads(check.stdout)
+                  except ValueError:
+                      pass
+                  results[entry["id"]] = {
+                      "ok": check.returncode == 0,
+                      "checks": {c["id"]: c["outcome"] for c in report.get("checks", [])},
+                  }
+          json.dump({
+              "checkedAt": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+              "tinkerpad": os.environ.get("TINKERPAD_VERSION", "").strip(),
+              "plugins": results,
+          }, open("status.json", "w"), indent=2, sort_keys=True)
+          print(open("status.json").read())
+          PY
+
+      - name: Commit what it found
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add status.json
+          git diff --cached --quiet || git commit -m "Weekly plugin check"
+          git push

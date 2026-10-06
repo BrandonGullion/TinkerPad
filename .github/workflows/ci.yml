@@ -226,6 +226,16 @@ jobs:
       # The reference pages are generated from the types (work item 05-04), so
       # a type that changed without them is a failed build rather than a stale
       # page nobody noticed.
+      # The plugin index, and the schema generated from the types that read it
+      # (work item 05-05).
+      - name: Plugin index is sound
+        shell: bash
+        run: |
+          tinkerpad=target/debug/tinkerpad
+          [ -x "$tinkerpad" ] || tinkerpad=target/debug/tinkerpad.exe
+          "$tinkerpad" registry check registry/index.json
+          "$tinkerpad" registry schema registry/index.schema.json --check
+
       - name: Reference pages are current
         shell: bash
         run: cargo run -q -p tinkerpad-plugin --bin tinkerpad-docgen -- --check

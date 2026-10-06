@@ -622,6 +622,148 @@ fn report_toolchain(id: &str, out: &mut dyn FnMut(&str)) {
     ));
 }
 
+// --- the plugin index (work item 05-05) ------------------------------------
+
+/// `tinkerpad registry check [path]`: everything wrong with an index.
+///
+/// The registry's own CI runs this on every pull request, so a contributor
+/// adding an entry is told what is wrong with it rather than a maintainer
+/// being told later.
+pub fn registry_check(path: Option<&str>, out: &mut dyn FnMut(&str)) -> i32 {
+    let path = path.map(str::to_owned).unwrap_or_else(|| {
+        std::env::var(crate::registry::REGISTRY_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "registry/index.json".to_owned())
+    });
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            out(&format!("could not read {path}: {error}"));
+            return 2;
+        }
+    };
+    let index = match crate::registry::Index::parse(&text) {
+        Ok(index) => index,
+        Err(error) => {
+            out(&error.to_string());
+            return 1;
+        }
+    };
+    let problems = index.problems();
+    if problems.is_empty() {
+        out(&format!(
+            "{}: {} plugin{} listed, nothing wrong",
+            path,
+            index.plugins.len(),
+            if index.plugins.len() == 1 { "" } else { "s" }
+        ));
+        return 0;
+    }
+    for problem in &problems {
+        out(&format!("  {problem}"));
+    }
+    out(&format!(
+        "{}: {} problem{}",
+        path,
+        problems.len(),
+        if problems.len() == 1 { "" } else { "s" }
+    ));
+    1
+}
+
+/// `tinkerpad registry schema [path]`: write the index's JSON Schema.
+///
+/// Generated from the types the app reads the index with, for the same reason
+/// the manifest's is (05-04): a schema written beside a type is a schema that
+/// drifts. `--check` fails instead of writing.
+pub fn registry_schema(path: Option<&str>, check: bool, out: &mut dyn FnMut(&str)) -> i32 {
+    let path = path.unwrap_or("registry/index.schema.json");
+    let mut value = crate::registry::schema();
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "title".into(),
+            serde_json::Value::String("TinkerPad plugin index".into()),
+        );
+    }
+    let mut text = match serde_json::to_string_pretty(&value) {
+        Ok(text) => text,
+        Err(error) => {
+            out(&error.to_string());
+            return 2;
+        }
+    };
+    text.push('\n');
+
+    let current = std::fs::read_to_string(path).unwrap_or_default();
+    if current.replace("\r\n", "\n") == text {
+        if check {
+            out(&format!("{path} is up to date"));
+        }
+        return 0;
+    }
+    if check {
+        out(&format!(
+            "{path} is out of date. Run:\n\n    tinkerpad registry schema\n\nand commit it."
+        ));
+        return 1;
+    }
+    match std::fs::write(path, &text) {
+        Ok(()) => {
+            out(&format!("wrote {path}"));
+            0
+        }
+        Err(error) => {
+            out(&format!("could not write {path}: {error}"));
+            2
+        }
+    }
+}
+
+/// What the Browse tab shows: the index, with what is installed marked.
+///
+/// Public so the window's command can call it; the fetch is
+/// [`crate::registry::load`], which never runs on launch.
+pub async fn registry_entries(
+    data_dir: &std::path::Path,
+    installed: &[String],
+    force: bool,
+) -> Result<Vec<BrowseEntry>, String> {
+    let index = crate::registry::load(data_dir, force)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(index
+        .plugins
+        .into_iter()
+        .map(|entry| BrowseEntry {
+            installed: entry.bundled || installed.iter().any(|id| id == &entry.id),
+            entry,
+        })
+        .collect())
+}
+
+/// Where the index comes from, and whether there is a copy already.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistrySource {
+    /// The URL, or the path, the index would be read from.
+    pub from: String,
+    /// How old the cached copy is, if there is one. `None` means nothing has
+    /// been fetched yet — which is what the window asks about.
+    pub cached_age_ms: Option<u64>,
+}
+
+/// One row of the Browse tab.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseEntry {
+    #[serde(flatten)]
+    pub entry: crate::registry::Entry,
+    /// Already here, so the button says so instead of offering to install it
+    /// again.
+    pub installed: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

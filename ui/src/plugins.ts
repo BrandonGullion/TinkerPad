@@ -10,7 +10,13 @@
 
 import { invoke } from "./ipc";
 import { pick, prompt } from "./picker";
-import type { LanguageToolchain, PluginsStatus, PluginSummary } from "./protocol";
+import type {
+  BrowseEntry,
+  LanguageToolchain,
+  PluginsStatus,
+  PluginSummary,
+  RegistrySource,
+} from "./protocol";
 import { toast } from "./toast";
 
 /** What every install agrees to, in the words the core uses. */
@@ -18,11 +24,23 @@ const TRUST =
   "A plugin is a program. It runs with your privileges, like an editor extension: " +
   "it can read and write your files and start other programs. Install plugins you would run by hand.";
 
+/** What the Browse tab says before it has been allowed to fetch anything. */
+const FETCH_NOTICE =
+  "The index is a list of plugins other people have written. Reading it is the " +
+  "only thing TinkerPad fetches apart from its own updates, and it has not done " +
+  "so yet.";
+
 export class PluginsPanel {
   private element: HTMLElement | null = null;
   private status: PluginsStatus | null = null;
   private toolchains: LanguageToolchain[] = [];
   private busy = false;
+  /** Which tab is showing. */
+  private tab: "installed" | "browse" = "installed";
+  /** The index, once it has been fetched. `null` until then (05-05). */
+  private browse: BrowseEntry[] | null = null;
+  private registry: RegistrySource | null = null;
+  private browseProblem: string | null = null;
 
   /** Open it, or close it if it is already open. */
   async toggle(): Promise<void> {
@@ -46,9 +64,12 @@ export class PluginsPanel {
   /** A `pluginsChanged` event arrived, or something here changed them. */
   async refresh(): Promise<void> {
     try {
-      [this.status, this.toolchains] = await Promise.all([
+      // `registry_source` reads a file date and an environment variable; it
+      // fetches nothing (work item 05-05).
+      [this.status, this.toolchains, this.registry] = await Promise.all([
         invoke<PluginsStatus>("list_plugins"),
         invoke<LanguageToolchain[]>("toolchain_status"),
+        invoke<RegistrySource>("registry_source"),
       ]);
     } catch {
       return;
@@ -80,8 +101,15 @@ export class PluginsPanel {
     close.textContent = "Close";
     close.setAttribute("aria-label", "Close plugins");
     close.addEventListener("click", () => this.close());
-    head.append(title, close);
+    head.append(title, this.tabs(), close);
     panel.append(head);
+
+    if (this.tab === "browse") {
+      panel.append(this.browseList());
+      panel.append(this.browseActions());
+      this.mount(panel, close);
+      return;
+    }
 
     const list = document.createElement("div");
     list.className = "plugins-list";
@@ -117,18 +145,185 @@ export class PluginsPanel {
     where.title = where.textContent;
     actions.append(where);
     panel.append(actions);
+    this.mount(panel, close);
+  }
 
-    if (!this.element) {
-      this.element = panel;
-      document.body.append(panel);
-      // Escape closes it, as it closes every other overlay here.
-      panel.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          this.close();
-        }
+  /** Put the panel in the document the first time, and wire Escape. */
+  private mount(panel: HTMLElement, focus: HTMLElement): void {
+    if (this.element) return;
+    this.element = panel;
+    document.body.append(panel);
+    // Escape closes it, as it closes every other overlay here.
+    panel.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        this.close();
+      }
+    });
+    focus.focus();
+  }
+
+  private tabs(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "plugins-tabs";
+    row.setAttribute("role", "tablist");
+    for (const [id, label] of [
+      ["installed", "Installed"],
+      ["browse", "Browse"],
+    ] as const) {
+      const tab = document.createElement("button");
+      tab.className = "plugins-tab";
+      tab.textContent = label;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(this.tab === id));
+      tab.addEventListener("click", () => {
+        this.tab = id;
+        this.render();
       });
-      close.focus();
+      row.append(tab);
+    }
+    return row;
+  }
+
+  /**
+   * The index, or the offer to fetch it.
+   *
+   * Nothing is fetched until this tab is opened *and* the button is pressed:
+   * it is the app's first network call, and an editor that phones home on
+   * launch is an editor people stop trusting (work item 05-05).
+   */
+  private browseList(): HTMLElement {
+    const list = document.createElement("div");
+    list.className = "plugins-list";
+
+    if (this.browse === null) {
+      const ask = document.createElement("div");
+      ask.className = "plugins-row plugins-ask";
+      const what = document.createElement("div");
+      what.className = "plugins-note";
+      what.textContent = FETCH_NOTICE;
+      const from = document.createElement("div");
+      from.className = "plugins-note plugins-where";
+      from.textContent = this.registry?.from ?? "";
+      from.title = from.textContent;
+      const go = this.button("Fetch the index", () => void this.fetchIndex(false));
+      ask.append(what, from, go);
+      list.append(ask);
+      if (this.browseProblem) {
+        const why = document.createElement("div");
+        why.className = "plugins-row plugins-failed";
+        const note = document.createElement("div");
+        note.className = "plugins-note";
+        note.textContent = this.browseProblem;
+        why.append(note);
+        list.append(why);
+      }
+      return list;
+    }
+
+    if (this.browse.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "plugins-row";
+      const note = document.createElement("div");
+      note.className = "plugins-note";
+      note.textContent = "The index lists nothing yet.";
+      empty.append(note);
+      list.append(empty);
+      return list;
+    }
+
+    for (const row of this.browse) list.append(this.browseRow(row));
+    return list;
+  }
+
+  private browseRow(row: BrowseEntry): HTMLElement {
+    const element = document.createElement("div");
+    element.className = "plugins-row";
+
+    const name = document.createElement("div");
+    name.className = "plugins-name";
+    name.textContent = row.name;
+    if (row.verifiedWith) {
+      const version = document.createElement("span");
+      version.className = "plugins-version";
+      version.textContent = `checked on ${row.verifiedWith}`;
+      name.append(version);
+    }
+
+    const what = document.createElement("div");
+    what.className = "plugins-note";
+    what.textContent = row.description;
+
+    const where = document.createElement("div");
+    where.className = "plugins-note plugins-where";
+    where.textContent = row.bundled ? "bundled with TinkerPad" : (row.git ?? "");
+    where.title = where.textContent;
+
+    element.append(name, what, where);
+    if (row.installed) {
+      const already = document.createElement("span");
+      already.className = "plugins-note plugins-already";
+      already.textContent = row.bundled ? "bundled" : "installed";
+      element.append(already);
+    } else if (row.git) {
+      element.append(this.button("Install…", () => void this.installFromIndex(row)));
+    }
+    return element;
+  }
+
+  private browseActions(): HTMLElement {
+    const actions = document.createElement("div");
+    actions.className = "plugins-actions";
+    if (this.browse !== null) {
+      actions.append(this.button("Fetch again", () => void this.fetchIndex(true)));
+    }
+    const note = document.createElement("span");
+    note.className = "plugins-note";
+    const age = this.registry?.cachedAgeMs;
+    note.textContent =
+      age === undefined || age === null
+        ? "Nothing fetched yet."
+        : `Last fetched ${hoursAgo(age)}.`;
+    actions.append(note);
+    return actions;
+  }
+
+  private async fetchIndex(refresh: boolean): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.browseProblem = null;
+    try {
+      this.browse = await invoke<BrowseEntry[]>("browse_plugins", { refresh });
+      this.registry = await invoke<RegistrySource>("registry_source");
+    } catch (error) {
+      // An index nobody can reach is a sentence, not an error: the rest of
+      // the window is unaffected.
+      this.browseProblem = String((error as { message?: string } | null)?.message ?? error);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  /** Install an entry — through the same path, and the same notice, as a URL
+   * typed by hand (05-02). */
+  private async installFromIndex(row: BrowseEntry): Promise<void> {
+    if (this.busy || !row.git) return;
+    const agreed = await pick(TRUST, [
+      { id: "no", label: "Cancel" },
+      { id: "yes", label: `Install ${row.name}`, detail: row.git },
+    ]);
+    if (agreed?.id !== "yes") return;
+    this.busy = true;
+    try {
+      const name = await invoke<string>("install_plugin", { source: row.git });
+      toast("info", `${name} is installed.`);
+      await this.refresh();
+      await this.fetchIndex(false);
+    } catch {
+      // Shown as a toast.
+    } finally {
+      this.busy = false;
     }
   }
 
@@ -257,4 +452,13 @@ export class PluginsPanel {
       this.busy = false;
     }
   }
+}
+
+/** "3 hours ago", for the one place that needs it. */
+function hoursAgo(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return "just now";
+  if (hours === 1) return "an hour ago";
+  if (hours < 48) return `${hours} hours ago`;
+  return `${Math.floor(hours / 24)} days ago`;
 }

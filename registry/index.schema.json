@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TinkerPad plugin index",
+  "description": "The catalogue.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "Index format version. `1` is this one.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "plugins": {
+      "description": "Every plugin anyone has submitted, bundled ones included.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Entry"
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "version"
+  ],
+  "$defs": {
+    "Entry": {
+      "description": "One plugin in the index.\n\n Deliberately small: a name, where to get it, and who to ask about it. Any\n field that would need maintaining — a download count, a rating, a mirror of\n the code — is a field that goes stale and misleads.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "One line. Shown in the list.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The `[language].id` from its manifest. Unique in the index.",
+          "type": "string"
+        },
+        "name": {
+          "description": "What it calls itself.",
+          "type": "string"
+        },
+        "git": {
+          "description": "What `tinkerpad plugin install` is given. Absent for a bundled plugin,\n which is already here.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "languages": {
+          "description": "The languages it adds, for searching. Usually one.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "maintainer": {
+          "description": "Who to open an issue with.",
+          "type": "string"
+        },
+        "verified_with": {
+          "description": "The last TinkerPad version its `plugin check` was seen to pass on.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundled": {
+          "description": "Shipped with TinkerPad. Listed so the index is the whole catalogue\n rather than only the parts that aren't here.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "description",
+        "maintainer"
+      ]
+    }
+  }
+}

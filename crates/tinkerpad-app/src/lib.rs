@@ -22,6 +22,7 @@ mod packages;
 mod peek;
 mod playgrounds;
 mod plugins;
+pub mod registry;
 mod runs;
 mod service_settings;
 mod session;
@@ -665,6 +666,42 @@ mod commands {
         Ok(())
     }
 
+    /// The plugin index, for the Browse tab (work item 05-05).
+    ///
+    /// This is the app's only outgoing request other than the update check,
+    /// and it happens when the Browse tab is opened — never on launch, and
+    /// never before the user has said it may. The window asks; this does the
+    /// fetching, from a copy no more than a day old where there is one.
+    #[tauri::command(async)]
+    pub async fn browse_plugins(
+        state: State<'_, AppState>,
+        refresh: Option<bool>,
+    ) -> Result<Vec<crate::cli::BrowseEntry>, CommandError> {
+        let installed: Vec<String> = state
+            .plugins
+            .read()
+            .expect("plugins lock")
+            .all()
+            .iter()
+            .map(|entry| entry.plugin.id.to_string())
+            .collect();
+        let data_dir = state.data_dir.clone();
+        crate::cli::registry_entries(&data_dir, &installed, refresh.unwrap_or(false))
+            .await
+            .map_err(|e| CommandError::new(tinkerpad_core::ErrorCode::Io, e))
+    }
+
+    /// Where the index is read from, and how old the cached copy is, so the
+    /// window can say both before it asks to fetch anything.
+    #[tauri::command(async)]
+    pub fn registry_source(state: State<'_, AppState>) -> crate::cli::RegistrySource {
+        crate::cli::RegistrySource {
+            from: crate::registry::source(),
+            cached_age_ms: crate::registry::cached_age(&state.data_dir)
+                .map(|age| age.as_millis() as u64),
+        }
+    }
+
     /// Load the plugin folders again, without restarting (work item 05-02).
     #[tauri::command(async)]
     pub async fn reload_plugins(app: tauri::AppHandle) -> Result<(), CommandError> {
@@ -1193,6 +1230,8 @@ pub fn run() {
             commands::install_plugin,
             commands::remove_plugin,
             commands::reload_plugins,
+            commands::browse_plugins,
+            commands::registry_source,
             commands::toolchain_status,
             commands::recheck_toolchains,
             commands::list_playgrounds,

@@ -1,0 +1,28 @@
+# Validates the index on every pull request (work item 05-05).
+
+name: Index
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Until there is a release to download, the checker is built. See the
+      # plugin template's workflow for the release form.
+      - name: Build the checker
+        run: |
+          git clone --depth 1 https://github.com/BrandonGullion/TinkerPad tinkerpad-src
+          cd tinkerpad-src
+          cargo build --release -p tinkerpad-app --bin tinkerpad
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+
+      - name: Check the index
+        run: tinkerpad registry check index.json
+
+      - name: And that its schema is current
+        run: tinkerpad registry schema index.schema.json --check

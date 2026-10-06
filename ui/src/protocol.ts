@@ -262,6 +262,29 @@ export interface PluginsStatus {
   failures: { dir: string; source: PluginSource; message: string }[];
 }
 
+/** One row of the Plugins panel's Browse tab (work item 05-05). */
+export interface BrowseEntry {
+  id: string;
+  name: string;
+  description: string;
+  /** What `plugin install` is given. Absent for a bundled plugin. */
+  git?: string | null;
+  languages: string[];
+  maintainer: string;
+  /** The TinkerPad version its `plugin check` last passed on. */
+  verifiedWith?: string | null;
+  bundled: boolean;
+  /** Already here, so the row says so rather than offering to install it. */
+  installed: boolean;
+}
+
+/** Where the plugin index would be read from, and how old the copy is. */
+export interface RegistrySource {
+  from: string;
+  /** `null` when nothing has been fetched yet. */
+  cachedAgeMs: number | null;
+}
+
 export interface PluginSummary {
   id: string;
   name: string;
