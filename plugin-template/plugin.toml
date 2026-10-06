@@ -8,6 +8,13 @@
 # keys are errors with a "did you mean", so a typo tells you rather than being
 # quietly ignored.
 
+#:schema ../docs/reference/plugin-toml.schema.json
+#
+# That line points editors at the manifest's JSON Schema, so keys are checked
+# and described as you type (Taplo, and anything else that reads `#:schema`).
+# Change it to wherever you keep TinkerPad, or to the published URL once there
+# is one.
+
 api = 1                       # manifest schema version; not your version
 
 [language]

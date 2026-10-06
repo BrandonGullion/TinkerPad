@@ -19,6 +19,9 @@ regex = "1"
 serde_json = "1"
 tokio = { workspace = true, features = ["time", "macros", "rt-multi-thread", "sync"] }
 base64 = "0.22"
+# The manifest reference and `plugin.toml`'s JSON Schema are generated from
+# these types rather than written beside them (work item 05-04).
+schemars = "0.9"
 
 [lints]
 workspace = true
@@ -32,6 +35,12 @@ path = "src/bin/fakeprobe.rs"
 [[bin]]
 name = "tinkerpad-fakehelper"
 path = "src/bin/fakehelper.rs"
+
+# Generates docs/reference/ from the types (work item 05-04). Not part of the
+# app; CI runs it with --check.
+[[bin]]
+name = "tinkerpad-docgen"
+path = "src/bin/docgen.rs"
 
 [dev-dependencies]
 tinkerpad-library.workspace = true

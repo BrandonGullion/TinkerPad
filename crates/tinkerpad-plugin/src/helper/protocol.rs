@@ -95,7 +95,9 @@ pub enum ToHelper {
 ///
 /// `id` is missing from `ready` only. Every other message names the request it
 /// belongs to, which is how a reply finds the run or hook that is waiting.
-#[derive(Clone, Debug, Deserialize)]
+// `Serialize` is for the reference page, which is generated from these types
+// (work item 05-04); nothing in the app writes a `FromHelper`.
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FromHelper {
     Ready {
@@ -161,7 +163,7 @@ pub enum FromHelper {
 }
 
 /// A place in a file a helper wants pointed at, usually a compile error.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, serde::Serialize)]
 pub struct Diagnostic {
     #[serde(default)]
     pub file: Option<String>,
@@ -202,7 +204,7 @@ impl Diagnostic {
 }
 
 /// A file a hook wants written into the playground folder.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, serde::Serialize)]
 pub struct HelperFile {
     /// Relative to the playground folder. A path that escapes it is refused by
     /// the caller, not here.

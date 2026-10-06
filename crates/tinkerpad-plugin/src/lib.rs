@@ -39,6 +39,17 @@ pub use toolchain::{AcquiredTools, PROBE_TIMEOUT, Resolver, ToolchainOverrides, 
 /// The annotated C# manifest from `docs/PLUGINS.md` §2, kept identical to the
 /// docs by a test. The plugin template repository (work item 05-03) starts
 /// from it.
+/// The JSON Schema for `plugin.toml`, generated from the types the loader
+/// deserialises (work item 05-04).
+///
+/// Here rather than in the generator binary because the types are the crate's
+/// own: a document generated from something else would be a different
+/// document.
+pub fn manifest_schema() -> serde_json::Value {
+    let schema = schemars::schema_for!(manifest::Manifest);
+    serde_json::to_value(&schema).expect("a schema is JSON")
+}
+
 pub fn example_manifest() -> &'static str {
     include_str!("example_manifest.toml")
 }

@@ -1,0 +1,757 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TinkerPad plugin.toml",
+  "type": "object",
+  "properties": {
+    "api": {
+      "description": "Manifest schema version. The core supports this one and the one before\n it; see `docs/VERSIONING.md`.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "language": {
+      "description": "Who the language is: its id, name and file extension.",
+      "$ref": "#/$defs/Language"
+    },
+    "toolchain": {
+      "description": "How to tell the language is installed, and what to say when it isn't.",
+      "$ref": "#/$defs/Toolchain"
+    },
+    "kind": {
+      "description": "The shapes a playground can take. Exactly one is the default.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Kind"
+      }
+    },
+    "scaffold": {
+      "description": "Files written into every new playground besides the main one.",
+      "$ref": "#/$defs/Scaffold"
+    },
+    "run": {
+      "description": "How to run one playground. Required unless a `helper` runs them.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OneOrMany_Run"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "helper": {
+      "description": "A long-lived process that runs playgrounds and answers hooks.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OneOrMany_Helper"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lsp": {
+      "description": "The language server, if the language has one.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OneOrMany_Lsp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deps": {
+      "description": "How \"Add package\" adds a dependency.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Deps"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "output": {
+      "description": "How to find a file and line in the output, so an error is clickable.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Output"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "api",
+    "language",
+    "toolchain"
+  ],
+  "$defs": {
+    "Language": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable, lowercase, `[a-z0-9-]`. Names the plugin folder.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Shown in menus and the status bar.",
+          "type": "string"
+        },
+        "extension": {
+          "description": "Playground files are `main.<extension>`.",
+          "type": "string"
+        },
+        "highlighter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "main_path": {
+          "description": "Where the main file lives inside a playground. Defaults to\n `main.<extension>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "The plugin's own version, for the plugins panel and `plugin list`\n (work item 05-02). Optional, and never interpreted: `api` is the\n compatibility contract, not this.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "extension"
+      ]
+    },
+    "Toolchain": {
+      "type": "object",
+      "properties": {
+        "probe": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Probe"
+          }
+        },
+        "install_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "acquire": {
+          "description": "How to get what the probes look for, when it isn't there (04-08a).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Acquire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Probe": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "min_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Os"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    "Os": {
+      "type": "string",
+      "enum": [
+        "windows",
+        "macos",
+        "linux"
+      ]
+    },
+    "Acquire": {
+      "description": "How to get a tool this plugin needs (work item 04-08a).\n\n Two kinds. `command` asks a package manager the user already has; `download`\n fetches a published release when there is none to ask. Nothing here runs\n unless the user asks for it.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "command": {
+              "description": "The program and its arguments, as an array: there is never a shell.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "env": {
+              "description": "Environment for the command, which is how a package manager is\n pointed at `{tools_dir}` instead of wherever it installs by\n default (work item 04-08b).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "needs": {
+              "description": "What must already exist for this to work, such as `rustup`. Shown\n as the reason when it doesn't.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "label": {
+              "description": "What to show the user as the thing about to happen. The command\n line itself, when absent.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "os": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/Os"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "command"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "description": "Required, and part of where the tool lands: a checksum means\n nothing without the version it belongs to.",
+              "type": "string"
+            },
+            "file": {
+              "description": "One entry per platform. The one matching this machine is used; a\n machine with no entry is told there is nothing to download.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AcquireFile"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "download"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "version"
+          ]
+        }
+      ]
+    },
+    "AcquireFile": {
+      "description": "One platform's download.",
+      "type": "object",
+      "properties": {
+        "os": {
+          "$ref": "#/$defs/Os"
+        },
+        "arch": {
+          "$ref": "#/$defs/Arch"
+        },
+        "url": {
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Hex SHA-256 of the file at `url`, checked before anything is unpacked.",
+          "type": "string"
+        },
+        "member": {
+          "description": "What to take out of the archive. Absent when the download is the tool\n itself rather than an archive of one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rename_to": {
+          "description": "What to call it once it is out, when that isn't the member's own name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "arch",
+        "url",
+        "sha256"
+      ]
+    },
+    "Arch": {
+      "description": "A CPU architecture, for the per-platform files a `[…].acquire` download\n names (work item 04-08a). Two, because those are the two anyone publishes\n desktop binaries for.",
+      "type": "string",
+      "enum": [
+        "x86_64",
+        "aarch64"
+      ]
+    },
+    "Kind": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "template": {
+          "type": "string"
+        },
+        "default": {
+          "type": "boolean",
+          "default": false
+        },
+        "prelude": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "postlude": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "template"
+      ]
+    },
+    "Scaffold": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScaffoldFile"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ScaffoldFile": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Where to write it, relative to the playground folder.",
+          "type": "string"
+        },
+        "template": {
+          "description": "Source, relative to the plugin's `templates/` folder.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "template"
+      ]
+    },
+    "OneOrMany_Run": {
+      "description": "A table, or an array of tables: one entry per OS.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Run"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Run"
+          }
+        }
+      ]
+    },
+    "Run": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "os": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Os"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    "OneOrMany_Helper": {
+      "description": "A table, or an array of tables: one entry per OS.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Helper"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Helper"
+          }
+        }
+      ]
+    },
+    "Helper": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Build"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "idle_shutdown": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Os"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    "Build": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    "OneOrMany_Lsp": {
+      "description": "A table, or an array of tables: one entry per OS.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Lsp"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Lsp"
+          }
+        }
+      ]
+    },
+    "Lsp": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Workspace"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idle_shutdown": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "init_options": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "register": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Register"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workspace_files": {
+          "description": "Files the server's workspace needs, written there once: a\n `tsconfig.json` for a server that insists on one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScaffoldFile"
+          }
+        },
+        "os": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Os"
+          }
+        },
+        "acquire": {
+          "description": "How to get the server, when it isn't installed (work item 04-08a).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Acquire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workspace_needs": {
+          "description": "A path inside the workspace the server needs to find there, such as\n `node_modules/typescript` (work item 04-08b).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_acquire": {
+          "description": "How to put it there. Runs in the workspace root.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Acquire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    "Workspace": {
+      "type": "string",
+      "enum": [
+        "none",
+        "playground_dir",
+        "library_root",
+        "scratch_workspace"
+      ]
+    },
+    "Register": {
+      "type": "object",
+      "properties": {
+        "setting": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "reload": {
+          "description": "A request to send after the setting changes, for a server that reads\n its projects once rather than on every change:\n `rust-analyzer/reloadWorkspace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "setting",
+        "value"
+      ]
+    },
+    "Deps": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/DepsKind"
+        },
+        "add": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "directive": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ]
+    },
+    "DepsKind": {
+      "type": "string",
+      "enum": [
+        "command",
+        "inline-directive"
+      ]
+    },
+    "Output": {
+      "type": "object",
+      "properties": {
+        "error_regex": {
+          "type": "string"
+        },
+        "error_regex_multiline": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "error_regex"
+      ]
+    }
+  },
+  "description": "The manifest of a TinkerPad language plugin. Generated from the types the loader deserialises; see docs/PLUGINS.md §2."
+}

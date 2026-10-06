@@ -129,6 +129,17 @@ It copies into TinkerPad's plugins folder and the language appears without a
 restart. The window's **Plugins** panel does the same thing, and removes it
 again.
 
+## Your editor can check the manifest
+
+The first line of `plugin.toml` is a `#:schema` comment pointing at
+`docs/reference/plugin-toml.schema.json` in the TinkerPad repository. Editors
+that understand it — Taplo, and the VS Code "Even Better TOML" extension —
+then describe every key and underline the ones that don't exist, which is
+quicker than running the check for a typo.
+
+The schema is generated from the types the loader actually uses, so it says
+what this build accepts rather than what the documentation remembers.
+
 ## Rules worth knowing before you start
 
 - **Nothing language-specific goes into TinkerPad itself.** If your language

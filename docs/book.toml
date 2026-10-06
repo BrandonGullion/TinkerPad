@@ -1,0 +1,23 @@
+# The documentation site (work item 05-04).
+#
+# `mdbook build docs` renders docs/ into docs/book/, which is what CI publishes
+# once the project is public. Everything here works offline and from a checkout;
+# nothing assumes a URL that exists yet.
+
+[book]
+title = "TinkerPad"
+description = "A code playground: write a few lines, press Ctrl+Enter, see what they do."
+authors = ["The TinkerPad contributors"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+# The reference pages are generated (`tinkerpad-docgen`); the rest is written.
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/BrandonGullion/TinkerPad"
+edit-url-template = "https://github.com/BrandonGullion/TinkerPad/edit/main/docs/{path}"

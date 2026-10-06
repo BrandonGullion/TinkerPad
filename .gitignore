@@ -24,3 +24,6 @@ plugins/*/helper/obj/
 # Python bytecode from a plugin's dump library or helper.
 __pycache__/
 *.pyc
+
+# The documentation site, built by `mdbook build docs` (work item 05-04).
+docs/book/
