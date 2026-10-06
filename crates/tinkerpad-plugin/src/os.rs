@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Os {
     Windows,
@@ -40,7 +40,7 @@ impl std::fmt::Display for Os {
 /// A CPU architecture, for the per-platform files a `[…].acquire` download
 /// names (work item 04-08a). Two, because those are the two anyone publishes
 /// desktop binaries for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Arch {
     #[serde(alias = "amd64", alias = "x64")]

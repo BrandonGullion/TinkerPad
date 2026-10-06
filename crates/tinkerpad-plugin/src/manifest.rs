@@ -31,28 +31,42 @@ pub const KNOWN_SECTIONS: &[&str] = &[
     "output",
 ];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct Manifest {
+    /// Manifest schema version. The core supports this one and the one before
+    /// it; see `docs/VERSIONING.md`.
     #[allow(dead_code)] // checked before the strict parse
     pub api: u32,
+    /// Who the language is: its id, name and file extension.
     pub language: Language,
+    /// How to tell the language is installed, and what to say when it isn't.
     pub toolchain: Toolchain,
+    /// The shapes a playground can take. Exactly one is the default.
     #[serde(rename = "kind", default)]
     pub kinds: Vec<Kind>,
+    /// Files written into every new playground besides the main one.
     #[serde(default)]
     pub scaffold: Scaffold,
+    /// How to run one playground. Required unless a `helper` runs them.
     pub run: Option<OneOrMany<Run>>,
+    /// A long-lived process that runs playgrounds and answers hooks.
     pub helper: Option<OneOrMany<Helper>>,
+    /// The language server, if the language has one.
     pub lsp: Option<OneOrMany<Lsp>>,
+    /// How "Add package" adds a dependency.
     pub deps: Option<Deps>,
+    /// How to find a file and line in the output, so an error is clickable.
     pub output: Option<Output>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Language {
+    /// Stable, lowercase, `[a-z0-9-]`. Names the plugin folder.
     pub id: String,
+    /// Shown in menus and the status bar.
     pub name: String,
+    /// Playground files are `main.<extension>`.
     pub extension: String,
     pub highlighter: Option<String>,
     /// Where the main file lives inside a playground. Defaults to
@@ -64,7 +78,7 @@ pub struct Language {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Toolchain {
     #[serde(default)]
@@ -74,7 +88,7 @@ pub struct Toolchain {
     pub acquire: Option<Acquire>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Probe {
     pub command: String,
@@ -84,7 +98,7 @@ pub struct Probe {
     pub os: Option<Vec<Os>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Kind {
     pub id: String,
@@ -96,14 +110,14 @@ pub struct Kind {
     pub postlude: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Scaffold {
     #[serde(default)]
     pub files: Vec<ScaffoldFile>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScaffoldFile {
     /// Where to write it, relative to the playground folder.
@@ -112,7 +126,7 @@ pub struct ScaffoldFile {
     pub template: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
     pub command: String,
@@ -124,7 +138,7 @@ pub struct Run {
     pub os: Option<Vec<Os>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Helper {
     pub command: String,
@@ -139,7 +153,7 @@ pub struct Helper {
     pub os: Option<Vec<Os>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Build {
     pub command: String,
@@ -148,7 +162,7 @@ pub struct Build {
     pub cwd: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Lsp {
     pub command: String,
@@ -158,6 +172,9 @@ pub struct Lsp {
     pub env: BTreeMap<String, String>,
     pub workspace: Option<Workspace>,
     pub idle_shutdown: Option<String>,
+    // Whatever the server wants; TinkerPad passes it through without reading
+    // it, so the schema says so rather than pretending to know.
+    #[schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")]
     pub init_options: Option<toml::Table>,
     pub register: Option<Register>,
     /// Files the server's workspace needs, written there once: a
@@ -179,7 +196,7 @@ pub struct Lsp {
 /// Two kinds. `command` asks a package manager the user already has; `download`
 /// fetches a published release when there is none to ask. Nothing here runs
 /// unless the user asks for it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Acquire {
     Command {
@@ -210,7 +227,7 @@ pub enum Acquire {
 }
 
 /// One platform's download.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AcquireFile {
     pub os: Os,
@@ -225,7 +242,7 @@ pub struct AcquireFile {
     pub rename_to: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Workspace {
     None,
@@ -234,7 +251,7 @@ pub enum Workspace {
     ScratchWorkspace,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Register {
     pub setting: String,
@@ -245,7 +262,7 @@ pub struct Register {
     pub reload: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Deps {
     pub kind: DepsKind,
@@ -253,14 +270,14 @@ pub struct Deps {
     pub directive: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum DepsKind {
     Command,
     InlineDirective,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Output {
     pub error_regex: String,
@@ -284,6 +301,25 @@ impl<T> OneOrMany<T> {
             OneOrMany::One(t) => vec![t],
             OneOrMany::Many(v) => v,
         }
+    }
+}
+
+/// A table, or an array of them — which is how TOML spells "repeat
+/// this section per OS" (docs/PLUGINS.md §2.1). Written by hand because the
+/// shape is a union, which no derive can see from the custom `Deserialize`
+/// below.
+impl<T: schemars::JsonSchema> schemars::JsonSchema for OneOrMany<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        format!("OneOrMany_{}", T::schema_name()).into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let one = generator.subschema_for::<T>();
+        let many = generator.subschema_for::<Vec<T>>();
+        schemars::json_schema!({
+            "anyOf": [one, many],
+            "description": "A table, or an array of tables: one entry per OS.",
+        })
     }
 }
 

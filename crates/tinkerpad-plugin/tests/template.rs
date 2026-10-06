@@ -130,3 +130,22 @@ fn the_places_to_change_are_marked_and_counted() {
         );
     }
 }
+
+/// The template points at the generated JSON Schema, so an editor can check
+/// the manifest as it is typed (work item 05-04). A path that stopped
+/// existing would be a line that quietly does nothing.
+#[test]
+fn the_template_points_at_a_schema_that_is_there() {
+    let text = manifest_text();
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("#:schema "))
+        .expect("the template should carry a #:schema line");
+    let relative = line.trim_start_matches("#:schema ").trim();
+    let pointed_at = template_dir().join(relative);
+    assert!(
+        pointed_at.exists(),
+        "#:schema points at {relative}, which isn't there \
+         (run `cargo run -p tinkerpad-plugin --bin tinkerpad-docgen`)"
+    );
+}

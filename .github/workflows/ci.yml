@@ -223,6 +223,22 @@ jobs:
       # app uses (work items 05-01a, 05-01b). A toolchain this runner hasn't
       # got is a skip, not a failure, so this stays useful as languages are
       # added to the matrix rather than becoming a list of exclusions.
+      # The reference pages are generated from the types (work item 05-04), so
+      # a type that changed without them is a failed build rather than a stale
+      # page nobody noticed.
+      - name: Reference pages are current
+        shell: bash
+        run: cargo run -q -p tinkerpad-plugin --bin tinkerpad-docgen -- --check
+
+      # The documentation site builds. Publishing it is a later step, for when
+      # the repository is public; this is the half that can fail on a typo.
+      - name: Documentation site builds
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo install mdbook --locked --version ^0.4 || true
+          mdbook build docs
+
       - name: Plugin conformance
         shell: bash
         run: |
