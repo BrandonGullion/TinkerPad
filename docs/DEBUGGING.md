@@ -67,8 +67,13 @@ an acceptance criterion in the named work item.
 - **The webview.** CodeMirror gutters are extensible; breakpoints are another
   gutter marker set, like the annotation gutter from 01-13.
 
-## 4. When Phase 6 starts
+## 4. The work items
 
-Write the work items then, not now. The expected shape: DAP client + pool (M),
-UI panels and gutter (L), then one item per language adapter (S–M each), with
-Node first because attach-to-inspector is the simplest path.
+Written when Phase 5 finished, and listed under Phase 6 in
+[work/README.md](../work/README.md). The shape is the one sketched here: the
+DAP client and the pool, the manifest section, a session in the core, then the
+gutter and the panels, then one item per language with Node first because
+attach-to-inspector is the simplest path and exercises both modes.
+
+Every constraint above is named by the item that spends it, so a change to one
+of them has somewhere to be argued rather than quietly made.
