@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "csharp",
+      "name": "C#",
+      "description": "C# playgrounds, bundled with TinkerPad.",
+      "languages": [
+        "csharp"
+      ],
+      "maintainer": "BrandonGullion",
+      "bundled": true
+    },
+    {
+      "id": "go",
+      "name": "Go",
+      "description": "Go playgrounds, bundled with TinkerPad.",
+      "languages": [
+        "go"
+      ],
+      "maintainer": "BrandonGullion",
+      "bundled": true
+    },
+    {
+      "id": "powershell",
+      "name": "PowerShell",
+      "description": "PowerShell playgrounds, bundled with TinkerPad.",
+      "languages": [
+        "powershell"
+      ],
+      "maintainer": "BrandonGullion",
+      "bundled": true
+    },
+    {
+      "id": "python",
+      "name": "Python",
+      "description": "Python playgrounds, bundled with TinkerPad.",
+      "languages": [
+        "python"
+      ],
+      "maintainer": "BrandonGullion",
+      "bundled": true
+    },
+    {
+      "id": "rust",
+      "name": "Rust",
+      "description": "Rust playgrounds, bundled with TinkerPad.",
+      "languages": [
+        "rust"
+      ],
+      "maintainer": "BrandonGullion",
+      "bundled": true
+    },
+    {
+      "id": "typescript",
+      "name": "TypeScript",
+      "description": "TypeScript playgrounds, bundled with TinkerPad.",
+      "languages": [
+        "typescript"
+      ],
+      "maintainer": "BrandonGullion",
+      "bundled": true
+    }
+  ]
+}

@@ -60,6 +60,9 @@ tar = "0.4"
 # Tauri path resolver to ask (work item 05-01c). Already in the tree: Tauri's
 # own resolver uses it.
 dirs = "6"
+# The plugin index's schema is generated from its types (work items 05-04,
+# 05-05), like the manifest's.
+schemars = "0.9"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }

@@ -4491,6 +4491,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   history: historyScenario,
   hooks: hooksScenario,
   "plugins-panel": pluginsPanelScenario,
+  browse: browseScenario,
   tools: toolsScenario,
   "tools-acquire": toolsAcquireScenario,
   packages: packagesScenario,
@@ -4929,6 +4930,97 @@ async function pluginsPanelScenario(_ctx: SelftestContext, check: Check) {
   await runCommand("Plugins");
   await frame();
   await check("the command closes it again", panel() === null);
+}
+
+/**
+ * The Browse tab (work item 05-05): the plugin index, and the rule that
+ * nothing is fetched until it is asked for.
+ *
+ * `TINKERPAD_REGISTRY` points at the index in the checkout, so this reads a
+ * file rather than the network — which is also how a contributor tries their
+ * own entry before submitting it.
+ */
+async function browseScenario(_ctx: SelftestContext, check: Check) {
+  const panel = () => document.querySelector<HTMLElement>(".plugins-panel");
+  const rows = () => [...(panel()?.querySelectorAll<HTMLElement>(".plugins-row") ?? [])];
+  const tab = (label: string) =>
+    [...(panel()?.querySelectorAll<HTMLElement>(".plugins-tab") ?? [])].find(
+      (t) => t.textContent === label,
+    );
+
+  const where = await invoke<{ from: string; cachedAgeMs: number | null }>(
+    "registry_source",
+  );
+  await report(`INFO the index would be read from ${where.from}`);
+
+  await runCommand("Plugins");
+  const opened = await until(() => panel() !== null, 10_000);
+  await check("the plugins panel opens", opened);
+  await check(
+    "it has an Installed tab and a Browse tab",
+    tab("Installed") !== undefined && tab("Browse") !== undefined,
+  );
+
+  // The rule: opening Browse shows the offer, not the index.
+  tab("Browse")?.click();
+  await frame();
+  const asked = panel()?.querySelector(".plugins-ask");
+  await check(
+    "opening Browse offers to fetch rather than fetching",
+    asked !== null && asked !== undefined,
+    JSON.stringify({ rows: rows().length }),
+  );
+  await check(
+    "and says what it would read, before reading it",
+    (asked?.textContent ?? "").includes("has not done"),
+    (asked?.textContent ?? "").slice(0, 80),
+  );
+
+  // Asked for, it reads the index.
+  const fetchButton = [...(asked?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+    (b) => (b.textContent ?? "").startsWith("Fetch"),
+  );
+  fetchButton?.click();
+  const listed = await until(
+    () => panel()?.querySelector(".plugins-ask") === null && rows().length > 0,
+    20_000,
+  );
+  await check("pressing the button reads it", listed, `${rows().length} rows`);
+
+  const entries = await invoke<{ id: string; bundled: boolean; installed: boolean }[]>(
+    "browse_plugins",
+    { refresh: false },
+  );
+  await check(
+    "the bundled plugins are in the index, so it is the whole catalogue",
+    entries.length > 0 && entries.every((e) => e.bundled),
+    JSON.stringify(entries.map((e) => e.id)),
+  );
+  await check(
+    "and each is marked as already here rather than offered",
+    entries.every((e) => e.installed),
+    JSON.stringify(entries.filter((e) => !e.installed).map((e) => e.id)),
+  );
+  const already = panel()?.querySelectorAll(".plugins-already").length ?? 0;
+  await check(
+    "which is what the rows show",
+    already === entries.length,
+    JSON.stringify({ already, entries: entries.length }),
+  );
+
+  // Back and forth between the tabs keeps what was fetched.
+  tab("Installed")?.click();
+  await frame();
+  tab("Browse")?.click();
+  await frame();
+  await check(
+    "leaving the tab and coming back doesn't read it again",
+    panel()?.querySelector(".plugins-ask") === null && rows().length > 0,
+  );
+
+  await runCommand("Plugins");
+  await frame();
+  await check("the command closes the panel", panel() === null);
 }
 
 /**

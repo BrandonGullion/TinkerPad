@@ -4519,6 +4519,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "reqwest 0.12.28",
+ "schemars 0.9.0",
  "serde",
  "serde_json",
  "sha2",

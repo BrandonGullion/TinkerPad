@@ -12,6 +12,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("plugin") => std::process::exit(plugin_subcommand(&args[1..])),
         Some("tools") => std::process::exit(tools_subcommand(&args[1..])),
+        Some("registry") => std::process::exit(registry_subcommand(&args[1..])),
         _ => {}
     }
     for arg in &args {
@@ -149,6 +150,50 @@ fn tools_subcommand(args: &[String]) -> i32 {
     }
 }
 
+/// `tinkerpad registry check|schema` (work item 05-05).
+fn registry_subcommand(args: &[String]) -> i32 {
+    let mut rest = args.iter().map(String::as_str);
+    let verb = rest.next();
+    let mut check = false;
+    let mut path = None;
+    for arg in rest {
+        match arg {
+            "--check" => check = true,
+            "-h" | "--help" => {
+                say(REGISTRY_HELP);
+                return 0;
+            }
+            other if other.starts_with('-') => {
+                say(&format!("Unknown option `{other}`.\n\n{REGISTRY_HELP}"));
+                return 2;
+            }
+            value => path = Some(value.to_owned()),
+        }
+    }
+    match verb {
+        Some("check") => tinkerpad_app::cli::registry_check(path.as_deref(), &mut |line| say(line)),
+        Some("schema") => {
+            tinkerpad_app::cli::registry_schema(path.as_deref(), check, &mut |line| say(line))
+        }
+        _ => {
+            say(REGISTRY_HELP);
+            2
+        }
+    }
+}
+
+const REGISTRY_HELP: &str = "\
+The plugin index: the list the window's Browse tab reads.
+
+USAGE:
+    tinkerpad registry check [path]       Everything wrong with an index
+    tinkerpad registry schema [path]      Write its JSON Schema
+    tinkerpad registry schema --check     Fail if the written one is stale
+
+`check` defaults to registry/index.json, or $TINKERPAD_REGISTRY. It reports
+every problem at once, so one push tells a contributor everything rather than
+one thing at a time.";
+
 const TOOLS_HELP: &str = "\
 What each language needs, and how to get it.
 
@@ -220,6 +265,8 @@ const HELP: &str = concat!(
     "    tinkerpad tools list
 ",
     "    tinkerpad tools install <language>
+",
+    "    tinkerpad registry check
 ",
     "
 ",

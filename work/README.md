@@ -89,7 +89,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [05-02 Plugin install](phase-5-community/05-02-plugin-install.md) · M
 - [x] [05-03 Plugin template repo](phase-5-community/05-03-plugin-template.md) · S · 1 deferred criterion
 - [x] [05-04 Published docs and versioning policy](phase-5-community/05-04-docs-and-versioning.md) · M · 2 partly deferred
-- [ ] [05-05 Registry index](phase-5-community/05-05-registry.md) · S
+- [x] [05-05 Registry index](phase-5-community/05-05-registry.md) · S
 
 ## Phase 6 — Debugging (deferred)
 
