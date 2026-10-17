@@ -5465,6 +5465,9 @@ async function pythonScenario(ctx: SelftestContext, check: Check) {
         str: completions
           .filter((c) => /^(upper|lower|strip|split|title)/.test(c.label))
           .map((c) => c.label),
+        // What it offered instead, and what the document looked like then.
+        sample: completions.slice(0, 8).map((c) => c.label),
+        line: view.state.doc.lineAt(view.state.selection.main.head).text,
       }),
     );
     closeCompletion(view);

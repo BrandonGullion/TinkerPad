@@ -68,6 +68,11 @@ interface PlaygroundRun {
   current: number | null;
   /** Identifies the latest start, so a superseded start can tell. */
   token: number;
+  /**
+   * Cancel was asked for before the start returned a run id. Sent once it
+   * does: a cancel that reached the core first would find no run to stop.
+   */
+  cancelPending: boolean;
   state: RunState;
   /** The events of the run going on now, for when it becomes a past one. */
   events: RunEvent[];
@@ -133,6 +138,7 @@ export class RunController {
     const token = ++this.latestToken;
     record.token = token;
     record.current = null;
+    record.cancelPending = false;
     record.events = [];
     record.clipped = false;
     this.clickedAt = performance.now();
@@ -162,6 +168,7 @@ export class RunController {
     if (record.token !== token) return;
     record.current = id;
     for (const event of early) this.apply(playground, record, event);
+    this.cancelIfPending(playground, record);
   }
 
   /**
@@ -175,6 +182,7 @@ export class RunController {
     const token = ++this.latestToken;
     record.token = token;
     record.current = null;
+    record.cancelPending = false;
     this.setState(playground, record, { kind: "running", since: performance.now() });
 
     this.startsInFlight++;
@@ -203,11 +211,26 @@ export class RunController {
     }
     record.current = id;
     for (const event of early) this.apply(playground, record, event);
+    this.cancelIfPending(playground, record);
   }
 
   /** Cancel a playground's run (the active tab's by default). */
   async cancel(playground: string | null = this.host.activePlayground()): Promise<void> {
-    if (playground && this.isRunning(playground)) await invoke("cancel", { playground });
+    if (!playground || !this.isRunning(playground)) return;
+    const record = this.runs.get(playground);
+    // Still starting: the core may not know about this run yet.
+    if (record && record.current === null) {
+      record.cancelPending = true;
+      return;
+    }
+    await invoke("cancel", { playground });
+  }
+
+  /** Send a cancel that was asked for while the run was starting. */
+  private cancelIfPending(playground: string, record: PlaygroundRun): void {
+    if (!record.cancelPending) return;
+    record.cancelPending = false;
+    void invoke("cancel", { playground });
   }
 
   /** Resolves when the latest run started with `run` ends. */
@@ -295,6 +318,7 @@ export class RunController {
       record = {
         current: null,
         token: 0,
+        cancelPending: false,
         state: { kind: "idle" },
         events: [],
         clipped: false,
