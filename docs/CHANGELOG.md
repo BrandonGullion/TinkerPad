@@ -7,9 +7,9 @@ whether anything you wrote needs changing, and it says "nothing" when nothing
 does, so an empty one is a useful answer rather than a missing one. The rules
 behind it are in [VERSIONING.md](VERSIONING.md).
 
-## Unreleased
+## 0.1.0 — 2026-10-17
 
-Everything so far: TinkerPad has not had a release yet.
+The first release.
 
 ### Plugin authors
 

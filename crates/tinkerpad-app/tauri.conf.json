@@ -82,7 +82,7 @@
       "endpoints": [
         "https://github.com/BrandonGullion/TinkerPad/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0N0QyNjdCMTFCMTVFRUEKUldUcVhyRVJleVo5ZE9Fa2JrSkYxRnp6QnRWQWd6WWd5YVJJZU44enEvbU5MRXQ3QnRJSjJFTnMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3RURBQTY4RUQ5MzIwRDcKUldUWElKUHRhS3J0ZDRTb2J2THVrM0M5bkxkQlJVKzRkWDhkT2VNK2FFNllYNm5RbU1tSXVUcmMK",
       "windows": {
         "installMode": "passive"
       }
