@@ -8,6 +8,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # No first-run banner or telemetry from the .NET CLI.
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
 jobs:
   rust:
@@ -36,6 +39,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      # The first `dotnet` on a fresh runner does its one-time setup, which can
+      # outlast the plugin's 3 s toolchain probe, and several tests starting it
+      # at once collide over that setup's lock. Doing it once here, alone,
+      # means the tests only ever meet a dotnet that is already set up.
+      - name: Warm up .NET
+        run: dotnet --info
 
       # The Python plugin needs 3.11 or newer, which is newer than some runner
       # images ship, and basedpyright for its language server (03-04).
@@ -126,6 +136,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      # The first `dotnet` on a fresh runner does its one-time setup, which can
+      # outlast the plugin's 3 s toolchain probe, and several tests starting it
+      # at once collide over that setup's lock. Doing it once here, alone,
+      # means the tests only ever meet a dotnet that is already set up.
+      - name: Warm up .NET
+        run: dotnet --info
 
       # The Python plugin needs 3.11 or newer, which is newer than some runner
       # images ship, and basedpyright for its language server (03-04).
