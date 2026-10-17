@@ -219,9 +219,17 @@ impl Lifecycle {
         }
     }
 
-    /// The process has just started. Resets uptime.
+    /// The process has just started. Resets uptime, and the idle clock if
+    /// nothing is using it: a process brought back after an idle stop gets a
+    /// whole idle period of its own, rather than the old clock that already
+    /// ran out and would stop it again the moment it was ready.
     pub fn starting_now(&self) {
-        *self.started.lock().expect("started lock") = Some(Instant::now());
+        let now = Instant::now();
+        *self.started.lock().expect("started lock") = Some(now);
+        let mut since = self.idle_since.lock().expect("idle lock");
+        if since.is_some() {
+            *since = Some(now);
+        }
     }
 
     /// How long the current process has been up.
@@ -609,6 +617,27 @@ mod tests {
         // Every crash is "after the window", so none of them is a run of bad
         // luck and the count never climbs.
         assert!(matches!(life.note_crash(), Crash::Restart { count: 1, .. }));
+    }
+
+    #[test]
+    fn starting_again_restarts_the_idle_clock() {
+        let life = lifecycle(Policy {
+            idle_shutdown: Some(Duration::from_millis(50)),
+            ..Policy::default()
+        });
+        life.busy();
+        life.idle();
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(life.idle_expired(), "the clock ran out, so it was stopped");
+
+        // Brought back with nothing using it: a fresh period, not the old one.
+        life.starting_now();
+        assert!(!life.idle_expired());
+
+        // Something using it keeps the clock stopped across a restart.
+        life.busy();
+        life.starting_now();
+        assert_eq!(life.idle_for(), None);
     }
 
     #[test]

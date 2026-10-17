@@ -249,6 +249,7 @@ export class ServerStrip {
 
     const popover = document.createElement("div");
     popover.className = "server-popover";
+    popover.dataset.key = child.key;
     popover.setAttribute("role", "dialog");
     popover.setAttribute("aria-label", `${child.name} ${child.what}`);
 

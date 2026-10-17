@@ -478,13 +478,15 @@ impl Library {
         if std::fs::read(&p.main_file).is_ok_and(|current| current == text.as_bytes()) {
             return Ok(false);
         }
-        // Remember first: the watcher may see the rename before this returns.
-        self.known_source
-            .lock()
-            .expect("known lock")
-            .insert(p.main_file.clone(), hash_bytes(text.as_bytes()));
-        fsutil::write_atomic(&p.main_file, text.as_bytes())
-            .map_err(|e| LibraryError::io(&p.main_file, e))?;
+        // Remember first, and hold the lock until the file is in place: the
+        // watcher reads under the same lock, so it sees the file from before
+        // this write or after it, never the old text against the new hash.
+        {
+            let mut known = self.known_source.lock().expect("known lock");
+            known.insert(p.main_file.clone(), hash_bytes(text.as_bytes()));
+            fsutil::write_atomic(&p.main_file, text.as_bytes())
+                .map_err(|e| LibraryError::io(&p.main_file, e))?;
+        }
         // The text the user just saved is what a search should find, without
         // waiting for the watcher to say so (work item 04-01).
         self.index
@@ -705,11 +707,12 @@ impl Library {
             let Some(p) = index.by_id.values().find(|p| p.main_file == file) else {
                 continue;
             };
+            // Read under the lock `write_source` holds while it writes.
+            let mut known = self.known_source.lock().expect("known lock");
             let Ok(bytes) = std::fs::read(&file) else {
                 continue;
             };
             let hash = hash_bytes(&bytes);
-            let mut known = self.known_source.lock().expect("known lock");
             if known.get(&file) != Some(&hash) {
                 known.insert(file.clone(), hash);
                 debug!(id = %p.id, "main file changed outside the app");

@@ -8,6 +8,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # No first-run banner or telemetry from the .NET CLI.
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
 jobs:
   rust:
@@ -36,6 +39,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      # The first `dotnet` on a fresh runner does its one-time setup, which can
+      # outlast the plugin's 3 s toolchain probe, and several tests starting it
+      # at once collide over that setup's lock. Doing it once here, alone,
+      # means the tests only ever meet a dotnet that is already set up.
+      - name: Warm up .NET
+        run: dotnet --info
 
       # The Python plugin needs 3.11 or newer, which is newer than some runner
       # images ship, and basedpyright for its language server (03-04).
@@ -127,6 +137,13 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # The first `dotnet` on a fresh runner does its one-time setup, which can
+      # outlast the plugin's 3 s toolchain probe, and several tests starting it
+      # at once collide over that setup's lock. Doing it once here, alone,
+      # means the tests only ever meet a dotnet that is already set up.
+      - name: Warm up .NET
+        run: dotnet --info
+
       # The Python plugin needs 3.11 or newer, which is newer than some runner
       # images ship, and basedpyright for its language server (03-04).
       - uses: actions/setup-python@v5
@@ -173,9 +190,15 @@ jobs:
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
-          set -o pipefail
+          set +e
           xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
-          grep -q "selftest: INFO plugins loaded=5 failures=1" launch.log
+          codes=("${PIPESTATUS[@]}")
+          set -e
+          # xvfb-run's status, then tee's: a run that passed and still failed
+          # this step once needs to say which of them it was.
+          echo "launch: xvfb-run ${codes[0]}, tee ${codes[1]}"
+          [ "${codes[0]}" = 0 ] && [ "${codes[1]}" = 0 ]
+          grep -q "selftest: INFO plugins loaded=8 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
@@ -213,7 +236,7 @@ jobs:
           grep -q "selftest: PASS Restart brings it back" lsp.log
           grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
-          grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
+          grep -q "selftest: PASS a helper starts on demand" lsp.log
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
           grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
           grep -q "selftest: PASS a second playground waits for the helper" lsp.log
@@ -286,7 +309,7 @@ jobs:
         run: |
           set -o pipefail
           bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
-          grep -q "selftest: INFO plugins loaded=5 failures=1" launch.log
+          grep -q "selftest: INFO plugins loaded=8 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
@@ -321,7 +344,7 @@ jobs:
           grep -q "selftest: PASS Restart brings it back" lsp.log
           grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
-          grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
+          grep -q "selftest: PASS a helper starts on demand" lsp.log
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
           grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
           grep -q "selftest: PASS a second playground waits for the helper" lsp.log

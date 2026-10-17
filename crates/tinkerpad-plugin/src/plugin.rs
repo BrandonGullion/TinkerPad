@@ -287,7 +287,10 @@ impl Plugin {
     /// `os`. Rules that involve other operating systems (overlapping `os`
     /// lists, for example) are still checked for all of them.
     pub fn load_for(dir: impl AsRef<Path>, os: Os) -> Result<Plugin, ManifestError> {
-        let dir = dir.as_ref();
+        // Without a trailing separator: `{plugin_dir}/dump` must not become
+        // `go//dump`, which a go.mod reads as a path and then a comment.
+        let dir: PathBuf = dir.as_ref().components().collect();
+        let dir = dir.as_path();
         let file = dir.join(MANIFEST_FILE);
         let source = std::fs::read_to_string(&file).map_err(|source| ManifestError::Io {
             path: file.clone(),

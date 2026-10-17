@@ -385,6 +385,13 @@ pub fn install_in(
                 }
             }
         });
+        // `select!` can see the work finish before it has read every line the
+        // work published on the way, so whatever is still queued goes out now.
+        while let Ok(envelope) = listening.try_recv() {
+            if let CoreEvent::Tool { line, .. } = envelope.event {
+                out(&format!("  {line}"));
+            }
+        }
         match acquired {
             Ok(Some(path)) => out(&format!("Installed at {}", path.display())),
             Ok(None) => out("Done."),

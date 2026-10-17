@@ -226,6 +226,10 @@ async fn a_request_after_an_idle_stop_starts_the_server_again() {
     let again = pool.server_for(&config);
     assert!(std::sync::Arc::ptr_eq(&again, &server));
     wait_state(&server, "ready again", ServerState::is_ready).await;
+    // A few watch ticks later it is still there: coming back starts a new idle
+    // period rather than inheriting the one that already ran out.
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert!(server.state().is_ready(), "{:?}", server.state());
     assert_eq!(
         server.request("test/echo", json!("hello")).await.unwrap(),
         json!("hello"),
