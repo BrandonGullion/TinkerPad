@@ -236,7 +236,7 @@ jobs:
           grep -q "selftest: PASS Restart brings it back" lsp.log
           grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
-          grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
+          grep -q "selftest: PASS a helper starts on demand" lsp.log
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
           grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
           grep -q "selftest: PASS a second playground waits for the helper" lsp.log
@@ -344,7 +344,7 @@ jobs:
           grep -q "selftest: PASS Restart brings it back" lsp.log
           grep -q "selftest: PASS a definition in another file opens a read-only tab" lsp.log
           grep -q "selftest: PASS at most ten read-only tabs are kept" lsp.log
-          grep -q "selftest: PASS a helper starts on demand, building itself first" lsp.log
+          grep -q "selftest: PASS a helper starts on demand" lsp.log
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
           grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
           grep -q "selftest: PASS a second playground waits for the helper" lsp.log

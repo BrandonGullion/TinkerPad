@@ -2817,9 +2817,13 @@ async function serversScenario(ctx: SelftestContext, check: Check) {
     chips().find((chip) => (chip.dataset.key ?? "").startsWith(`server|${language}|`));
   const popover = () => document.querySelector<HTMLElement>(".server-popover");
 
-  /** The popover stays open between actions, so only open it if it is shut. */
+  /**
+   * The popover stays open between actions, so only open it if it is shut,
+   * or showing another chip (clicking this one switches to it).
+   */
   const openPopover = async () => {
-    if (popover() === null) chipFor("node-check")?.click();
+    const chip = chipFor("node-check");
+    if (popover()?.dataset.key !== chip?.dataset.key) chip?.click();
     await frame();
   };
   for (const t of [...tabs.tabs]) await tabs.close(t);
@@ -5043,8 +5047,10 @@ async function helpersScenario(ctx: SelftestContext, check: Check) {
   const chips = () => [...document.querySelectorAll<HTMLElement>(".server-chip")];
   const chip = () => chips().find((c) => (c.dataset.key ?? "").startsWith("helper|node-check|"));
   const popover = () => document.querySelector<HTMLElement>(".server-popover");
+  // The helper's own popover: another chip's may still be open from an
+  // earlier scenario, and clicking this chip switches to it.
   const openPopover = async () => {
-    if (popover() === null) chip()?.click();
+    if (popover()?.dataset.key !== chip()?.dataset.key) chip()?.click();
     await frame();
   };
   const status = async () =>
