@@ -534,6 +534,22 @@ fn server_check(
             },
         );
     }
+    // The same goes for what the server needs in its workspace, such as the
+    // TypeScript that typescript-language-server analyses with: the window
+    // offers to install it, but this workspace is a fresh temporary one.
+    if let Some(needs) = plugin.lsp.as_ref().and_then(|l| l.workspace_needs.as_ref())
+        && let Ok(Some(root)) =
+            crate::lsp::root_for(plugin, Some(playground), &work.library, &work.scratch)
+        && !root.join(needs).exists()
+    {
+        return (
+            Outcome::Skip,
+            format!(
+                "the server needs `{}` in its workspace, which a fresh check doesn't have",
+                needs.display()
+            ),
+        );
+    }
 
     let _guard = runtime.enter();
     let config = match crate::lsp::config_for_check(
@@ -566,7 +582,20 @@ fn server_check(
                     SERVER_TIMEOUT.as_secs()
                 )
             })?
-            .map_err(|e| e.to_string())?;
+            // "Not running" alone is nothing an author can act on: why it
+            // stopped, or the last thing it said, is.
+            .map_err(|e| match (server.state(), server.log().last()) {
+                (
+                    tinkerpad_core::ServerState::Stopped {
+                        reason: Some(why), ..
+                    },
+                    _,
+                ) => {
+                    format!("{e}: {}", clip(&why, 200))
+                }
+                (_, Some(last)) => format!("{e}; it last said: {}", clip(last, 200)),
+                _ => e.to_string(),
+            })?;
 
         // Wait for this file's diagnostics. Silence is a pass: plenty of
         // servers say nothing about a file with nothing wrong.
