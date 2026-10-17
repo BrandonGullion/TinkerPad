@@ -25,6 +25,9 @@ template = "program.go"
 default = true
 
 # Locked lines: the file is one expression, and the wrapper dumps it.
+# The expression is a variable's value rather than an argument to Dump: Go
+# ends a line that finishes in `}` or `)` with a semicolon, which breaks an
+# argument list but is exactly how a `var` declaration ends.
 [[kind]]
 id = "expression"
 name = "Go Expression"
@@ -33,11 +36,12 @@ prelude = """package main
 
 import "tinkerpad"
 
-func main() {
-\ttinkerpad.Dump(
+var value =
 """
 postlude = """
-\t)
+
+func main() {
+\ttinkerpad.Dump(value)
 }
 """
 
