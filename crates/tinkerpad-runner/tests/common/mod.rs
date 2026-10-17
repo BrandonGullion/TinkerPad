@@ -11,7 +11,7 @@ use tinkerpad_core::{
     KindId, LanguageId, Playground, PlaygroundId, RichValue, RunEvent as UiEvent, ToolchainState,
 };
 use tinkerpad_plugin::scaffold::{self, ScaffoldVars};
-use tinkerpad_plugin::{PROBE_TIMEOUT, Plugin, Resolver, ToolchainOverrides, probe};
+use tinkerpad_plugin::{Plugin, Resolver, ToolchainOverrides, probe};
 use tinkerpad_runner::dump::PREFIX;
 use tinkerpad_runner::{OutputDecoder, RunContext, RunEvent, run, run_spec};
 
@@ -40,6 +40,12 @@ impl Drop for Scratch {
     }
 }
 
+/// The app gives a probe 3 s, because startup shouldn't wait on it. These
+/// tests are about runs, not about how quickly `dotnet --version` answers on
+/// a busy CI runner with several of them starting at once, which is where
+/// 3 s has run out.
+const TEST_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct Toolchain {
     pub plugin: Plugin,
     pub resolver: Resolver,
@@ -56,7 +62,7 @@ pub async fn toolchain(folder: &str, scratch: &Path) -> Option<Toolchain> {
         std::env::var_os("PATH").unwrap_or_default(),
         ToolchainOverrides::default(),
     );
-    match probe(&plugin, &resolver, scratch, PROBE_TIMEOUT).await {
+    match probe(&plugin, &resolver, scratch, TEST_PROBE_TIMEOUT).await {
         ToolchainState::Ready {
             program, version, ..
         } => Some(Toolchain {
