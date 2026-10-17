@@ -73,7 +73,11 @@ export function annotationsExtension(): Extension {
     field,
     EditorView.theme({
       ".cm-annotation": {
-        textDecoration: "underline wavy var(--error)",
+        // Longhands rather than the shorthand, which older WebKit (the
+        // webview on macOS and Linux) only partly supports.
+        textDecorationLine: "underline",
+        textDecorationStyle: "wavy",
+        textDecorationColor: "var(--error)",
         textDecorationSkipInk: "none",
         textUnderlineOffset: "3px",
       },

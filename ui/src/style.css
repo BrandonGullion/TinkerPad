@@ -1092,7 +1092,9 @@ button.history-row:focus-visible {
 /* Clickable positions found in a run's output (01-13) */
 
 .out-annotation {
-  text-decoration: underline dotted;
+  /* Longhands, as for the editor's squiggles (annotations.ts). */
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
   text-underline-offset: 3px;
   cursor: pointer;
 }
