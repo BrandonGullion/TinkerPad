@@ -55,6 +55,19 @@ fn every_valid_fixture_loads_on_every_os() {
     }
 }
 
+/// `plugin check plugins/go/` is how a shell glob names a folder. With the
+/// separator kept, `{plugin_dir}/dump` became `go//dump`, and a go.mod reads
+/// everything after `//` as a comment.
+#[test]
+fn a_trailing_separator_is_not_part_of_the_plugin_dir() {
+    let mut named = fixture("valid/minimal").into_os_string();
+    named.push(std::path::MAIN_SEPARATOR_STR);
+    let p = Plugin::load_for(PathBuf::from(named), Os::Linux).unwrap();
+    assert_eq!(p.dir, fixture("valid/minimal"));
+    let shown = p.dir.to_string_lossy();
+    assert!(!shown.ends_with('/') && !shown.ends_with('\\'), "{shown}");
+}
+
 #[test]
 fn minimal_plugin_gets_defaults() {
     let p = load("valid/minimal");
