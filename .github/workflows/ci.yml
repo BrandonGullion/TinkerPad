@@ -198,7 +198,7 @@ jobs:
           # this step once needs to say which of them it was.
           echo "launch: xvfb-run ${codes[0]}, tee ${codes[1]}"
           [ "${codes[0]}" = 0 ] && [ "${codes[1]}" = 0 ]
-          grep -q "selftest: INFO plugins loaded=5 failures=1" launch.log
+          grep -q "selftest: INFO plugins loaded=8 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
@@ -309,7 +309,7 @@ jobs:
         run: |
           set -o pipefail
           bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
-          grep -q "selftest: INFO plugins loaded=5 failures=1" launch.log
+          grep -q "selftest: INFO plugins loaded=8 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log
           grep -q "selftest: PASS delete removes the playground" launch.log
