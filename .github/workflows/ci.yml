@@ -190,8 +190,14 @@ jobs:
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
-          set -o pipefail
+          set +e
           xvfb-run -a bash scripts/smoke-launch.sh target/debug/tinkerpad 600 | tee launch.log
+          codes=("${PIPESTATUS[@]}")
+          set -e
+          # xvfb-run's status, then tee's: a run that passed and still failed
+          # this step once needs to say which of them it was.
+          echo "launch: xvfb-run ${codes[0]}, tee ${codes[1]}"
+          [ "${codes[0]}" = 0 ] && [ "${codes[1]}" = 0 ]
           grep -q "selftest: INFO plugins loaded=5 failures=1" launch.log
           grep -q "selftest: PASS real toolchain probes as ready" launch.log
           grep -q "selftest: PASS rename moves the folder and keeps the id" launch.log

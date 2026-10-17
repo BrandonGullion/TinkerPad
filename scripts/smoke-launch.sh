@@ -23,6 +23,11 @@ fi
 "$exe" >"$log" 2>&1 &
 pid=$!
 
+# Say how this script ended, so a failing CI step shows whether it was the
+# script or whatever wraps it (xvfb-run) that returned non-zero. No line at
+# all means the script was killed.
+trap 'echo "smoke-launch: exit $?"' EXIT
+
 finish() {
   kill "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
