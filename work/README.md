@@ -91,12 +91,33 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [05-04 Published docs and versioning policy](phase-5-community/05-04-docs-and-versioning.md) · M · 2 partly deferred
 - [x] [05-05 Registry index](phase-5-community/05-05-registry.md) · S
 
-## Phase 6 — Debugging (deferred)
+## Phase 6 — Debugging
 
-No items yet. The design sketch and the constraints earlier phases carry for it
-are in [docs/DEBUGGING.md](../docs/DEBUGGING.md). Items tagged `DEBUGGING.md Dn`
-in their acceptance criteria are the ones keeping the door open. Write the Phase 6
-items when Phase 5 is done.
+The design is [docs/DEBUGGING.md](../docs/DEBUGGING.md), and D1 to D15 there are
+the constraints every earlier phase carried to keep this door open. Each is named
+by the item that now spends it.
+
+The order is the one §4 of that document prescribed: the client, then the pool,
+then a session, then what you can see — and Node first among the languages,
+because attach-to-inspector is the simplest path and proves both modes.
+
+- [ ] [06-01 DAP transport and client](phase-6-debugging/06-01-dap-transport.md) · M
+- [ ] [06-02 Debug adapter pool](phase-6-debugging/06-02-adapter-pool.md) · M
+- [ ] [06-03 `[debug]` in the manifest](phase-6-debugging/06-03-debug-manifest.md) · S
+- [ ] [06-04 A debug session, in the core](phase-6-debugging/06-04-debug-session.md) · M
+- [ ] [06-05 Breakpoints, the current line, and the keys](phase-6-debugging/06-05-breakpoints-and-stepping.md) · M
+- [ ] [06-06 Variables, Call Stack and Debug Console](phase-6-debugging/06-06-debug-panels.md) · M
+- [ ] [06-07 Debugging TypeScript and JavaScript](phase-6-debugging/06-07-typescript-debugging.md) · M
+- [ ] [06-08 Debugging Python](phase-6-debugging/06-08-python-debugging.md) · S
+- [ ] [06-09 Debugging C#](phase-6-debugging/06-09-csharp-debugging.md) · M
+- [ ] [06-10 Debugging Rust](phase-6-debugging/06-10-rust-debugging.md) · M
+- [ ] [06-11 Debugging Go](phase-6-debugging/06-11-go-debugging.md) · S
+- [ ] [06-12 `plugin check` covers `[debug]`](phase-6-debugging/06-12-check-covers-debug.md) · S
+
+06-07 is the first item with a user-visible debugger. Everything before it is
+plumbing that cannot be used, and everything after it is the same plumbing
+pointed at another language — so 06-07 is where this phase is either working or
+not.
 
 ## Item template
 
