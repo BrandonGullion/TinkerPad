@@ -2890,6 +2890,12 @@ async function serversScenario(ctx: SelftestContext, check: Check) {
     logged,
     (document.querySelector(".server-log-body")?.textContent ?? "").slice(0, 80),
   );
+  // The strip refreshes once a second and rebuilds the popover; the log stays.
+  await new Promise((r) => setTimeout(r, 2500));
+  await check(
+    "the log is still open after the strip refreshes",
+    document.querySelector(".server-popover .server-log-body") !== null,
+  );
 
   // Stop and restart, the two things worth doing from here.
   const action = (label: string) =>
