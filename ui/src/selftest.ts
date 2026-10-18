@@ -2142,22 +2142,24 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
     changes: { from: dotAt, insert: "    greeting.\n" },
     selection: { anchor: dotAt + "    greeting.".length },
   });
-  // A cold server answers with nothing while it is still indexing, so ask
-  // again until it has something, the way a person would keep typing.
+  // A cold server answers with nothing while it is still indexing, or with
+  // only what is in scope before it has loaded the standard library, so ask
+  // again until String's methods are there, the way a person would keep typing.
   const requestedAt = performance.now();
   let completions: readonly { label: string }[] = [];
   let gotCompletions = false;
   for (let attempt = 0; attempt < 60 && !gotCompletions; attempt++) {
+    closeCompletion(view);
     startCompletion(view);
     gotCompletions = await until(() => {
       completions = currentCompletions(view.state);
-      return completions.length > 0;
+      return completions.some((c) => c.label.startsWith("len"));
     }, 2000);
   }
   const completionMs = performance.now() - requestedAt;
   await check(
     "typing `.` offers the methods rust-analyzer knows about",
-    gotCompletions && completions.some((c) => c.label.startsWith("len")),
+    gotCompletions,
     JSON.stringify(completions.slice(0, 6).map((c) => c.label)),
   );
   await report(
@@ -2212,12 +2214,18 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   // Hover from the keyboard: Mod+K Mod+I, as in VS Code.
   const stringAt = view.state.doc.toString().indexOf("String::from");
   view.dispatch({ selection: { anchor: stringAt + 2 } });
-  runScopeHandlers(view, key("k", { mod: true }), "editor");
-  runScopeHandlers(view, key("i", { mod: true }), "editor");
-  const hovered = await until(
-    () => (document.querySelector(".cm-lsp-hover")?.textContent ?? "").length > 0,
-    30_000,
-  );
+  // The server can answer a hover with nothing while it is still busy, and
+  // then no tooltip appears at all, so press the chord again until one does.
+  let hovered = false;
+  for (let attempt = 0; attempt < 15 && !hovered; attempt++) {
+    runScopeHandlers(view, key("Escape"), "editor");
+    runScopeHandlers(view, key("k", { mod: true }), "editor");
+    runScopeHandlers(view, key("i", { mod: true }), "editor");
+    hovered = await until(
+      () => (document.querySelector(".cm-lsp-hover")?.textContent ?? "").length > 0,
+      2000,
+    );
+  }
   await check(
     "Mod+K Mod+I shows what the server knows about the symbol",
     hovered,
@@ -2881,6 +2889,12 @@ async function serversScenario(ctx: SelftestContext, check: Check) {
     "and what the server itself has said",
     logged,
     (document.querySelector(".server-log-body")?.textContent ?? "").slice(0, 80),
+  );
+  // The strip refreshes once a second and rebuilds the popover; the log stays.
+  await new Promise((r) => setTimeout(r, 2500));
+  await check(
+    "the log is still open after the strip refreshes",
+    document.querySelector(".server-popover .server-log-body") !== null,
   );
 
   // Stop and restart, the two things worth doing from here.
@@ -5341,6 +5355,9 @@ async function pythonScenario(ctx: SelftestContext, check: Check) {
       await new Promise((r) => requestAnimationFrame(r));
     }
     const outcome = await withTimeout(end, 30_000, label);
+    // A run can be over within one frame, before the status bar's "warm" was
+    // ever painted, so ask the run itself whether a helper started it.
+    warm ||= runs.retained(created.id)[0]?.events.some((e) => e.kind === "started" && e.warm) ?? false;
     await report(`INFO ${label}: Mod+Enter to table visible ${ms === null ? "never" : `${ms.toFixed(0)} ms`}`);
     return { ms, outcome, warm };
   };
