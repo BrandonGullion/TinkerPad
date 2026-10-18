@@ -40,12 +40,16 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # The first `dotnet` on a fresh runner does its one-time setup, which can
-      # outlast the plugin's 3 s toolchain probe, and several tests starting it
-      # at once collide over that setup's lock. Doing it once here, alone,
-      # means the tests only ever meet a dotnet that is already set up.
+      # The first `dotnet` on a fresh runner does its one-time setup (NuGet
+      # migrations under a named lock), which can outlast the plugin's 3 s
+      # toolchain probe, and several tests starting it at once collide over
+      # that lock. Doing it once here, alone, means the tests only ever meet a
+      # dotnet that is already set up. `--info` and `--version` skip that setup,
+      # so they don't count; a real command does.
       - name: Warm up .NET
-        run: dotnet --info
+        run: |
+          dotnet --info
+          dotnet nuget locals all --list
 
       # The Python plugin needs 3.11 or newer, which is newer than some runner
       # images ship, and basedpyright for its language server (03-04).
@@ -137,12 +141,16 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # The first `dotnet` on a fresh runner does its one-time setup, which can
-      # outlast the plugin's 3 s toolchain probe, and several tests starting it
-      # at once collide over that setup's lock. Doing it once here, alone,
-      # means the tests only ever meet a dotnet that is already set up.
+      # The first `dotnet` on a fresh runner does its one-time setup (NuGet
+      # migrations under a named lock), which can outlast the plugin's 3 s
+      # toolchain probe, and several tests starting it at once collide over
+      # that lock. Doing it once here, alone, means the tests only ever meet a
+      # dotnet that is already set up. `--info` and `--version` skip that setup,
+      # so they don't count; a real command does.
       - name: Warm up .NET
-        run: dotnet --info
+        run: |
+          dotnet --info
+          dotnet nuget locals all --list
 
       # The Python plugin needs 3.11 or newer, which is newer than some runner
       # images ship, and basedpyright for its language server (03-04).
