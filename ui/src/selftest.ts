@@ -5349,6 +5349,9 @@ async function pythonScenario(ctx: SelftestContext, check: Check) {
       await new Promise((r) => requestAnimationFrame(r));
     }
     const outcome = await withTimeout(end, 30_000, label);
+    // A run can be over within one frame, before the status bar's "warm" was
+    // ever painted, so ask the run itself whether a helper started it.
+    warm ||= runs.retained(created.id)[0]?.events.some((e) => e.kind === "started" && e.warm) ?? false;
     await report(`INFO ${label}: Mod+Enter to table visible ${ms === null ? "never" : `${ms.toFixed(0)} ms`}`);
     return { ms, outcome, warm };
   };
