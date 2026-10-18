@@ -119,6 +119,11 @@ repository's secrets as `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The private key is not in this repository
 and never should be.
 
+**Replaced on 2026-10-17, before the first release.** The original private key
+(`747D267B11B15EEA`) wasn't to hand, so a new pair (`77EDAA68ED9320D7`) was
+generated and its public key put in `tauri.conf.json`. Nothing had shipped, so
+no installed copy trusted the old one.
+
 ## Before the first release
 
 1. Add the two `TAURI_SIGNING_*` secrets to the repository.
