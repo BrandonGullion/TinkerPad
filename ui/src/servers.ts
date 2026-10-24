@@ -129,6 +129,11 @@ export class ServerStrip {
   private children: Child[] = [];
   private open: string | null = null;
   private popover: HTMLElement | null = null;
+  /**
+   * The log shown in the open popover. The popover is rebuilt on every
+   * refresh, so the log is kept here rather than only in its element.
+   */
+  private log: { key: string; lines: string[] } | null = null;
   private timer = 0;
   /** Languages with a tab open, so a stopped server can still be shown. */
   private interesting = new Set<string>();
@@ -230,6 +235,7 @@ export class ServerStrip {
       return;
     }
     this.open = child.key;
+    this.log = null;
     this.renderPopover();
   }
 
@@ -237,6 +243,7 @@ export class ServerStrip {
     this.popover?.remove();
     this.popover = null;
     this.open = null;
+    this.log = null;
   }
 
   private renderPopover(): void {
@@ -283,13 +290,18 @@ export class ServerStrip {
     actions.append(
       this.button("Restart", () => this.act(child, child.commands.restart)),
       this.button("Stop", () => this.act(child, child.commands.stop), child.state.kind === "stopped"),
-      this.button("Log", () => void this.showLog(child, popover)),
+      this.button("Log", () => void this.showLog(child)),
     );
     popover.append(actions);
+
+    // Keep where the reader had scrolled the log to across a refresh.
+    const scrolled = this.popover?.querySelector<HTMLElement>(".server-log-body")?.scrollTop;
+    const body = this.log?.key === child.key ? this.logBlock(popover, this.log.lines) : null;
 
     this.popover?.remove();
     this.popover = popover;
     this.element.append(popover);
+    if (body) body.scrollTop = scrolled ?? body.scrollHeight;
     const chipBox = chip.getBoundingClientRect();
     popover.style.left = `${Math.max(8, Math.min(chipBox.left, window.innerWidth - 360))}px`;
   }
@@ -349,10 +361,17 @@ export class ServerStrip {
   }
 
   /** What it said for itself: stderr, log messages, and a helper's build. */
-  private async showLog(child: Child, popover: HTMLElement): Promise<void> {
+  private async showLog(child: Child): Promise<void> {
     const lines = await invoke<string[]>(child.commands.log, child.args).catch(() => [] as string[]);
+    // Closed, or another chip opened, while it was being fetched.
+    if (this.open !== child.key) return;
+    this.log = { key: child.key, lines };
+    // A fresh read starts at the newest line.
+    this.popover?.querySelector(".server-log-body")?.remove();
+    this.renderPopover();
+  }
 
-    popover.querySelector(".server-log")?.remove();
+  private logBlock(popover: HTMLElement, lines: string[]): HTMLElement {
     const log = document.createElement("div");
     log.className = "server-log";
     const body = document.createElement("pre");
@@ -364,6 +383,6 @@ export class ServerStrip {
     copy.addEventListener("click", () => void navigator.clipboard.writeText(lines.join("\n")));
     log.append(copy, body);
     popover.append(log);
-    body.scrollTop = body.scrollHeight;
+    return body;
   }
 }
