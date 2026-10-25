@@ -30,7 +30,9 @@ plumbing that nobody can use.
 - [ ] Keys, through the catalogue so they are rebindable and documented
       (04-03): start, continue, pause, step over, step in, step out, stop.
       Follow the shortcuts people already have in their fingers (F5, F9, F10,
-      F11) and let the catalogue sort out collisions.
+      F11) and let the catalogue sort out collisions. **F5 is already Run**
+      (04-10, as in LINQPad); 04-10 settles what it does in a debug session,
+      so read its decision-log row before binding it here.
 - [ ] Hovering an expression while stopped evaluates it in the selected frame
       and shows the result, without the hover fighting the LSP's (02-04).
 - [ ] Stepping into a file that is not a playground opens it read-only (D15),
