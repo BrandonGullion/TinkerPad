@@ -68,6 +68,23 @@ What's missing is why it doesn't feel like an explorer:
       explains why it can't be opened and offers to show it in the file
       manager. This closes 01-04's open criterion; tick it there in the same
       PR.
+- [ ] **Deleting from the list.** Right-click → **Move to recycle bin** already
+      exists (04-01, `remove()` in `ui/src/library.ts`): it asks first, sends
+      the folder to the OS trash, and closes the playground's tab. It works
+      on both sides of the window; the self-test covers that. Missing today,
+      added here:
+  - [ ] The **Delete** key on the selected row does the same, confirmation
+        included (`Mod+Backspace` on macOS, as Finder does). Through the
+        command catalog, so it's rebindable and in `docs/KEYBINDINGS.md`.
+        Only while the focus is in the list, never in the search box.
+  - [ ] The wording follows the platform: "Move to Recycle Bin" on Windows,
+        "Move to Trash" on macOS and Linux, in the menu and the
+        confirmation.
+  - [ ] After a delete, the selection moves to the next row (or the previous
+        one, if it was the last), so pressing Delete again keeps going down
+        the list.
+  - [ ] Deleting a broken playground (one with the warning badge) works the
+        same way. It's often the main thing someone wants to do with one.
 - [ ] Changing `[library].root` re-points the panel and the watcher at the new
       folder without a restart, or, if that isn't possible yet, says a restart
       is needed. Whichever it is, write it down here.
@@ -75,7 +92,9 @@ What's missing is why it doesn't feel like an explorer:
       self-test switches to the right, checks the panel and splitter are on
       the right and that dragging resizes the right way, reloads the window
       and checks the side and open state were kept, and checks that a broken
-      playground is listed with its badge.
+      playground is listed with its badge. It also deletes a playground
+      with the Delete key (answering the confirmation through the picker,
+      not a keystroke to the OS) and checks that the selection moved on.
 
 ## Out of scope
 
@@ -91,8 +110,14 @@ What's missing is why it doesn't feel like an explorer:
 - More than one library root, or subfolders as a hierarchy (04-01 chose tags
   over folders).
 - Docking any other panel (output, history) on a chosen side.
-- A toolbar button to show or hide the panel. That's one entry in 04-11's
-  list, once both exist.
+- The toolbar's show/hide button for this panel is 04-11's. If 04-11 lands
+  first, its button must follow the panel to whichever side it's on: it
+  toggles the panel, and its pressed state matches.
+- Deleting several playgrounds at once (multi-select). Delete-and-move-on
+  covers clearing out a few. A real multi-select is worth its own item if
+  that turns out to be slow.
+- Undo after a delete. The trash is the undo. Restoring from it isn't
+  something the `trash` crate can do on macOS.
 
 ## Gotchas
 

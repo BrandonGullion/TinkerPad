@@ -14,8 +14,11 @@ buttons for the things done most often:
   one) first (what `Mod+Shift+N` does).
 - **Run**: run the active playground (`Mod+Enter`, F5 after 04-10). While a run
   is going, the same button becomes **Cancel** (`Mod+.`).
+- **Show/hide explorer**: toggles the library panel (`Mod+B`,
+  `view.library`). A toggle button that looks pressed while the panel is
+  open.
 
-These three are a start. The toolbar should make it trivial to add a button
+These four are a start. The toolbar should make it trivial to add a button
 later, for anything that's already a command.
 
 ## Why
@@ -54,6 +57,11 @@ Run button looks broken to a new user.
       state), not only on hover.
 - [ ] Run turns into Cancel while the active tab's playground is running, and
       back afterwards. The status bar's Cancel stays as it is.
+- [ ] **Show/hide explorer** is a toggle (`aria-pressed`) whose state
+      follows the panel however it was opened or closed: the button, `Mod+B`,
+      the palette, or Escape inside the panel. It sits at the end of the
+      toolbar nearest the panel (the left end today; if 04-12 has landed, the
+      end matching `[library].side`).
 - [ ] **New playground in…** opens the same picker as `Mod+Shift+N`. A split
       button with a language list right on the toolbar is a reasonable later
       step, not part of this item.
@@ -66,12 +74,13 @@ Run button looks broken to a new user.
       not new layout code. A short note in the code says so.
 - [ ] A self-test clicks each button and checks that it did the same as the
       key: a new tab in the default language, the picker opening, a run
-      starting and Cancel stopping it, Run disabled with nothing open.
+      starting and Cancel stopping it, Run disabled with nothing open, the
+      explorer opening and closing, and its button's pressed state
+      following `Mod+B`.
 
 ## Out of scope
 
-Buttons beyond these three (library toggle, settings, clear output, add
-package). They're one list entry each once this lands, and worth adding when
+Buttons beyond these four (settings, clear output, add package). They're one list entry each once this lands, and worth adding when
 someone wants them. Customising which buttons appear. A menu bar. Moving the
 tab strip.
 
