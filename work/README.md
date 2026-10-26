@@ -80,7 +80,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [04-08a Acquiring a language's tools](phase-4-polish/04-08a-acquiring-tools.md) · M
 - [x] [04-08b Offering to install what a language needs](phase-4-polish/04-08b-tool-offers.md) · M
 - [x] [04-09 Deleting a playground something else has open](phase-4-polish/04-09-deleting-a-playground-in-use.md) · S
-- [ ] [04-10 F5 runs the playground](phase-4-polish/04-10-f5-runs.md) · S
+- [x] [04-10 F5 runs the playground](phase-4-polish/04-10-f5-runs.md) · S · 1 open criterion
 - [ ] [04-11 Toolbar above the tabs](phase-4-polish/04-11-toolbar.md) · S
 - [ ] [04-12 The library as an explorer, on either side](phase-4-polish/04-12-library-explorer.md) · M
 - [ ] [04-13 IntelliSense for C#](phase-4-polish/04-13-csharp-intellisense.md) · L

@@ -31,8 +31,15 @@ plumbing that nobody can use.
       (04-03): start, continue, pause, step over, step in, step out, stop.
       Follow the shortcuts people already have in their fingers (F5, F9, F10,
       F11) and let the catalogue sort out collisions. **F5 is already Run**
-      (04-10, as in LINQPad); 04-10 settles what it does in a debug session,
-      so read its decision-log row before binding it here.
+      (04-10, as in LINQPad). Decided there (PLAN.md decision log,
+      2026-10-26): while a session is paused, F5 continues; starting a
+      session needs a key of its own, picked here. `commandFor` already
+      picks the first *enabled* command for a key, so a "continue" command
+      bound to F5, enabled only while paused (with `run.start` disabled
+      then), would work, but `applyBindings` reports any shared key as a
+      conflict today. Teach it that two commands whose `when` conditions
+      exclude each other don't clash, or make F5 one command that does the
+      right thing in each state.
 - [ ] Hovering an expression while stopped evaluates it in the selected frame
       and shows the result, without the hover fighting the LSP's (02-04).
 - [ ] Stepping into a file that is not a playground opens it read-only (D15),

@@ -54,10 +54,12 @@ const lines = [
   "`ui/`). Don't edit this file; edit the catalog and run it again.",
   "",
   "Every shortcut can be changed in `<app-data>/keybindings.toml`, one line per",
-  "command, with an empty string to take a key away:",
+  "command: one binding, a list of them, or an empty string to take its keys",
+  "away:",
   "",
   "```toml",
   '"run.start" = "mod+shift+r"',
+  '"playground.new" = ["mod+n", "mod+t"]',
   '"tab.close" = ""',
   "```",
   "",
@@ -71,9 +73,9 @@ for (const category of CATEGORIES) {
   if (rows.length === 0) continue;
   lines.push(`## ${category}`, "", "| Command | macOS | Windows and Linux | Id |", "|---|---|---|---|");
   for (const command of rows) {
-    const binding = bindings[command.id];
-    const mac = binding ? format(binding, true) : "—";
-    const other = binding ? format(binding, false) : "—";
+    const keys = bindings[command.id] ?? [];
+    const mac = keys.length ? keys.map((key) => format(key, true)).join(" / ") : "—";
+    const other = keys.length ? keys.map((key) => format(key, false)).join(" / ") : "—";
     lines.push(`| ${command.title} | ${mac} | ${other} | \`${command.id}\` |`);
   }
   lines.push("");

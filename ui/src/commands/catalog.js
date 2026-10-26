@@ -9,21 +9,34 @@
 // joined by `+`, with `mod` meaning Cmd on macOS and Ctrl everywhere else.
 // Use `ctrl` or `cmd` explicitly only when a binding really is
 // platform-specific (Ctrl+Tab is, because that is what every tabbed app uses).
+// A command can answer to several bindings: `key` is then a list, and the
+// first one is what the palette and tooltips show.
 
 /**
  * @typedef {object} CommandInfo
  * @property {string} id        Stable id: what `keybindings.toml` names.
  * @property {string} title     What the palette shows.
  * @property {string} category  The group it belongs to.
- * @property {string} [key]     Default binding, e.g. `mod+shift+p`.
+ * @property {string | string[]} [key]  Default binding, e.g. `mod+shift+p`, or several.
  * @property {string} [when]    A condition id; absent means always.
  * @property {boolean} [hidden] Kept out of the palette (it has its own key).
+ * @property {boolean} [anywhere] Its unmodified keys work even while typing in
+ *   a text field. Only for keys that never type anything, like F5.
  */
 
 /** @type {CommandInfo[]} */
 export const CATALOG = [
   // ---- running -------------------------------------------------------------
-  { id: "run.start", title: "Run", category: "Run", key: "mod+enter", when: "playground" },
+  // F5 as in LINQPad (work item 04-10). Mod+Enter stays, first, because it is
+  // what the self-tests and existing hands use.
+  {
+    id: "run.start",
+    title: "Run",
+    category: "Run",
+    key: ["mod+enter", "f5"],
+    when: "playground",
+    anywhere: true,
+  },
   { id: "run.cancel", title: "Cancel run", category: "Run", key: "mod+.", when: "playground" },
   { id: "run.clearOutput", title: "Clear output", category: "Run", key: "mod+l" },
   {
@@ -98,12 +111,12 @@ export const CATALOG = [
   { id: "app.update", title: "Install update", category: "Settings" },
 ];
 
-/** The default binding of every command that has one, by id. */
+/** The default bindings of every command that has one, by id. */
 export function defaultBindings() {
-  /** @type {Record<string, string>} */
+  /** @type {Record<string, string[]>} */
   const bindings = {};
   for (const command of CATALOG) {
-    if (command.key) bindings[command.id] = command.key;
+    if (command.key) bindings[command.id] = Array.isArray(command.key) ? command.key : [command.key];
   }
   return bindings;
 }

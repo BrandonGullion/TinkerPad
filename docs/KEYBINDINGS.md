@@ -4,10 +4,12 @@ Generated from `ui/src/commands/catalog.js` by `npm run docs:keys` (run from
 `ui/`). Don't edit this file; edit the catalog and run it again.
 
 Every shortcut can be changed in `<app-data>/keybindings.toml`, one line per
-command, with an empty string to take a key away:
+command: one binding, a list of them, or an empty string to take its keys
+away:
 
 ```toml
 "run.start" = "mod+shift+r"
+"playground.new" = ["mod+n", "mod+t"]
 "tab.close" = ""
 ```
 
@@ -18,7 +20,7 @@ binding meant for one platform only.
 
 | Command | macOS | Windows and Linux | Id |
 |---|---|---|---|
-| Run | ⌘↩ | Ctrl+Enter | `run.start` |
+| Run | ⌘↩ / F5 | Ctrl+Enter / F5 | `run.start` |
 | Cancel run | ⌘. | Ctrl+. | `run.cancel` |
 | Clear output | ⌘L | Ctrl+L | `run.clearOutput` |
 | Force per-run execution | — | — | `run.forcePerRun` |

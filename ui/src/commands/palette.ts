@@ -5,7 +5,7 @@
 // the last thing you wanted.
 
 import { pick } from "../picker";
-import { commands, format, runCommand } from "./registry";
+import { commands, formatAll, runCommand } from "./registry";
 
 /** Ids in the order they were last used, most recent first. */
 const RECENT_KEY = "tinkerpad.recentCommands";
@@ -48,7 +48,7 @@ export async function openCommandPalette(): Promise<void> {
       label: command.title,
       // The category is matched by the filter too, so "run" finds the run
       // commands whatever they are called.
-      detail: [command.category, format(command.binding)].filter(Boolean).join(" · "),
+      detail: [command.category, formatAll(command.bindings)].filter(Boolean).join(" · "),
     })),
     "Type a command",
   );

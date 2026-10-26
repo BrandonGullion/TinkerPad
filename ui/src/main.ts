@@ -205,11 +205,28 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
   const command = commandFor(e);
   if (!command) return false;
   // A plain key (F2, and anything a user binds without a modifier) belongs to
-  // the field being typed in.
-  if (inTextField && !(e.ctrlKey || e.metaKey || e.altKey)) return false;
+  // the field being typed in, unless the command says its keys never type.
+  if (inTextField && !command.anywhere && !(e.ctrlKey || e.metaKey || e.altKey)) return false;
+  // Holding F5 down is one run, not one per auto-repeat (04-10). Swallowed
+  // here, before CodeMirror, so the editor's binding doesn't see it either.
+  if (e.repeat && command.id === "run.start") return true;
   if (inEditor(e) && editorHandles(command.id)) return false;
   void runCommand(command.id);
   return true;
+}
+
+/**
+ * The webview's own reload keys (04-10). WebView2 reloads the page on F5 and
+ * Ctrl+R unless they are cancelled, and Tauri doesn't expose the setting that
+ * turns them off. A reload would detach a running program from its output, so
+ * they are cancelled everywhere. F5 is Run; the rest do nothing. In a dev
+ * build Ctrl+R / Cmd+R still reload, because that is useful while working on
+ * the UI.
+ */
+export function isReloadKey(e: KeyboardEvent): boolean {
+  if (e.key === "F5") return true;
+  if (import.meta.env.DEV) return false;
+  return (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "r";
 }
 
 /** Whether the event happened inside the editor's text. */
@@ -232,6 +249,22 @@ document.addEventListener(
   },
   true,
 );
+
+// The reload keys are cancelled in two places. Outside the editor, first of
+// all, before a field that stops propagation (renaming a tab does) can keep
+// the key from us. In the editor, last, on the way out: CodeMirror ignores an
+// event that has already been cancelled, so cancelling F5 first would stop it
+// running.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (isReloadKey(e) && !inEditor(e)) e.preventDefault();
+  },
+  true,
+);
+window.addEventListener("keydown", (e) => {
+  if (isReloadKey(e)) e.preventDefault();
+});
 
 
 // Unsaved edits are written before the window goes away. The writes are
