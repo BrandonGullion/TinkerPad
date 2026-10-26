@@ -2202,6 +2202,11 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   const before = view.state.doc.toString();
   startCompletion(view);
   const offered = await until(() => currentCompletions(view.state).length > 0, 30_000);
+  // CodeMirror ignores an accept within `interactionDelay` (75 ms) of the
+  // popup opening, so a stray keystroke can't accept something you never
+  // saw. A warm server answers well inside that, so wait it out, as the
+  // `keys` scenario does.
+  await new Promise((resolve) => setTimeout(resolve, 200));
   const taken = offered && runScopeHandlers(view, key("Tab"), "editor");
   await frame();
   await check(
