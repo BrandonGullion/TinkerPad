@@ -3,6 +3,7 @@
 //! ```toml
 //! # Command id = the keys it answers to.
 //! "run.start" = "mod+shift+r"
+//! "playground.new" = ["mod+n", "mod+t"]   # more than one
 //! "tab.close" = ""            # unbound
 //! ```
 //!
@@ -29,20 +30,22 @@ pub const FILE_NAME: &str = "keybindings.toml";
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
-/// What the file says: command id to binding. An empty binding means the
-/// command has no key, which is how a default is taken away.
-pub type Bindings = BTreeMap<String, String>;
+/// What the file says: command id to the bindings it answers to. An empty
+/// list means the command has no key, which is how a default is taken away.
+pub type Bindings = BTreeMap<String, Vec<String>>;
 
 const TEMPLATE: &str = r#"# TinkerPad keybindings.
 #
 # One line per command: its id, then the keys it should answer to. `mod` is
 # Cmd on macOS and Ctrl everywhere else; use `ctrl` or `cmd` when a binding is
-# meant for one platform only. An empty string takes a key away.
+# meant for one platform only. A list gives a command several keys, and an
+# empty string takes its keys away.
 #
 # Every command and its default keys are in docs/KEYBINDINGS.md, and the
 # command palette shows them too.
 #
 # "run.start" = "mod+shift+r"
+# "playground.new" = ["mod+n", "mod+t"]
 # "tab.close" = ""
 "#;
 
@@ -89,7 +92,25 @@ pub fn parse(text: &str) -> Result<Bindings, Problem> {
     for (id, value) in table {
         match value {
             toml::Value::String(binding) => {
-                bindings.insert(id, binding.trim().to_lowercase());
+                bindings.insert(id, tidy([binding]));
+            }
+            toml::Value::Array(items) => {
+                let mut keys = Vec::with_capacity(items.len());
+                for item in items {
+                    match item {
+                        toml::Value::String(binding) => keys.push(binding),
+                        other => {
+                            return Err(Problem {
+                                message: format!(
+                                    "`{id}` should list keys in quotes, like [\"mod+enter\", \"f5\"], not {}",
+                                    other.type_str()
+                                ),
+                                line: None,
+                            });
+                        }
+                    }
+                }
+                bindings.insert(id, tidy(keys));
             }
             // A table means someone wrote `[run]` and then `start = "..."`.
             // Say so rather than quietly ignoring half their file.
@@ -105,6 +126,14 @@ pub fn parse(text: &str) -> Result<Bindings, Problem> {
         }
     }
     Ok(bindings)
+}
+
+/// Lowercase and trimmed, with blanks dropped: `""` is no keys at all.
+fn tidy(keys: impl IntoIterator<Item = String>) -> Vec<String> {
+    keys.into_iter()
+        .map(|key| key.trim().to_lowercase())
+        .filter(|key| !key.is_empty())
+        .collect()
 }
 
 /// The bindings as they are now, kept in step with the file.
@@ -227,8 +256,36 @@ mod tests {
     #[test]
     fn bindings_are_read_and_tidied() {
         let bindings = parse("\"run.start\" = \"Mod+Shift+R\"\n\"tab.close\" = \"\"\n").unwrap();
-        assert_eq!(bindings["run.start"], "mod+shift+r", "case doesn't matter");
-        assert_eq!(bindings["tab.close"], "", "an empty binding is a removal");
+        assert_eq!(
+            bindings["run.start"],
+            ["mod+shift+r"],
+            "case doesn't matter"
+        );
+        assert!(
+            bindings["tab.close"].is_empty(),
+            "an empty binding is a removal"
+        );
+    }
+
+    #[test]
+    fn a_list_gives_a_command_several_keys() {
+        let bindings =
+            parse("\"run.start\" = [\"Mod+Enter\", \"F5\", \"\"]\n\"tab.close\" = []\n").unwrap();
+        assert_eq!(
+            bindings["run.start"],
+            ["mod+enter", "f5"],
+            "tidied, blanks dropped"
+        );
+        assert!(
+            bindings["tab.close"].is_empty(),
+            "an empty list is a removal"
+        );
+    }
+
+    #[test]
+    fn a_list_of_something_else_is_refused() {
+        let problem = parse("\"run.start\" = [\"f5\", 5]\n").unwrap_err();
+        assert!(problem.message.contains("list keys in quotes"), "{problem}");
     }
 
     #[test]

@@ -9,9 +9,9 @@ import { invoke, subscribe } from "../ipc";
 import { toast } from "../toast";
 
 import { defaultBindings } from "./catalog.js";
-import { applyBindings, asMarkdown, bindingFor, commands } from "./registry";
+import { applyBindings, asMarkdown, bindingsFor, commands } from "./registry";
 
-export { CATALOG, CATEGORIES, bindingFor, commandFor, commands, format, registerCommand, registerCommands, registerCondition, runCommand } from "./registry";
+export { CATALOG, CATEGORIES, bindingFor, bindingsFor, commandFor, commands, format, formatAll, registerCommand, registerCommands, registerCondition, runCommand } from "./registry";
 export type { Command, CommandInfo, Handler } from "./registry";
 export { openCommandPalette } from "./palette";
 export { EDITOR_COMMANDS, editorKeymap } from "./editor";
@@ -32,11 +32,11 @@ export async function watchKeybindings(): Promise<void> {
   subscribe(({ event }) => {
     if (event.type === "keybindings") apply(event.bindings);
   });
-  const bindings = await invoke<Record<string, string>>("get_keybindings").catch(() => ({}));
+  const bindings = await invoke<Record<string, string[]>>("get_keybindings").catch(() => ({}));
   apply(bindings);
 }
 
-function apply(bindings: Record<string, string>): void {
+function apply(bindings: Record<string, string[]>): void {
   const conflicts = applyBindings(bindings);
   onChange();
   if (conflicts.length) {
@@ -46,10 +46,10 @@ function apply(bindings: Record<string, string>): void {
 
 /** The whole keymap as Markdown, for pasting into an issue or a note. */
 export async function copyKeybindings(): Promise<void> {
-  const bindings: Record<string, string> = {};
+  const bindings: Record<string, string[]> = {};
   for (const command of commands()) {
-    const binding = bindingFor(command.id);
-    if (binding) bindings[command.id] = binding;
+    const keys = bindingsFor(command.id);
+    if (keys.length) bindings[command.id] = keys;
   }
   const markdown = asMarkdown({ ...defaultBindings(), ...bindings });
   try {

@@ -8,7 +8,8 @@
 // A binding is a string: lowercase parts joined by `+`, modifiers first, the
 // key last — `mod+shift+p`, `f8`, `alt+arrowleft`. `mod` is Cmd on macOS and
 // Ctrl elsewhere; `ctrl` and `cmd` mean themselves, for the few bindings that
-// really are platform-specific.
+// really are platform-specific. A command can have several bindings; the
+// first is the one the palette and tooltips name.
 
 import { CATALOG, CATEGORIES, defaultBindings, type CommandInfo } from "./catalog.js";
 
@@ -26,14 +27,16 @@ export interface Handler {
 
 /** A command as the palette sees it: what it is, and what it is bound to. */
 export interface Command extends CommandInfo {
+  /** The first of `bindings`: the one worth naming in a tooltip. */
   binding?: string;
+  bindings: string[];
   enabled: boolean;
 }
 
 const handlers = new Map<string, Handler>();
 const conditions = new Map<string, () => boolean>();
-/** Bindings from `keybindings.toml`, over the defaults. */
-let overrides: Record<string, string> = {};
+/** Bindings from `keybindings.toml`, over the defaults. An empty list unbinds. */
+let overrides: Record<string, string[]> = {};
 
 /** Give a command its behaviour. Ids not in the catalog are refused. */
 export function registerCommand(id: string, handler: Handler): void {
@@ -65,18 +68,20 @@ export function enabled(command: CommandInfo): boolean {
 
 /** Every command that has a handler, with its binding and availability. */
 export function commands(): Command[] {
-  return CATALOG.filter((command) => handlers.has(command.id)).map((command) => ({
-    ...command,
-    binding: bindingFor(command.id),
-    enabled: enabled(command),
-  }));
+  return CATALOG.filter((command) => handlers.has(command.id)).map((command) => {
+    const bindings = bindingsFor(command.id);
+    return { ...command, binding: bindings[0], bindings, enabled: enabled(command) };
+  });
 }
 
-/** What `id` is bound to now: the user's binding, else the catalog's. */
+/** Everything `id` is bound to now: the user's bindings, else the catalog's. */
+export function bindingsFor(id: string): string[] {
+  return overrides[id] ?? defaultBindings()[id] ?? [];
+}
+
+/** The binding to name for `id`: the first of `bindingsFor`. */
 export function bindingFor(id: string): string | undefined {
-  const override = overrides[id];
-  if (override !== undefined) return override === "" ? undefined : override;
-  return defaultBindings()[id];
+  return bindingsFor(id)[0];
 }
 
 /** Run a command by id. Unknown or unavailable ones do nothing. */
@@ -92,17 +97,19 @@ export async function runCommand(id: string): Promise<void> {
  * the same keys, which the caller reports — the later one wins, because
  * refusing both would leave the user with neither.
  */
-export function applyBindings(user: Record<string, string>): string[] {
+export function applyBindings(user: Record<string, string[]>): string[] {
   overrides = { ...user };
   const seen = new Map<string, string>();
   const conflicts: string[] = [];
   for (const command of CATALOG) {
-    const binding = bindingFor(command.id);
-    if (!binding) continue;
-    const key = normalise(binding);
-    const other = seen.get(key);
-    if (other) conflicts.push(`${format(binding)} is bound to both ${other} and ${command.id}`);
-    seen.set(key, command.id);
+    for (const binding of bindingsFor(command.id)) {
+      const key = normalise(binding);
+      const other = seen.get(key);
+      if (other && other !== command.id) {
+        conflicts.push(`${format(binding)} is bound to both ${other} and ${command.id}`);
+      }
+      seen.set(key, command.id);
+    }
   }
   return conflicts;
 }
@@ -112,8 +119,13 @@ export function commandFor(event: KeyboardEvent): Command | undefined {
   const pressed = normaliseEvent(event);
   if (!pressed) return undefined;
   return commands().find(
-    (command) => command.binding && normalise(command.binding) === pressed && command.enabled,
+    (command) => command.enabled && command.bindings.some((binding) => normalise(binding) === pressed),
   );
+}
+
+/** Every binding, in a platform's spelling: `Ctrl+Enter / F5`. */
+export function formatAll(bindings: readonly string[], mac = isMac): string {
+  return bindings.map((binding) => format(binding, mac)).join(" / ");
 }
 
 /**
@@ -223,7 +235,7 @@ function keyOf(key: string): string {
  * render them from Node, for either platform.
  */
 export function asMarkdown(
-  bindings: Record<string, string>,
+  bindings: Record<string, string[]>,
   mac = isMac,
 ): string {
   const lines = [
@@ -246,8 +258,8 @@ export function asMarkdown(
     if (rows.length === 0) continue;
     lines.push(`## ${category}`, "", "| Command | Keys | Id |", "|---|---|---|");
     for (const command of rows) {
-      const binding = bindings[command.id];
-      lines.push(`| ${command.title} | ${binding ? format(binding, mac) : "—"} | \`${command.id}\` |`);
+      const keys = bindings[command.id] ?? [];
+      lines.push(`| ${command.title} | ${keys.length ? formatAll(keys, mac) : "—"} | \`${command.id}\` |`);
     }
     lines.push("");
   }

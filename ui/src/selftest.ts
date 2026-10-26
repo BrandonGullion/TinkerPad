@@ -3694,7 +3694,7 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   // Start from the defaults, whatever an earlier run left in the file.
   await invoke("selftest_write_file", { path: file, text: "" });
   await untilAsync(
-    async () => Object.keys(await invoke<Record<string, string>>("get_keybindings")).length === 0,
+    async () => Object.keys(await invoke<Record<string, string[]>>("get_keybindings")).length === 0,
     5000,
   );
   await frame();
@@ -3710,7 +3710,7 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   await frame();
   await check(
     "the palette lists commands with their category and shortcut",
-    shownIn("Run") && shownIn("Ctrl+Enter"),
+    shownIn("Run") && shownIn(isMac ? "⌘↩" : "Ctrl+Enter"),
     JSON.stringify(items().map((i) => i.textContent)),
   );
   pressKey("Escape");
@@ -3745,7 +3745,9 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
     text: '"run.start" = "mod+shift+r"' + '\n',
   });
   const moved = await untilAsync(
-    async () => (await invoke<Record<string, string>>("get_keybindings"))["run.start"] === "mod+shift+r",
+    async () =>
+      JSON.stringify((await invoke<Record<string, string[]>>("get_keybindings"))["run.start"]) ===
+      '["mod+shift+r"]',
     5000,
   );
   await frame();
@@ -3776,7 +3778,7 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   const runRow = items().find((item) => (item.textContent ?? "").startsWith("Run"));
   await check(
     "the palette shows the keys the user chose",
-    (runRow?.textContent ?? "").includes("Ctrl+Shift+R"),
+    (runRow?.textContent ?? "").includes(isMac ? "⇧⌘R" : "Ctrl+Shift+R"),
     JSON.stringify(runRow?.textContent),
   );
   pressKey("Escape");
@@ -3786,7 +3788,7 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   // (the item's gotcha). Put the default back first, so it is Mod+Enter.
   await invoke("selftest_write_file", { path: file, text: "" });
   await untilAsync(
-    async () => Object.keys(await invoke<Record<string, string>>("get_keybindings")).length === 0,
+    async () => Object.keys(await invoke<Record<string, string[]>>("get_keybindings")).length === 0,
     5000,
   );
   await frame();
@@ -3825,14 +3827,14 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   const warned = await until(() => toastText().includes("share a shortcut"), 5000);
   await check(
     "two commands on one shortcut are reported",
-    warned && toastText().includes("Ctrl+B"),
+    warned && toastText().includes(isMac ? "⌘B" : "Ctrl+B"),
     JSON.stringify({ toast: toastText().slice(0, 160) }),
   );
 
   // Put the file back, and check the default returns.
   await invoke("selftest_write_file", { path: file, text: "" });
   await untilAsync(
-    async () => Object.keys(await invoke<Record<string, string>>("get_keybindings")).length === 0,
+    async () => Object.keys(await invoke<Record<string, string[]>>("get_keybindings")).length === 0,
     5000,
   );
   await frame();
@@ -3845,7 +3847,109 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
     JSON.stringify(outcome),
   );
 
+  // F5 runs too (04-10), wherever the focus is. A cancelled keydown is what
+  // stops the webview reloading, so each press also checks it was cancelled.
+  const ranWithin = async (end: Promise<unknown>, ms: number) =>
+    Promise.race([end.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
+  end = ctx.runs.waitForEnd();
+  let cancelled = pressKey("F5", {}, ctx.editor.view.contentDOM);
+  outcome = await withTimeout(end, 30_000, "F5 in the editor");
+  await check(
+    "F5 runs the playground from the editor, and doesn't reload",
+    outcome.kind === "exited" && cancelled,
+    JSON.stringify({ outcome, cancelled }),
+  );
+
+  end = ctx.runs.waitForEnd();
+  cancelled = pressKey("F5", {}, ctx.output.element);
+  outcome = await withTimeout(end, 30_000, "F5 in the output pane");
+  await check(
+    "F5 runs it from the output pane too",
+    outcome.kind === "exited" && cancelled,
+    JSON.stringify({ outcome, cancelled }),
+  );
+
+  // A text field keeps its plain keys, but F5 types nothing, so it still runs.
+  const field = document.createElement("input");
+  document.body.append(field);
+  field.focus();
+  end = ctx.runs.waitForEnd();
+  cancelled = pressKey("F5", {}, field);
+  outcome = await withTimeout(end, 30_000, "F5 in a text field");
+  field.remove();
+  await check(
+    "and from a text field",
+    outcome.kind === "exited" && cancelled,
+    JSON.stringify({ outcome, cancelled }),
+  );
+
+  // Holding it down is one run, not a run per auto-repeat.
+  const held = new KeyboardEvent("keydown", { key: "F5", repeat: true, bubbles: true, cancelable: true });
+  const repeatEnd = ctx.runs.waitForEnd();
+  ctx.editor.view.contentDOM.dispatchEvent(held);
+  await check(
+    "an auto-repeated F5 doesn't start another run",
+    !(await ranWithin(repeatEnd, 2000)) && held.defaultPrevented,
+    JSON.stringify({ cancelled: held.defaultPrevented }),
+  );
+
+  // The palette names both keys.
+  pressKey("p", { mod: true, shift: true });
+  await until(() => document.querySelector(".picker") !== null, 5000);
+  const bothKeys = items().find((item) => (item.textContent ?? "").startsWith("Run"));
+  await check(
+    "the palette shows every key a command answers to",
+    (bothKeys?.textContent ?? "").includes(`${isMac ? "⌘↩" : "Ctrl+Enter"} / F5`),
+    JSON.stringify(bothKeys?.textContent),
+  );
+  pressKey("Escape");
+  await until(() => document.querySelector(".picker") === null, 3000);
+
+  // A list in keybindings.toml gives a command several keys.
+  await invoke("selftest_write_file", {
+    path: file,
+    text: '"run.start" = ["mod+shift+r", "f6"]' + '\n',
+  });
+  const listed = await untilAsync(
+    async () =>
+      JSON.stringify((await invoke<Record<string, string[]>>("get_keybindings"))["run.start"]) ===
+      '["mod+shift+r","f6"]',
+    5000,
+  );
+  await frame();
+  end = ctx.runs.waitForEnd();
+  pressKey("F6", {}, ctx.editor.view.contentDOM);
+  outcome = await withTimeout(end, 30_000, "F6 from a list");
+  await check(
+    "a list in keybindings.toml binds every key in it",
+    listed && outcome.kind === "exited",
+    JSON.stringify({ listed, outcome }),
+  );
+  await invoke("selftest_write_file", { path: file, text: "" });
+  await untilAsync(
+    async () => Object.keys(await invoke<Record<string, string[]>>("get_keybindings")).length === 0,
+    5000,
+  );
+  await frame();
+
+  // Ctrl+R / Cmd+R would reload the page too; only a dev build lets it.
+  await check(
+    "Mod+R doesn't reload the window in a built app",
+    pressKey("r", { mod: true }, document.body) === !import.meta.env.DEV,
+    import.meta.env.DEV ? "dev build: reload allowed" : "",
+  );
+
   for (const t of [...tabs.tabs]) await tabs.close(t);
+
+  // With nothing to run, F5 does nothing, and still doesn't reload.
+  const idleEnd = ctx.runs.waitForEnd();
+  cancelled = pressKey("F5", {}, document.body);
+  await check(
+    "F5 with no playground open does nothing, and doesn't reload",
+    !(await ranWithin(idleEnd, 1500)) && cancelled,
+    JSON.stringify({ cancelled }),
+  );
+
   await invoke("delete_playground", { id: main.id }).catch(() => {});
 }
 

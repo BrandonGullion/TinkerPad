@@ -40,7 +40,7 @@ export type CoreEvent =
   | { type: "helper"; plugin: string; state: ServerState }
   | { type: "libraryChanged" }
   | ({ type: "settings" } & Settings)
-  | { type: "keybindings"; bindings: Record<string, string> }
+  | { type: "keybindings"; bindings: Record<string, string[]> }
   | { type: "updateAvailable"; version: string; notes: string | null }
   | { type: "sourceChangedOnDisk"; playground: string };
 

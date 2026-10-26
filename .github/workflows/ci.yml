@@ -229,7 +229,7 @@ jobs:
       - name: Language servers (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run,keys
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -248,6 +248,8 @@ jobs:
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
           grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
           grep -q "selftest: PASS a second playground waits for the helper" lsp.log
+          grep -q "selftest: PASS F5 runs the playground from the editor, and doesn.t reload" lsp.log
+          grep -q "selftest: PASS F5 with no playground open does nothing, and doesn.t reload" lsp.log
           grep -q "selftest: PASS and the user is told what is being used instead" lsp.log
 
       # Every bundled plugin, through the same loader, scaffolder and runner the
@@ -337,7 +339,7 @@ jobs:
       - name: Language servers (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run,keys
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -356,6 +358,8 @@ jobs:
           grep -q "selftest: PASS and starting it again doesn.t rebuild it" lsp.log
           grep -q "selftest: PASS a run on a plugin helper says so in the status bar" lsp.log
           grep -q "selftest: PASS a second playground waits for the helper" lsp.log
+          grep -q "selftest: PASS F5 runs the playground from the editor, and doesn.t reload" lsp.log
+          grep -q "selftest: PASS F5 with no playground open does nothing, and doesn.t reload" lsp.log
           grep -q "selftest: PASS and the user is told what is being used instead" lsp.log
 
       - name: Session restore across two launches (macOS)

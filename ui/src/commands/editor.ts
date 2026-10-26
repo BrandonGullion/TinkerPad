@@ -13,31 +13,35 @@ import { acceptCompletion, completionStatus } from "@codemirror/autocomplete";
 import { type Extension, Prec } from "@codemirror/state";
 import { type EditorView, keymap } from "@codemirror/view";
 
-import { bindingFor, runCommand } from "./registry";
+import { bindingsFor, runCommand } from "./registry";
 
 /** Commands the editor binds itself; the window doesn't run them again. */
 export const EDITOR_COMMANDS = ["run.start", "run.cancel", "run.clearOutput"];
 
 /** The editor's keymap, at a precedence above CodeMirror's own defaults. */
 export function editorKeymap(): Extension {
-  const bindings = EDITOR_COMMANDS.flatMap((id) => {
-    const key = codeMirrorKey(bindingFor(id));
-    if (!key) return [];
-    return [
-      {
-        key,
-        run: (view: EditorView) => {
-          // A completion popup owns Enter while it is open: accepting what you
-          // were choosing is what Mod+Enter means there (04-03's gotcha).
-          if (id === "run.start" && completionStatus(view.state) === "active") {
-            return acceptCompletion(view);
-          }
-          void runCommand(id);
-          return true;
+  const bindings = EDITOR_COMMANDS.flatMap((id) =>
+    bindingsFor(id).flatMap((binding) => {
+      const key = codeMirrorKey(binding);
+      if (!key) return [];
+      // A completion popup owns Enter while it is open: accepting what you
+      // were choosing is what Mod+Enter means there (04-03's gotcha). F5
+      // can't mean that, so it runs whatever is showing.
+      const acceptsFirst = id === "run.start" && /(^|-)Enter$/.test(key);
+      return [
+        {
+          key,
+          run: (view: EditorView) => {
+            if (acceptsFirst && completionStatus(view.state) === "active") {
+              return acceptCompletion(view);
+            }
+            void runCommand(id);
+            return true;
+          },
         },
-      },
-    ];
-  });
+      ];
+    }),
+  );
   return Prec.highest(keymap.of(bindings));
 }
 
