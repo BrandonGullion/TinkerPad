@@ -194,7 +194,7 @@ jobs:
       - name: Launch (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,python,library,library-trash,locked,tabs,annotations,packages
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,python,library,library-trash,locked,tabs,annotations,packages,toolbar
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -222,6 +222,8 @@ jobs:
           grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
           grep -q "selftest: PASS the directive goes on the first line" launch.log
+          grep -q "selftest: PASS Run starts the playground and turns into Cancel" launch.log
+          grep -q "selftest: PASS and its pressed state follows Mod+B and Escape too" launch.log
 
       # A fresh session for the language-server scenarios: rust-analyzer is
       # sensitive to a session that has already created and deleted a dozen
@@ -313,7 +315,7 @@ jobs:
       - name: Launch (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,python,library,library-trash,locked,tabs,annotations,packages
+          TINKERPAD_SELFTEST: layout,run,plugins,toolchains,dump,dump-render,typescript,csharp,rust,python,library,library-trash,locked,tabs,annotations,packages,toolbar
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
         run: |
@@ -335,6 +337,8 @@ jobs:
           grep -q "selftest: PASS a dirty tab asks, and Keep mine saves" launch.log
           grep -q "selftest: PASS the error is marked in the editor at its line and column" launch.log
           grep -q "selftest: PASS the directive goes on the first line" launch.log
+          grep -q "selftest: PASS Run starts the playground and turns into Cancel" launch.log
+          grep -q "selftest: PASS and its pressed state follows Mod+B and Escape too" launch.log
 
       - name: Language servers (macOS)
         if: runner.os == 'macOS'

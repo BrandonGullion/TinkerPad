@@ -16,11 +16,11 @@ export type { Command, CommandInfo, Handler } from "./registry";
 export { openCommandPalette } from "./palette";
 export { EDITOR_COMMANDS, editorKeymap } from "./editor";
 
-/** Called after bindings change, so the editor can rebuild its keymap. */
-let onChange: () => void = () => {};
+/** Called after bindings change: the editor rebuilds its keymap, the toolbar its tooltips. */
+const listeners: (() => void)[] = [];
 
 export function onBindingsChanged(listener: () => void): void {
-  onChange = listener;
+  listeners.push(listener);
 }
 
 /**
@@ -38,7 +38,7 @@ export async function watchKeybindings(): Promise<void> {
 
 function apply(bindings: Record<string, string[]>): void {
   const conflicts = applyBindings(bindings);
-  onChange();
+  for (const listener of listeners) listener();
   if (conflicts.length) {
     toast("warning", `Two commands share a shortcut:\n${conflicts.join("\n")}`);
   }

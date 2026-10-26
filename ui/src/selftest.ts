@@ -4591,6 +4591,168 @@ async function openTestPlayground(
   return p;
 }
 
+/**
+ * The toolbar above the tabs (work item 04-11): each button does what its key
+ * does, is disabled when its command is, and follows the state it shows.
+ */
+async function toolbarScenario(ctx: SelftestContext, check: Check) {
+  const { tabs, runs, editor } = ctx;
+  const bar = () => document.querySelector<HTMLElement>(".toolbar");
+  const button = (command: string) =>
+    document.querySelector<HTMLButtonElement>(`.toolbar-button[data-command="${command}"]`);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const library = () => document.querySelector<HTMLElement>(".sidebar");
+  const libraryOpen = () => library()?.hidden === false;
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  if (libraryOpen()) await runCommand("Library panel");
+  await frame();
+
+  const strip = document.querySelector(".tab-strip");
+  await check(
+    "a toolbar sits above the tabs",
+    bar()?.getAttribute("role") === "toolbar" &&
+      !!bar()?.getAttribute("aria-label") &&
+      bar()?.nextElementSibling === strip,
+    bar()?.outerHTML.slice(0, 120) ?? "no toolbar",
+  );
+  await check(
+    "it has Explorer, New, New in… and Run, in that order",
+    JSON.stringify([...document.querySelectorAll<HTMLElement>(".toolbar-button")].map((b) => b.dataset.command)) ===
+      JSON.stringify(["view.library", "playground.new", "playground.newOfKind", "run.start"]),
+    JSON.stringify([...document.querySelectorAll(".toolbar-label")].map((l) => l.textContent)),
+  );
+  await check(
+    "Run is disabled with no playground open, and the rest aren't",
+    button("run.start")?.disabled === true &&
+      button("playground.new")?.disabled === false &&
+      button("playground.newOfKind")?.disabled === false &&
+      button("view.library")?.disabled === false,
+  );
+  const runKeys = isMac ? "⌘↩ / F5" : "Ctrl+Enter / F5";
+  await check(
+    "a button's tooltip names its command and every key for it",
+    button("run.start")?.title === `Run (${runKeys})` &&
+      button("playground.new")?.title === `New playground (${isMac ? "⌘N" : "Ctrl+N"})`,
+    JSON.stringify([button("run.start")?.title, button("playground.new")?.title]),
+  );
+
+  // New: a tab in the default language, with the focus in its editor.
+  const before = tabs.tabs.length;
+  button("playground.new")?.click();
+  const created = await until(() => tabs.tabs.length === before + 1 && tabs.activePlayground() !== null, 10_000);
+  await frame();
+  const madeId = tabs.activePlayground();
+  await check(
+    "New makes a playground in the default language, ready to type in",
+    created && !!document.activeElement?.closest(".cm-editor"),
+    JSON.stringify({ created, focus: document.activeElement?.className }),
+  );
+  await check("and Run is enabled now there is something to run", button("run.start")?.disabled === false);
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  if (madeId) await invoke("delete_playground", { id: madeId }).catch(() => {});
+
+  // New in…: the same picker as Mod+Shift+N.
+  button("playground.newOfKind")?.click();
+  const picked = await until(() => document.querySelector(".picker") !== null, 5000);
+  await check(
+    "New in… asks for the language first",
+    picked && (document.querySelector(".picker")?.textContent ?? "").includes("New playground"),
+    (document.querySelector(".picker")?.textContent ?? "").slice(0, 80),
+  );
+  pressKey("Escape");
+  await until(() => document.querySelector(".picker") === null, 3000);
+
+  // Run becomes Cancel while the playground runs, and back after.
+  const main = await openTestPlayground(ctx, "Toolbar Test");
+  editor.view.dispatch({
+    changes: { from: 0, to: editor.view.state.doc.length, insert: 'console.log("waiting");\nsetInterval(() => {}, 50);\n' },
+  });
+  const ending = runs.waitForEnd();
+  button("run.start")?.click();
+  const swapped = await until(() => button("run.cancel") !== null && runs.running, 30_000);
+  await frame();
+  await check(
+    "Run starts the playground and turns into Cancel",
+    swapped && button("run.start") === null && !!document.activeElement?.closest(".cm-editor"),
+    JSON.stringify({ swapped, focus: document.activeElement?.className, title: button("run.cancel")?.title }),
+  );
+  await sleep(300);
+  button("run.cancel")?.click();
+  const outcome = await withTimeout(ending, 30_000, "toolbar cancel");
+  const back = await until(() => button("run.start") !== null, 5000);
+  await check(
+    "Cancel stops it, and the button is Run again",
+    outcome.kind === "cancelled" && back,
+    JSON.stringify({ outcome, back }),
+  );
+
+  // The explorer toggle follows the panel, however it was opened or closed.
+  button("view.library")?.click();
+  await until(libraryOpen, 3000);
+  const pressedOpen = button("view.library")?.getAttribute("aria-pressed");
+  button("view.library")?.click();
+  await until(() => !libraryOpen(), 3000);
+  const pressedClosed = button("view.library")?.getAttribute("aria-pressed");
+  await check(
+    "the explorer button opens and closes the library, and looks pressed while it's open",
+    pressedOpen === "true" && pressedClosed === "false",
+    JSON.stringify({ pressedOpen, pressedClosed }),
+  );
+  pressKey("b", { mod: true }, document.body);
+  await until(libraryOpen, 3000);
+  const byKey = button("view.library")?.getAttribute("aria-pressed");
+  // Escape in the panel closes it (with its search already empty).
+  pressKey("Escape", {}, document.querySelector(".sidebar input") ?? document.body);
+  await until(() => !libraryOpen(), 3000);
+  const byEscape = button("view.library")?.getAttribute("aria-pressed");
+  await check(
+    "and its pressed state follows Mod+B and Escape too",
+    byKey === "true" && byEscape === "false",
+    JSON.stringify({ byKey, byEscape }),
+  );
+
+  // One Tab stop; the arrows move inside.
+  const all = () => [...document.querySelectorAll<HTMLButtonElement>(".toolbar-button")];
+  const stops = all().filter((b) => b.tabIndex === 0);
+  stops[0]?.focus();
+  const first = document.activeElement;
+  pressKey("ArrowRight", {}, first ?? document.body);
+  const second = document.activeElement;
+  pressKey("End", {}, second ?? document.body);
+  const last = document.activeElement;
+  pressKey("ArrowRight", {}, last ?? document.body);
+  const wrapped = document.activeElement;
+  await check(
+    "the toolbar is one Tab stop, and the arrow keys move along it",
+    stops.length === 1 &&
+      first === all()[0] &&
+      second === all()[1] &&
+      last === all()[3] &&
+      wrapped === all()[0] &&
+      all().filter((b) => b.tabIndex === 0).length === 1,
+    JSON.stringify({ stops: stops.length }),
+  );
+
+  // A rebinding in keybindings.toml reaches the tooltip without a restart.
+  const file = await invoke<string>("keybindings_file");
+  await invoke("selftest_write_file", { path: file, text: '"run.start" = "mod+shift+r"\n' });
+  const retitled = await until(() => (button("run.start")?.title ?? "").includes(isMac ? "⇧⌘R" : "Ctrl+Shift+R"), 5000);
+  await check("a rebound key shows in the tooltip at once", retitled, button("run.start")?.title ?? "");
+  await invoke("selftest_write_file", { path: file, text: "" });
+  await until(() => button("run.start")?.title === `Run (${runKeys})`, 5000);
+
+  // The toolbar takes its height from the editor pane, not the split.
+  await check(
+    "the editor still has the room the split gives it",
+    (document.querySelector<HTMLElement>(".editor-host")?.clientHeight ?? 0) > 80,
+    `${document.querySelector<HTMLElement>(".editor-host")?.clientHeight} px`,
+  );
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  await invoke("delete_playground", { id: main.id }).catch(() => {});
+}
+
 const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<void>> = {
   layout: layoutScenario,
   run: runScenario,
@@ -4618,6 +4780,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   definition: definitionScenario,
   "library-panel": libraryPanelScenario,
   keys: keysScenario,
+  toolbar: toolbarScenario,
   go: goScenario,
   powershell: powershellScenario,
   stdin: stdinScenario,

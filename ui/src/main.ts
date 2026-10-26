@@ -26,6 +26,7 @@ import { RunController } from "./run";
 import { maybeRunSelftest, type SelftestContext } from "./selftest";
 import { TabManager } from "./tabs";
 import { toast } from "./toast";
+import { ICONS, Toolbar } from "./toolbar";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -175,7 +176,29 @@ function registerEverything(): void {
   });
 }
 registerEverything();
+
+// The toolbar above the tabs (04-11). A button is one entry here.
+const toolbar = new Toolbar(
+  layout.toolbarHost,
+  [
+    { command: "view.library", label: "Explorer", icon: ICONS.explorer, pressed: () => library.visible },
+    { command: "playground.new", label: "New", icon: ICONS.newFile },
+    { command: "playground.newOfKind", label: "New in…", icon: ICONS.newFileIn },
+    {
+      command: "run.start",
+      label: "Run",
+      icon: ICONS.run,
+      refocus: true,
+      swap: { when: () => runs.running, command: "run.cancel", label: "Cancel", icon: ICONS.stop },
+    },
+  ],
+  () => editor.focus(),
+);
+tabs.onChange = () => toolbar.render();
+layout.sidebar.onChange(() => toolbar.render());
+
 onBindingsChanged(() => editor.applyBindings());
+onBindingsChanged(() => toolbar.render());
 void watchKeybindings();
 
 /**
