@@ -3710,7 +3710,7 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   await frame();
   await check(
     "the palette lists commands with their category and shortcut",
-    shownIn("Run") && shownIn("Ctrl+Enter"),
+    shownIn("Run") && shownIn(isMac ? "⌘↩" : "Ctrl+Enter"),
     JSON.stringify(items().map((i) => i.textContent)),
   );
   pressKey("Escape");
@@ -3778,7 +3778,7 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   const runRow = items().find((item) => (item.textContent ?? "").startsWith("Run"));
   await check(
     "the palette shows the keys the user chose",
-    (runRow?.textContent ?? "").includes("Ctrl+Shift+R"),
+    (runRow?.textContent ?? "").includes(isMac ? "⇧⌘R" : "Ctrl+Shift+R"),
     JSON.stringify(runRow?.textContent),
   );
   pressKey("Escape");
@@ -3827,7 +3827,7 @@ async function keysScenario(ctx: SelftestContext, check: Check) {
   const warned = await until(() => toastText().includes("share a shortcut"), 5000);
   await check(
     "two commands on one shortcut are reported",
-    warned && toastText().includes("Ctrl+B"),
+    warned && toastText().includes(isMac ? "⌘B" : "Ctrl+B"),
     JSON.stringify({ toast: toastText().slice(0, 160) }),
   );
 
