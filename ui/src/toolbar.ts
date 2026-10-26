@@ -18,6 +18,9 @@ export interface ToolbarItem {
   swap?: { when: () => boolean; command: string; label: string; icon: string };
   /** Give the editor the focus back after a click, the way the key leaves it. */
   refocus?: boolean;
+  /** At the far end of the bar while this holds: the Explorer button follows
+   * the library panel to the right (work item 04-12). */
+  trailing?: () => boolean;
 }
 
 /** 16×16 line icons, drawn in the text colour so every theme gets them right. */
@@ -30,10 +33,18 @@ export const ICONS = {
   newFileIn: svg('<path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"/><path d="M9 1.5v4h4M6 9l2 2 2-2"/>'),
   run: svg('<path d="M4.5 2.5v11l9-5.5z" fill="currentColor"/>'),
   stop: svg('<rect x="3.5" y="3.5" width="9" height="9" rx="1" fill="currentColor"/>'),
+  // The library panel's header (work item 04-12).
+  folder: svg('<path d="M1.5 4a1 1 0 0 1 1-1h3.5l1.5 1.5h6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/>'),
+  openOut: svg('<path d="M9.5 2.5h4v4M13.5 2.5 8 8M12 9.5V13a.5.5 0 0 1-.5.5h-8A.5.5 0 0 1 3 13V5a.5.5 0 0 1 .5-.5H7"/>'),
+  edit: svg('<path d="M11 2.5l2.5 2.5L6 12.5H3.5V10z"/>'),
+  swapSides: svg('<path d="M2.5 5.5h10M10 3l2.5 2.5L10 8M13.5 10.5h-10M6 8l-2.5 2.5L6 13"/>'),
+  warning: svg('<path d="M8 2 14.5 13.5h-13z"/><path d="M8 6.5v3M8 11.5v.01"/>'),
 };
 
 export class Toolbar {
   private buttons: { item: ToolbarItem; button: HTMLButtonElement }[] = [];
+  /** The buttons in the order they were given, which `arrange` starts from. */
+  private readonly given: { item: ToolbarItem; button: HTMLButtonElement }[] = [];
   /** The button Tab lands on: one stop for the whole toolbar. */
   private current = 0;
 
@@ -52,6 +63,7 @@ export class Toolbar {
       button.dataset.command = item.command;
       button.addEventListener("click", () => void this.press(item));
       this.buttons.push({ item, button });
+      this.given.push({ item, button });
       element.append(button);
     }
     element.addEventListener("keydown", (e) => this.onKey(e));
@@ -65,6 +77,7 @@ export class Toolbar {
 
   /** Redraw from the commands as they are now. Cheap; call it on any change. */
   render(): void {
+    this.arrange();
     const available = new Map(commands().map((command) => [command.id, command.enabled]));
     for (const { item, button } of this.buttons) {
       const shown = item.swap?.when() ? item.swap : item;
@@ -78,6 +91,30 @@ export class Toolbar {
       if (item.pressed) button.setAttribute("aria-pressed", String(item.pressed()));
     }
     this.renderTabStops();
+  }
+
+  /**
+   * Put trailing buttons at the end, in the DOM as well as on screen, so the
+   * arrow keys and a screen reader go the way the eye does. The button Tab
+   * lands on stays the same one.
+   */
+  private arrange(): void {
+    const current = this.buttons[this.current]?.button;
+    const trailing = (entry: { item: ToolbarItem }) => entry.item.trailing?.() ?? false;
+    const ordered = [
+      ...this.given.filter((entry) => !trailing(entry)),
+      ...this.given.filter(trailing),
+    ];
+    if (ordered.every((entry, i) => entry === this.buttons[i])) return;
+    this.buttons = ordered;
+    for (const { item, button } of ordered) {
+      button.classList.toggle("toolbar-trailing", trailing({ item }));
+      this.element.append(button);
+    }
+    this.current = Math.max(
+      ordered.findIndex(({ button }) => button === current),
+      0,
+    );
   }
 
   private async press(item: ToolbarItem): Promise<void> {

@@ -464,6 +464,34 @@ impl Library {
         Ok(())
     }
 
+    /// The folders that have a `playground.toml` but can't be used, by folder.
+    pub fn broken(&self) -> Vec<BrokenPlayground> {
+        let index = self.index.read().expect("index lock");
+        index.broken.values().cloned().collect()
+    }
+
+    /// Move a broken playground's folder to the OS recycle bin (work item
+    /// 04-12). It has no id to be asked for by, so it is asked for by folder —
+    /// and only a folder the index holds as broken is touched, so a path from
+    /// the window can never send anything else to the trash.
+    pub fn delete_broken(&self, dir: &Path) -> Result<(), LibraryError> {
+        let mut index = self.index.write().expect("index lock");
+        let broken = index
+            .broken
+            .get(dir)
+            .cloned()
+            .ok_or_else(|| LibraryError::NotBroken(dir.to_path_buf()))?;
+        retrying(|| platform::move_to_trash(&broken.dir)).map_err(|message| {
+            LibraryError::Trash {
+                path: broken.dir.clone(),
+                message,
+            }
+        })?;
+        index.remove_dir(&broken.dir);
+        info!(dir = %broken.dir.display(), "broken playground moved to trash");
+        Ok(())
+    }
+
     pub fn read_source(&self, id: &PlaygroundId) -> Result<String, LibraryError> {
         let p = self.require(id)?;
         std::fs::read_to_string(&p.main_file).map_err(|e| LibraryError::io(&p.main_file, e))

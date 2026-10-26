@@ -1,4 +1,4 @@
-// The library panel: everything you have, findable (work item 04-01).
+// The library panel: everything you have, findable (work items 04-01, 04-12).
 //
 // Mod+B shows it. A search box filters by name, tags, and source — the core
 // does the matching and the ranking — and the results arrive in three
@@ -7,6 +7,10 @@
 // can be opened in a row, and the context menu does the things a playground
 // needs doing to it.
 //
+// It is also the explorer for the library folder (04-12): the header says
+// which folder that is, and the list ends with the folders in it that look
+// like playgrounds but can't be opened, so nothing in the folder is invisible.
+//
 // The panel holds no state of its own beyond the query and what is selected:
 // every refresh asks the core again, so a change on disk, in another tab, or
 // from the watcher lands here the same way.
@@ -14,14 +18,21 @@
 import { invoke, subscribe } from "./ipc";
 import type { Sidebar } from "./layout";
 import { pick, prompt } from "./picker";
-import type { PlaygroundSummary, SearchHit } from "./protocol";
+import type { BrokenPlayground, LibraryInfo, PlaygroundSummary, SearchHit } from "./protocol";
 import { toast } from "./toast";
+import { ICONS } from "./toolbar";
 
 /** How many playgrounds the panel asks for. */
 const LIMIT = 300;
 
 /** How many recently opened ones it shows. */
 const RECENT = 10;
+
+/** What the OS calls the place a deleted folder goes. */
+export const TRASH = navigator.platform.toLowerCase().startsWith("win") ? "Recycle Bin" : "Trash";
+
+/** A broken playground's row id: it has no playground id, only a folder. */
+const BROKEN = "broken:";
 
 /** What the panel needs from the rest of the window. */
 export interface LibraryHost {
@@ -37,19 +48,28 @@ export interface LibraryHost {
   moved(id: string): void;
   /** The language plugin's display name, for the grouping headers. */
   languageName(id: string): string;
+  /** Open Settings at the library folder. */
+  changeFolder(): void;
+  /** Put the panel on the other side of the window. */
+  switchSide(): void;
 }
 
 type Group = { title: string; hits: SearchHit[] };
 
 export class LibraryPanel {
   private readonly search: HTMLInputElement;
+  private readonly folder: HTMLElement;
+  private readonly folderPath: HTMLElement;
+  private readonly sideButton: HTMLButtonElement;
   private readonly tagRow: HTMLElement;
   private readonly list: HTMLElement;
   private readonly count: HTMLElement;
   private hits: SearchHit[] = [];
+  private broken: BrokenPlayground[] = [];
   /** The tag filter, if one is on. */
   private tag: string | null = null;
   private grouped = false;
+  /** A playground id, or `broken:` and a folder. */
   private selected: string | null = null;
   /** Bumped per refresh, so a slow answer can't overwrite a newer one. */
   private token = 0;
@@ -79,14 +99,38 @@ export class LibraryPanel {
     });
     header.append(this.search, group);
 
+    // The folder this is a view of, and what can be done with it (04-12).
+    this.folder = document.createElement("div");
+    this.folder.className = "library-folder";
+    const folderIcon = document.createElement("span");
+    folderIcon.className = "library-folder-icon";
+    folderIcon.innerHTML = ICONS.folder;
+    this.folderPath = document.createElement("span");
+    this.folderPath.className = "library-folder-path";
+    const reveal = this.iconButton("library-folder-open", ICONS.openOut, "Open the library folder", () =>
+      void invoke("reveal_library").catch(fail),
+    );
+    const change = this.iconButton("library-folder-change", ICONS.edit, "Change the library folder…", () =>
+      this.host.changeFolder(),
+    );
+    this.sideButton = this.iconButton("library-side", ICONS.swapSides, "", () => this.host.switchSide());
+    this.folder.append(folderIcon, this.folderPath, reveal, change, this.sideButton);
+    this.renderSide();
+    this.sidebar.onChange(() => this.renderSide());
+
     this.tagRow = document.createElement("div");
     this.tagRow.className = "library-tags";
     this.list = document.createElement("div");
     this.list.className = "library-list";
+    // One Tab stop for the whole list; the arrows move inside it, and Delete
+    // acts on what is selected (04-12).
+    this.list.tabIndex = 0;
+    this.list.setAttribute("role", "listbox");
+    this.list.setAttribute("aria-label", "Playgrounds");
     this.count = document.createElement("div");
     this.count.className = "library-count";
 
-    panel.append(header, this.tagRow, this.list, this.count);
+    panel.append(header, this.folder, this.tagRow, this.list, this.count);
     this.sidebar.host.replaceChildren(panel);
 
     this.search.addEventListener("input", () => void this.refresh());
@@ -105,6 +149,11 @@ export class LibraryPanel {
     return this.sidebar.visible();
   }
 
+  /** Whether the keyboard is in the list (not the search box): Delete's cue. */
+  get listFocused(): boolean {
+    return this.sidebar.visible() && this.list.contains(document.activeElement);
+  }
+
   /** Show or hide the panel. Showing it refreshes and takes focus. */
   toggle(visible = !this.sidebar.visible()): void {
     this.sidebar.setVisible(visible);
@@ -113,20 +162,62 @@ export class LibraryPanel {
     }
   }
 
+  /** Show it without taking the focus: on the first launch (04-12). */
+  show(): void {
+    this.sidebar.setVisible(true);
+    void this.refresh();
+  }
+
   /** Ask the core again and redraw. */
   async refresh(): Promise<void> {
     const token = ++this.token;
     const query = this.search.value;
-    const hits = await invoke<SearchHit[]>("search_playgrounds", {
-      query,
-      limit: LIMIT,
-    }).catch(() => [] as SearchHit[]);
+    const [hits, info] = await Promise.all([
+      invoke<SearchHit[]>("search_playgrounds", { query, limit: LIMIT }).catch(() => [] as SearchHit[]),
+      invoke<LibraryInfo>("library_info").catch(() => null),
+    ]);
     if (token !== this.token) return;
     this.hits = hits;
+    this.broken = info?.broken ?? [];
+    if (info) {
+      this.folderPath.textContent = info.display;
+      this.folderPath.title = info.root;
+    }
     this.render();
   }
 
+  /** Move what is selected to the trash, asking first (04-12). */
+  async deleteSelected(): Promise<void> {
+    const id = this.selected;
+    if (!id) return;
+    if (id.startsWith(BROKEN)) {
+      const broken = this.broken.find((b) => BROKEN + b.dir === id);
+      if (broken) await this.removeBroken(broken);
+    } else {
+      const hit = this.hits.find((h) => h.id === id);
+      if (hit) await this.remove(hit);
+    }
+  }
+
   // ---- drawing -------------------------------------------------------------
+
+  private renderSide(): void {
+    const other = this.sidebar.side() === "left" ? "right" : "left";
+    const label = `Move the library to the ${other}`;
+    this.sideButton.title = label;
+    this.sideButton.setAttribute("aria-label", label);
+  }
+
+  private iconButton(className: string, icon: string, label: string, onClick: () => void): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `library-folder-button ${className}`;
+    button.innerHTML = icon;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.addEventListener("click", onClick);
+    return button;
+  }
 
   private render(): void {
     const all = this.tag
@@ -167,26 +258,42 @@ export class LibraryPanel {
       groups.push({ title, hits: rest });
     }
 
+    // The ones that can't be opened, last: a tag can't match them, and a
+    // search matches their folder's name.
+    const query = this.search.value.trim().toLowerCase();
+    const broken = this.tag
+      ? []
+      : this.broken.filter((b) => !query || folderName(b.dir).toLowerCase().includes(query));
+
     this.renderTags();
-    this.list.replaceChildren(...groups.flatMap((group) => this.renderGroup(group)));
+    this.list.replaceChildren(
+      ...groups.flatMap((group) => this.renderGroup(group)),
+      ...(broken.length ? [this.heading("Can't be opened"), ...broken.map((b) => this.renderBroken(b))] : []),
+    );
     const total = all.length;
+    const unusable = broken.length ? ` · ${broken.length} can't be opened` : "";
     this.count.textContent =
-      total === 0
+      total === 0 && !broken.length
         ? this.hits.length === 0 && !this.search.value
           ? "No playgrounds yet."
           : "Nothing matches."
-        : `${total} playground${total === 1 ? "" : "s"}`;
+        : `${total} playground${total === 1 ? "" : "s"}${unusable}`;
 
-    if (this.selected && !all.some((hit) => hit.id === this.selected)) this.selected = null;
-    this.selected ??= groups[0]?.hits[0]?.id ?? null;
+    const ids = this.rows().map((row) => row.dataset.id);
+    if (this.selected && !ids.includes(this.selected)) this.selected = null;
+    this.selected ??= ids[0] ?? null;
     this.markSelected();
   }
 
-  private renderGroup(group: Group): HTMLElement[] {
+  private heading(title: string): HTMLElement {
     const heading = document.createElement("div");
     heading.className = "library-section";
-    heading.textContent = group.title;
-    return [heading, ...group.hits.map((hit) => this.renderRow(hit))];
+    heading.textContent = title;
+    return heading;
+  }
+
+  private renderGroup(group: Group): HTMLElement[] {
+    return [this.heading(group.title), ...group.hits.map((hit) => this.renderRow(hit))];
   }
 
   private renderRow(hit: SearchHit): HTMLElement {
@@ -195,6 +302,7 @@ export class LibraryPanel {
     // The one in the editor, so the panel says where you are.
     if (hit.id === this.host.activePlayground()) row.classList.add("open");
     row.dataset.id = hit.id;
+    row.id = `library-row-${hit.id}`;
     row.tabIndex = -1;
     row.setAttribute("role", "option");
 
@@ -240,15 +348,51 @@ export class LibraryPanel {
     }
 
     row.addEventListener("click", () => {
-      this.selected = hit.id;
-      this.markSelected();
+      this.select(hit.id);
       void this.open(hit, false);
     });
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      this.selected = hit.id;
-      this.markSelected();
+      this.select(hit.id);
       void this.menu(hit);
+    });
+    return row;
+  }
+
+  /** A folder with a playground.toml that can't be read (04-12). */
+  private renderBroken(broken: BrokenPlayground): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "library-row library-broken";
+    row.dataset.id = BROKEN + broken.dir;
+    row.id = `library-broken-${this.broken.indexOf(broken)}`;
+    row.tabIndex = -1;
+    row.setAttribute("role", "option");
+    row.title = broken.message;
+
+    const top = document.createElement("div");
+    top.className = "library-row-top";
+    const badge = document.createElement("span");
+    badge.className = "library-badge";
+    badge.innerHTML = ICONS.warning;
+    badge.setAttribute("role", "img");
+    badge.setAttribute("aria-label", "Can't be opened");
+    const name = document.createElement("span");
+    name.className = "library-name";
+    name.textContent = folderName(broken.dir);
+    top.append(badge, name);
+    const detail = document.createElement("div");
+    detail.className = "library-detail";
+    detail.textContent = broken.message;
+    row.append(top, detail);
+
+    row.addEventListener("click", () => {
+      this.select(row.dataset.id!);
+      void this.explain(broken);
+    });
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.select(row.dataset.id!);
+      void this.explain(broken);
     });
     return row;
   }
@@ -286,14 +430,33 @@ export class LibraryPanel {
     this.render();
   }
 
+  private select(id: string): void {
+    this.selected = id;
+    this.markSelected();
+  }
+
   private markSelected(): void {
+    let active: HTMLElement | undefined;
     for (const row of this.rows()) {
-      row.classList.toggle("selected", row.dataset.id === this.selected);
+      const on = row.dataset.id === this.selected;
+      row.classList.toggle("selected", on);
+      row.setAttribute("aria-selected", String(on));
+      if (on) active = row;
     }
+    if (active) this.list.setAttribute("aria-activedescendant", active.id);
+    else this.list.removeAttribute("aria-activedescendant");
   }
 
   private rows(): HTMLElement[] {
     return [...this.list.querySelectorAll<HTMLElement>(".library-row")];
+  }
+
+  /** The row after `id`, or the one before it if it is the last. */
+  private neighbour(id: string): string | null {
+    const ids = this.rows().map((row) => row.dataset.id ?? "");
+    const at = ids.indexOf(id);
+    if (at === -1) return null;
+    return ids[at + 1] ?? ids[at - 1] ?? null;
   }
 
   // ---- doing things --------------------------------------------------------
@@ -314,7 +477,7 @@ export class LibraryPanel {
       { id: "pin", label: hit.pinned ? "Unpin" : "Pin" },
       { id: "duplicate", label: "Duplicate" },
       { id: "reveal", label: "Show in file explorer" },
-      { id: "delete", label: "Move to recycle bin" },
+      { id: "delete", label: `Move to ${TRASH}` },
     ]);
     if (!chosen) return;
     switch (chosen.id) {
@@ -339,6 +502,20 @@ export class LibraryPanel {
       case "delete":
         await this.remove(hit);
         break;
+    }
+  }
+
+  /** Why a broken playground can't be opened, and what can be done (04-12). */
+  private async explain(broken: BrokenPlayground): Promise<void> {
+    const chosen = await pick(`${folderName(broken.dir)} can't be opened: ${broken.message}`, [
+      { id: "reveal", label: "Show in file explorer", detail: "Fix its playground.toml there" },
+      { id: "delete", label: `Move to ${TRASH}` },
+      { id: "cancel", label: "Cancel" },
+    ]);
+    if (chosen?.id === "reveal") {
+      await this.act("reveal_broken_playground", { dir: broken.dir });
+    } else if (chosen?.id === "delete") {
+      await this.removeBroken(broken);
     }
   }
 
@@ -379,20 +556,46 @@ export class LibraryPanel {
   }
 
   private async remove(hit: SearchHit): Promise<void> {
-    const answer = await pick(`Move ${hit.name} to the recycle bin?`, [
+    await this.trash(hit.id, hit.name, async () => {
+      await invoke("delete_playground", { id: hit.id });
+      this.host.closed(hit.id);
+    });
+  }
+
+  private async removeBroken(broken: BrokenPlayground): Promise<void> {
+    await this.trash(BROKEN + broken.dir, folderName(broken.dir), () =>
+      invoke("delete_broken_playground", { dir: broken.dir }),
+    );
+  }
+
+  /**
+   * Ask, delete, and move the selection on to the next row, so pressing
+   * Delete again keeps going down the list (04-12). The focus goes back to
+   * the list if that is where it was.
+   */
+  private async trash(id: string, name: string, remove: () => Promise<unknown>): Promise<void> {
+    const inList = this.listFocused;
+    const answer = await pick(`Move ${name} to the ${TRASH}?`, [
       { id: "no", label: "Cancel" },
-      { id: "yes", label: "Move to recycle bin", detail: "You can restore it from there" },
+      { id: "yes", label: `Move to ${TRASH}`, detail: "You can restore it from there" },
     ]);
     if (answer?.id !== "yes") return;
-    await this.act("delete_playground", { id: hit.id });
-    this.host.closed(hit.id);
+    const next = this.neighbour(id);
+    const removed = await remove().then(
+      () => true,
+      (e: { message?: string }) => {
+        toast("error", e.message ?? "That didn't work.");
+        return false;
+      },
+    );
+    if (removed && this.selected === id) this.selected = next;
+    await this.refresh();
+    if (inList) this.list.focus();
   }
 
   /** Run a command that changes the library, then redraw. */
   private async act(command: string, args: Record<string, unknown>): Promise<void> {
-    await invoke(command, args).catch((e: { message?: string }) => {
-      toast("error", e.message ?? "That didn't work.");
-    });
+    await invoke(command, args).catch(fail);
     await this.refresh();
   }
 
@@ -401,6 +604,7 @@ export class LibraryPanel {
   private onKey(e: KeyboardEvent): void {
     const rows = this.rows();
     const at = rows.findIndex((row) => row.dataset.id === this.selected);
+    const selectedHit = () => this.hits.find((h) => h.id === this.selected);
     switch (e.key) {
       case "ArrowDown":
       case "ArrowUp": {
@@ -414,7 +618,13 @@ export class LibraryPanel {
         break;
       }
       case "Enter": {
-        const hit = this.hits.find((h) => h.id === this.selected);
+        const broken = this.broken.find((b) => BROKEN + b.dir === this.selected);
+        if (broken) {
+          e.preventDefault();
+          void this.explain(broken);
+          return;
+        }
+        const hit = selectedHit();
         if (!hit) return;
         e.preventDefault();
         // Mod+Enter opens it and leaves the focus here, for opening several.
@@ -433,7 +643,7 @@ export class LibraryPanel {
         }
         break;
       case "F2": {
-        const hit = this.hits.find((h) => h.id === this.selected);
+        const hit = selectedHit();
         if (!hit) return;
         e.preventDefault();
         void this.rename(hit);
@@ -443,4 +653,13 @@ export class LibraryPanel {
         return;
     }
   }
+}
+
+/** The last part of a path, whichever separator it uses. */
+function folderName(dir: string): string {
+  return dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
+}
+
+function fail(e: { message?: string }): void {
+  toast("error", e.message ?? "That didn't work.");
 }

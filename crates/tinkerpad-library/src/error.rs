@@ -6,6 +6,10 @@ use tinkerpad_core::PlaygroundId;
 pub enum LibraryError {
     #[error("no playground with id {0}")]
     NotFound(PlaygroundId),
+    /// A folder asked for as a broken playground that the index doesn't have
+    /// as one: never a reason to touch it.
+    #[error("{} isn't a broken playground in the library", .0.display())]
+    NotBroken(PathBuf),
     #[error("{0}")]
     InvalidName(String),
     #[error("{}: {source}", path.display())]

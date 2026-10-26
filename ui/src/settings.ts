@@ -59,10 +59,17 @@ export function settingsOpen(): boolean {
   return open !== null;
 }
 
-/** Show the settings form. Opening it again brings the one that's up forward. */
-export async function openSettings(host: SettingsHost): Promise<void> {
+/**
+ * Show the settings form. Opening it again brings the one that's up forward.
+ * `at` names a row to start on: `library` is the library folder's, for the
+ * library panel's "Change folder" (work item 04-12).
+ */
+export async function openSettings(host: SettingsHost, at?: "library"): Promise<void> {
+  const start = () =>
+    (at === "library" ? open?.querySelector<HTMLElement>(".settings-library-change") : null) ??
+    open?.querySelector<HTMLElement>("input, select, button");
   if (open) {
-    open.querySelector<HTMLElement>("input, select, button")?.focus();
+    start()?.focus();
     return;
   }
   const [settings, plugins] = await Promise.all([
@@ -118,7 +125,18 @@ export async function openSettings(host: SettingsHost): Promise<void> {
         draft.run.clear_output = on;
       }),
     ]),
-    section("Library", [libraryRow(draft, host)]),
+    section("Library", [
+      libraryRow(draft, host),
+      choice(
+        "Panel side",
+        draft.library.side,
+        [
+          ["left", "Left"],
+          ["right", "Right"],
+        ],
+        (value) => (draft.library.side = value),
+      ),
+    ]),
   );
 
   const servers = plugins.plugins.filter((p) => p.lsp);
@@ -214,7 +232,9 @@ export async function openSettings(host: SettingsHost): Promise<void> {
 
   document.body.append(backdrop);
   open = dialog;
-  dialog.querySelector<HTMLElement>("input")?.focus();
+  const first = at === "library" ? start() : dialog.querySelector<HTMLElement>("input");
+  first?.scrollIntoView({ block: "nearest" });
+  first?.focus();
 }
 
 async function save(draft: Settings, close: () => void): Promise<void> {
@@ -250,6 +270,7 @@ function libraryRow(draft: Settings, host: SettingsHost): HTMLElement {
   value.className = "settings-value settings-path";
   value.textContent = draft.library.root ?? "your home folder";
   const change = button("Change…", () => void move());
+  change.classList.add("settings-library-change");
   row.append(label, value, change);
 
   async function move(): Promise<void> {

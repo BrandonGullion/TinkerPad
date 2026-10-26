@@ -316,7 +316,8 @@ export interface PluginSummary {
  */
 export interface Settings {
   theme: string;
-  library: { root: string | null };
+  /** `side` is `left` or `right` (work item 04-12). */
+  library: { root: string | null; side: string };
   editor: { font_size: number; font_family: string | null; tab_size: number };
   run: { clear_output: boolean };
   /** Plugin id to program name to path. */
@@ -377,5 +378,20 @@ export interface Listing {
   /** Most recently modified first. */
   playgrounds: PlaygroundSummary[];
   /** Folders with a playground.toml that couldn't be read. */
-  broken: { dir: string; message: string }[];
+  broken: BrokenPlayground[];
+}
+
+/** A folder with a playground.toml that couldn't be read. */
+export interface BrokenPlayground {
+  dir: string;
+  /** What is wrong with it, e.g. "playground.toml: expected `=` at line 3". */
+  message: string;
+}
+
+/** Reply to `library_info`: the folder the panel shows (work item 04-12). */
+export interface LibraryInfo {
+  root: string;
+  /** `root` with the home folder written `~`. */
+  display: string;
+  broken: BrokenPlayground[];
 }

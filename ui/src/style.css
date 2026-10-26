@@ -277,6 +277,11 @@ body {
   flex: none;
 }
 
+/* The Explorer button, when the library is on the right (04-12). */
+.toolbar-trailing {
+  margin-left: auto;
+}
+
 .toolbar-button {
   appearance: none;
   display: inline-flex;
@@ -1206,11 +1211,92 @@ button.history-row:focus-visible {
   border-right: 1px solid var(--border);
 }
 
+/* On the right, the border faces the workspace from the other side (04-12). */
+.shell.side-right .sidebar {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
 .library {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* The folder the panel is a view of (04-12). */
+.library-folder {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.library-folder-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.library-folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-folder-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.library-folder-button:hover {
+  color: var(--fg);
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+.library-folder-button:focus-visible,
+.library-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Something that looks like a playground but can't be opened (04-12). */
+.library-badge {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  color: var(--warning);
+}
+
+.library-broken .library-name {
+  color: var(--muted);
+}
+
+@media (forced-colors: active) {
+  .library-folder-button {
+    color: ButtonText;
+    border-color: ButtonBorder;
+  }
+
+  .library-badge {
+    color: CanvasText;
+  }
 }
 
 .library-header {
