@@ -265,6 +265,92 @@ body {
 
 /* Tabs */
 
+/* The toolbar above the tabs (04-11). Icons are drawn in currentColor, so the
+   button's colour is the icon's in every theme. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.toolbar-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.toolbar-button:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+
+.toolbar-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.toolbar-button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.toolbar-button[aria-pressed="true"] {
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+
+/* Run is the one people look for, so its icon is green; Cancel, which takes
+   its place during a run, red. The labels stay in the text colour. */
+.toolbar-button[data-command="run.start"]:not(:disabled) svg {
+  color: var(--success);
+}
+
+.toolbar-button[data-command="run.cancel"]:not(:disabled) svg {
+  color: var(--error);
+}
+
+/* The first button that isn't the explorer starts a group of its own. */
+.toolbar-button[data-command="view.library"] {
+  margin-right: 6px;
+}
+
+.toolbar-button[data-command="run.start"],
+.toolbar-button[data-command="run.cancel"] {
+  margin-left: 6px;
+}
+
+/* Windows Contrast themes and other forced-colour modes: let the system pick
+   every colour, and keep the pressed and focused states visible. */
+@media (forced-colors: active) {
+  .toolbar-button {
+    border-color: ButtonText;
+  }
+  .toolbar-button:disabled {
+    color: GrayText;
+    border-color: GrayText;
+  }
+  .toolbar-button[aria-pressed="true"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .toolbar-button svg {
+    color: inherit !important;
+  }
+}
+
 .tab-strip {
   display: flex;
   align-items: stretch;

@@ -28,6 +28,8 @@ function save(key: string, value: string): void {
 export interface Layout {
   /** Where the library panel mounts, to the left of everything (04-01). */
   sidebar: Sidebar;
+  /** The row of buttons above the tabs (04-11). */
+  toolbarHost: HTMLElement;
   /** The playground tabs. */
   tabStrip: HTMLElement;
   /** A bar shown above the editor when a tab needs a decision. */
@@ -45,6 +47,8 @@ export interface Sidebar {
   host: HTMLElement;
   visible(): boolean;
   setVisible(visible: boolean): void;
+  /** Called after it is shown or hidden, however that happened. */
+  onChange(listener: () => void): void;
 }
 
 export function createLayout(root: HTMLElement): Layout {
@@ -64,6 +68,8 @@ export function createLayout(root: HTMLElement): Layout {
 
   const editorPane = document.createElement("div");
   editorPane.className = "editor-pane";
+  const toolbarHost = document.createElement("div");
+  toolbarHost.className = "toolbar";
   const tabStrip = document.createElement("div");
   tabStrip.className = "tab-strip";
   tabStrip.setAttribute("role", "tablist");
@@ -77,7 +83,7 @@ export function createLayout(root: HTMLElement): Layout {
   emptyState.className = "empty-state";
   emptyState.hidden = true;
   editorHost.append(emptyState);
-  editorPane.append(tabStrip, conflictBar, editorHost);
+  editorPane.append(toolbarHost, tabStrip, conflictBar, editorHost);
 
   const splitter = document.createElement("div");
   splitter.className = "splitter";
@@ -102,6 +108,7 @@ export function createLayout(root: HTMLElement): Layout {
       ? "1fr"
       : `${sideWidth}px ${sideSplitter.offsetWidth || 5}px 1fr`;
   };
+  const sideListeners: (() => void)[] = [];
   const sidebar: Sidebar = {
     host: sidebarHost,
     visible: () => !sidebarHost.hidden,
@@ -109,7 +116,9 @@ export function createLayout(root: HTMLElement): Layout {
       sidebarHost.hidden = !visible;
       sideSplitter.hidden = !visible;
       applySide();
+      for (const listener of sideListeners) listener();
     },
+    onChange: (listener) => sideListeners.push(listener),
   };
   applySide();
 
@@ -160,7 +169,7 @@ export function createLayout(root: HTMLElement): Layout {
     splitter.addEventListener("pointerup", up, { once: true });
   });
 
-  return { sidebar, tabStrip, conflictBar, editorHost, emptyState, panelHost, statusBar };
+  return { sidebar, toolbarHost, tabStrip, conflictBar, editorHost, emptyState, panelHost, statusBar };
 }
 
 export type RunState =

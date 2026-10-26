@@ -114,6 +114,12 @@ export class TabManager implements RunHost {
   /** Shown in the Output panel while no tab is open. */
   readonly emptyOutput: OutputPane;
   runs!: RunController;
+  /**
+   * Called when what the window shows about the active tab may have changed:
+   * another tab, no tab, or a run starting or ending. The toolbar (04-11)
+   * redraws from it.
+   */
+  onChange: () => void = () => {};
 
   private active: Tab | null = null;
   private listing = new Map<string, PlaygroundSummary>();
@@ -203,6 +209,7 @@ export class TabManager implements RunHost {
     if (!tab) return;
     this.renderTab(tab);
     if (tab === this.active) this.ui.status.setRun(state);
+    this.onChange();
   }
 
   flashNote(text: string): void {
@@ -692,6 +699,7 @@ export class TabManager implements RunHost {
     // Nothing is open, so a stopped server is nobody's business (02-08).
     this.ui.status.servers.setLanguages([]);
     this.renderConflict();
+    this.onChange();
   }
 
   // ---- creating ------------------------------------------------------------
@@ -1187,6 +1195,7 @@ export class TabManager implements RunHost {
   }
 
   private renderStatus(): void {
+    this.onChange();
     // The status bar shows a stopped server only while a tab still wants it
     // (02-08), so it needs to know which languages are open.
     this.ui.status.servers.setLanguages(
