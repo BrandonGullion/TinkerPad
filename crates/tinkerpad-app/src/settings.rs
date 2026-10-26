@@ -59,15 +59,20 @@ impl std::fmt::Display for Problem {
 }
 
 /// Create `settings.toml` with its commented template if it isn't there.
-pub fn ensure_exists(data_dir: &Path) {
+///
+/// Returns whether it wasn't: the file is written on the very first launch and
+/// never removed, so its absence is how the app knows this is the first time
+/// (work item 04-12 opens the library panel then, and only then).
+pub fn ensure_exists(data_dir: &Path) -> bool {
     let file = path(data_dir);
     if file.exists() {
-        return;
+        return false;
     }
     match std::fs::write(&file, TEMPLATE) {
         Ok(()) => info!(file = %file.display(), "created settings file"),
         Err(error) => warn!(file = %file.display(), %error, "could not create settings file"),
     }
+    true
 }
 
 /// Read a settings file. A missing file is the defaults; an unreadable one is
@@ -120,6 +125,11 @@ pub fn write(file: &Path, settings: &Settings) -> std::io::Result<()> {
             .root
             .as_ref()
             .map(|root| value(root.to_string_lossy().replace('\\', "/"))),
+    );
+    set(
+        &mut doc,
+        &["library", "side"],
+        (settings.library.side != defaults.library.side).then(|| value(&settings.library.side)),
     );
     set(
         &mut doc,
@@ -446,9 +456,9 @@ mod tests {
     #[test]
     fn the_template_is_written_once_and_left_alone() {
         let dir = scratch("template");
-        ensure_exists(&dir);
+        assert!(ensure_exists(&dir), "the first launch is told it is one");
         std::fs::write(path(&dir), "theme = \"dark\"\n").unwrap();
-        ensure_exists(&dir);
+        assert!(!ensure_exists(&dir), "and no launch after it is");
         assert_eq!(
             std::fs::read_to_string(path(&dir)).unwrap(),
             "theme = \"dark\"\n",
@@ -475,6 +485,8 @@ mod tests {
         // Switching tool offers off has to reach the file, or the setting is
         // one the window forgets the moment it is set (work item 04-08b).
         settings.tools.acquire = "never".to_owned();
+        // And so does moving the library panel (work item 04-12).
+        settings.library.side = "right".to_owned();
         settings
             .toolchains
             .entry("python".to_owned())
@@ -491,6 +503,7 @@ mod tests {
         assert!(text.contains(r#"prewarm = ["rust"]"#), "{text}");
         assert!(text.contains(r#"python3 = "/usr/bin/python3""#), "{text}");
         assert!(text.contains(r#"acquire = "never""#), "{text}");
+        assert!(text.contains(r#"side = "right""#), "{text}");
         assert!(
             !text.contains("\nclear_output"),
             "a default is left commented out:\n{text}"
@@ -505,9 +518,11 @@ mod tests {
         settings.editor.font_size = 13;
         settings.toolchains.clear();
         settings.tools.acquire = "ask".to_owned();
+        settings.library.side = "left".to_owned();
         write(&file, &settings).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(!text.contains("font_size = 16"), "{text}");
+        assert!(!text.contains("\nside = "), "{text}");
         assert!(
             !text.contains(
                 "

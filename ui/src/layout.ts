@@ -5,6 +5,8 @@ import { ToolsPanel } from "./tools";
 
 const SPLIT_KEY = "tinkerpad.split";
 const SIDE_KEY = "tinkerpad.sidebar";
+/** Whether the panel was open: per machine, like its width (04-12). */
+const SIDE_OPEN_KEY = "tinkerpad.sidebar.open";
 const MIN_PX = 80;
 const SIDE_MIN_PX = 180;
 const SIDE_MAX_PX = 560;
@@ -26,7 +28,7 @@ function save(key: string, value: string): void {
 }
 
 export interface Layout {
-  /** Where the library panel mounts, to the left of everything (04-01). */
+  /** Where the library panel mounts, beside everything else (04-01, 04-12). */
   sidebar: Sidebar;
   /** The row of buttons above the tabs (04-11). */
   toolbarHost: HTMLElement;
@@ -42,11 +44,22 @@ export interface Layout {
   statusBar: StatusBar;
 }
 
-/** The left-hand panel: a host to mount in, and whether it is showing. */
+export type Side = "left" | "right";
+
+/**
+ * The library's panel: a host to mount in, whether it is showing, and which
+ * side of the window it is on (work item 04-12).
+ */
 export interface Sidebar {
   host: HTMLElement;
   visible(): boolean;
-  setVisible(visible: boolean): void;
+  /** Show or hide it, and (unless told not to) remember which for next time. */
+  setVisible(visible: boolean, remember?: boolean): void;
+  /** Whether it was open when it was last shown or hidden; null if never. */
+  remembered(): boolean | null;
+  side(): Side;
+  /** Put it on the left or the right. Its width stays the same. */
+  setSide(side: Side): void;
   /** Called after it is shown or hidden, however that happened. */
   onChange(listener: () => void): void;
 }
@@ -103,32 +116,74 @@ export function createLayout(root: HTMLElement): Layout {
     Math.max(Number(load(SIDE_KEY)) || 280, SIDE_MIN_PX),
     SIDE_MAX_PX,
   );
+  // Which side it is on. The panel and its splitter move in the DOM, not just
+  // on screen, so Tab and a screen reader meet them in the order they are
+  // seen. The workspace never moves, so the editor keeps its state.
+  let side: Side = "left";
   const applySide = () => {
+    shell.classList.toggle("side-right", side === "right");
+    const gap = `${sideSplitter.offsetWidth || 5}px`;
     shell.style.gridTemplateColumns = sidebarHost.hidden
       ? "1fr"
-      : `${sideWidth}px ${sideSplitter.offsetWidth || 5}px 1fr`;
+      : side === "left"
+        ? `${sideWidth}px ${gap} 1fr`
+        : `1fr ${gap} ${sideWidth}px`;
   };
   const sideListeners: (() => void)[] = [];
+  const changed = () => {
+    for (const listener of sideListeners) listener();
+  };
   const sidebar: Sidebar = {
     host: sidebarHost,
     visible: () => !sidebarHost.hidden,
-    setVisible(visible) {
+    setVisible(visible, remember = true) {
       sidebarHost.hidden = !visible;
       sideSplitter.hidden = !visible;
+      if (remember) save(SIDE_OPEN_KEY, visible ? "1" : "0");
       applySide();
-      for (const listener of sideListeners) listener();
+      changed();
+    },
+    remembered() {
+      const value = load(SIDE_OPEN_KEY);
+      return value === null ? null : value === "1";
+    },
+    side: () => side,
+    setSide(next) {
+      if (next === side) return;
+      side = next;
+      // Moving the element that has the focus drops it; give it back.
+      const focused = document.activeElement;
+      if (side === "left") shell.prepend(sidebarHost, sideSplitter);
+      else shell.append(sideSplitter, sidebarHost);
+      if (focused instanceof HTMLElement && document.activeElement !== focused) focused.focus();
+      applySide();
+      changed();
     },
     onChange: (listener) => sideListeners.push(listener),
   };
+  // Shown at once when it was open last time, so it doesn't pop in later.
+  if (sidebar.remembered() === true) {
+    sidebarHost.hidden = false;
+    sideSplitter.hidden = false;
+  }
   applySide();
 
   sideSplitter.addEventListener("pointerdown", (down) => {
     down.preventDefault();
-    sideSplitter.setPointerCapture(down.pointerId);
+    // A pointer the browser has no record of (a self-test's) can't be
+    // captured; the drag still works without it.
+    try {
+      sideSplitter.setPointerCapture(down.pointerId);
+    } catch {
+      // Nothing to capture.
+    }
     sideSplitter.classList.add("dragging");
-    const left = shell.getBoundingClientRect().left;
+    // Measured from the edge the panel is against: on the right, dragging
+    // right makes it narrower.
+    const box = shell.getBoundingClientRect();
     const move = (e: PointerEvent) => {
-      sideWidth = Math.min(Math.max(e.clientX - left, SIDE_MIN_PX), SIDE_MAX_PX);
+      const width = side === "left" ? e.clientX - box.left : box.right - e.clientX;
+      sideWidth = Math.min(Math.max(width, SIDE_MIN_PX), SIDE_MAX_PX);
       applySide();
     };
     const up = () => {

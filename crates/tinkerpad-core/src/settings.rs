@@ -40,12 +40,29 @@ pub struct Settings {
     pub helpers: BTreeMap<String, ServiceOverride>,
 }
 
-/// Where playgrounds live.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Where playgrounds live, and where the panel listing them sits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
 pub struct LibrarySettings {
     /// Absent means `TinkerPad` in the user's home folder.
     pub root: Option<PathBuf>,
+    /// `left` or `right`: which side of the window the library panel is on
+    /// (work item 04-12). Anything else is read as `left`.
+    pub side: String,
+}
+
+impl LibrarySettings {
+    /// Where it has always been, so nothing moves for anyone who had it.
+    pub const DEFAULT_SIDE: &'static str = "left";
+}
+
+impl Default for LibrarySettings {
+    fn default() -> Self {
+        Self {
+            root: None,
+            side: Self::DEFAULT_SIDE.to_owned(),
+        }
+    }
 }
 
 /// The editor.
@@ -210,6 +227,8 @@ pub const TEMPLATE: &str = r#"# TinkerPad settings.
 [library]
 # Where playgrounds are stored. Default: a TinkerPad folder in your home folder.
 # root = "D:/Code/TinkerPad"
+# Which side of the window the library panel is on: "left" or "right".
+# side = "left"
 
 # Program overrides per plugin. When set, TinkerPad uses this path instead of
 # searching PATH, both when checking the toolchain and when running code.
@@ -257,6 +276,7 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.theme, "system");
         assert_eq!(settings.library.root, None);
+        assert_eq!(settings.library.side, "left");
         assert_eq!(settings.font_size(), 13);
         assert_eq!(settings.tab_size(), 2);
         assert!(settings.run.clear_output);
@@ -308,6 +328,7 @@ mod tests {
             },
             library: LibrarySettings {
                 root: Some(PathBuf::from("D:/Code/TinkerPad")),
+                ..LibrarySettings::default()
             },
             lsp: LspSettings {
                 prewarm: vec!["typescript".to_owned()],

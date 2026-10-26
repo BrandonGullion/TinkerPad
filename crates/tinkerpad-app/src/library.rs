@@ -82,6 +82,39 @@ pub fn change_root(
     Ok(root.to_string_lossy().into_owned())
 }
 
+/// The library folder as the panel's header shows it, and the folders in it
+/// that can't be opened (work item 04-12).
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryInfo {
+    pub root: PathBuf,
+    /// `root`, with the home folder written `~`.
+    pub display: String,
+    pub broken: Vec<tinkerpad_core::BrokenPlayground>,
+}
+
+pub fn info(library: &Library, home: Option<&Path>) -> LibraryInfo {
+    let root = library.root();
+    LibraryInfo {
+        display: shorten(&root, home),
+        broken: library.broken(),
+        root,
+    }
+}
+
+/// `C:\Users\me\TinkerPad` as `~/TinkerPad`: short enough for a panel header,
+/// and the same on every OS. Anywhere outside the home folder is left whole.
+fn shorten(path: &Path, home: Option<&Path>) -> String {
+    let rest = home
+        .filter(|home| !home.as_os_str().is_empty())
+        .and_then(|home| path.strip_prefix(home).ok());
+    match rest {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~/{}", rest.to_string_lossy().replace('\\', "/")),
+        None => path.to_string_lossy().into_owned(),
+    }
+}
+
 /// Start watching the library, forwarding changes to the UI.
 pub fn watch(library: &Arc<Library>, events: Arc<EventBus>) -> Option<Watcher> {
     let result = library.watch(move |event| {
@@ -273,7 +306,7 @@ fn renaming_error(name: &str, program: Option<&str>) -> CommandError {
 
 pub fn to_command_error(error: LibraryError) -> CommandError {
     let code = match &error {
-        LibraryError::NotFound(_) => ErrorCode::NotFound,
+        LibraryError::NotFound(_) | LibraryError::NotBroken(_) => ErrorCode::NotFound,
         LibraryError::InvalidName(_) => ErrorCode::InvalidInput,
         LibraryError::Io { .. }
         | LibraryError::Trash { .. }
@@ -286,6 +319,20 @@ pub fn to_command_error(error: LibraryError) -> CommandError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_library_folder_is_shortened_under_home_only() {
+        let home = std::env::temp_dir().join("someone");
+        assert_eq!(shorten(&home.join("TinkerPad"), Some(&home)), "~/TinkerPad");
+        assert_eq!(shorten(&home.join("a").join("b"), Some(&home)), "~/a/b");
+        assert_eq!(shorten(&home, Some(&home)), "~");
+        let elsewhere = std::env::temp_dir().join("elsewhere");
+        assert_eq!(
+            shorten(&elsewhere, Some(&home)),
+            elsewhere.to_string_lossy()
+        );
+        assert_eq!(shorten(&elsewhere, None), elsewhere.to_string_lossy());
+    }
 
     #[test]
     fn a_program_is_named_rather_than_pathed() {

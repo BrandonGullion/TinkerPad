@@ -27,6 +27,7 @@ import { maybeRunSelftest, type SelftestContext } from "./selftest";
 import { TabManager } from "./tabs";
 import { toast } from "./toast";
 import { ICONS, Toolbar } from "./toolbar";
+import type { Settings } from "./protocol";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -63,6 +64,8 @@ const library = new LibraryPanel(layout.sidebar, {
   closed: (id) => tabs.closed(id),
   moved: (id) => void tabs.languageMoved(id),
   languageName: (id) => tabs.languageName(id),
+  changeFolder: () => void openSettings(settingsHost, "library"),
+  switchSide: () => void runCommand("view.librarySide"),
 });
 
 /** The update the launch check found, if any (work item 04-06). */
@@ -90,13 +93,16 @@ window.addEventListener("tinkerpad:open-settings", () => void openSettings(setti
 
 /** What settings change in the window itself (work item 04-02). */
 const settingsHost = {
-  applyEditor: (settings: import("./protocol").Settings) => {
+  applyEditor: (settings: Settings) => {
     editor.applySettings(
       settings.editor.font_size,
       settings.editor.font_family,
       settings.editor.tab_size,
     );
     applyTheme(themeName(settings.theme));
+    // Which side the library is on is a preference, so it lives here; whether
+    // it is open is per machine, and lives with its width (04-12).
+    layout.sidebar.setSide(settings.library.side === "right" ? "right" : "left");
   },
   libraryMoved: async (_root: string) => {
     // Every open tab belongs to the folder that was there before.
@@ -137,6 +143,7 @@ if (import.meta.env.DEV) {
 function registerEverything(): void {
   const text = () => (tabs.activeTab ? tabs.textOf(tabs.activeTab) : editor.text);
   registerCondition("playground", () => tabs.activePlayground() !== null);
+  registerCondition("libraryList", () => library.listFocused);
   registerCommands({
     "run.start": () => void runs.run(tabs.activeId, text()),
     "run.cancel": () => void runs.cancel(),
@@ -149,6 +156,7 @@ function registerEverything(): void {
     "playground.open": () => void tabs.quickOpen(),
     "playground.rename": () => tabs.startRename(),
     "playground.addPackage": () => void tabs.addPackage(),
+    "library.delete": () => void library.deleteSelected(),
 
     "tab.close": () => void tabs.closeActive(),
     "tab.next": () => tabs.cycle(1),
@@ -159,6 +167,8 @@ function registerEverything(): void {
     "go.back": () => jumpBack(tabs),
 
     "view.library": () => library.toggle(),
+    "view.librarySide": () => void switchLibrarySide(),
+    "view.libraryFolder": () => void invoke("reveal_library").catch(() => {}),
     "view.commands": () => void openCommandPalette(),
     "view.tools": () => statusBar.tools.toggle(),
     "view.plugins": () => void plugins.toggle(),
@@ -181,7 +191,14 @@ registerEverything();
 const toolbar = new Toolbar(
   layout.toolbarHost,
   [
-    { command: "view.library", label: "Explorer", icon: ICONS.explorer, pressed: () => library.visible },
+    {
+      command: "view.library",
+      label: "Explorer",
+      icon: ICONS.explorer,
+      pressed: () => library.visible,
+      // On the panel's side of the window (04-12).
+      trailing: () => layout.sidebar.side() === "right",
+    },
     { command: "playground.new", label: "New", icon: ICONS.newFile },
     { command: "playground.newOfKind", label: "New in…", icon: ICONS.newFileIn },
     {
@@ -200,6 +217,19 @@ layout.sidebar.onChange(() => toolbar.render());
 onBindingsChanged(() => editor.applyBindings());
 onBindingsChanged(() => toolbar.render());
 void watchKeybindings();
+
+/**
+ * Put the library panel on the other side (04-12). Through the settings file,
+ * like every other preference: the watcher then applies it, the same way it
+ * would an edit made by hand.
+ */
+async function switchLibrarySide(): Promise<void> {
+  const settings = await invoke<Settings>("get_settings");
+  const side = layout.sidebar.side() === "left" ? "right" : "left";
+  await invoke("save_settings", { settings: { ...settings, library: { ...settings.library, side } } }).catch(
+    (e: { message?: string }) => toast("error", e.message ?? "Couldn't save your settings."),
+  );
+}
 
 /**
  * Keep runs off plugin helpers for the rest of the session, or let them back
@@ -341,6 +371,19 @@ subscribe((env) => {
 await ready();
 await invoke("ping");
 
+// The library panel: open on the very first launch, so a new user sees where
+// their playgrounds are; after that, however it was left (04-12). A machine
+// that has run TinkerPad before but never remembered the panel keeps it
+// closed, as it always was.
+const selftest = await invoke<string | null>("selftest_scenario");
+if (layout.sidebar.remembered() === null) {
+  const first = await invoke<boolean>("first_launch").catch(() => false);
+  if (first) library.show();
+  else layout.sidebar.setVisible(false);
+} else if (library.visible) {
+  void library.refresh();
+}
+
 // The language servers in the status bar refresh themselves from here on.
 statusBar.servers.start();
 // And what each language needs, which only changes when a check does.
@@ -355,7 +398,6 @@ runs.onFailed = (playground) => {
 
 // Self-tests start from no tabs (unless they're testing session restore);
 // normal launches reopen the last session.
-const selftest = await invoke<string | null>("selftest_scenario");
 if (!selftest || selftest.split(",").includes("session-restore")) {
   await tabs.restoreSession().catch(() => tabs.showEmpty());
 } else {
@@ -371,6 +413,8 @@ const context: SelftestContext = {
   runs,
   status: statusBar,
   tabs,
+  library,
+  sidebar: layout.sidebar,
   handleGlobalKey,
 };
 await maybeRunSelftest(context);

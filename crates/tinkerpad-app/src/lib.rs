@@ -86,6 +86,9 @@ pub struct AppState {
     open: Mutex<BTreeSet<tinkerpad_core::PlaygroundId>>,
     /// Notices raised before the UI was listening, delivered on its first `ping`.
     startup_notices: Mutex<Vec<(Level, String)>>,
+    /// Whether this launch wrote `settings.toml` for the first time: the
+    /// library panel starts open then (work item 04-12).
+    first_launch: bool,
 }
 
 impl AppState {
@@ -365,6 +368,82 @@ mod commands {
                     format!("Couldn't show {}: {e}", playground.dir.display()),
                 )
             })
+    }
+
+    /// The library folder and what in it can't be opened, for the panel's
+    /// header and its list (work item 04-12).
+    #[tauri::command(async)]
+    pub fn library_info(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+    ) -> crate::library::LibraryInfo {
+        let home = app.path().home_dir().ok();
+        crate::library::info(&state.library, home.as_deref())
+    }
+
+    /// Open the library folder itself in the system file manager.
+    #[tauri::command(async)]
+    pub fn reveal_library(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+    ) -> Result<(), CommandError> {
+        use tauri_plugin_opener::OpenerExt;
+        let root = state.library.root();
+        app.opener()
+            .open_path(root.to_string_lossy(), None::<&str>)
+            .map_err(|e| {
+                CommandError::new(
+                    tinkerpad_core::ErrorCode::Io,
+                    format!("Couldn't show {}: {e}", root.display()),
+                )
+            })
+    }
+
+    /// Show a broken playground's folder, with its `playground.toml` selected.
+    /// Only folders the library lists as broken (work item 04-12).
+    #[tauri::command(async)]
+    pub fn reveal_broken_playground(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+        dir: std::path::PathBuf,
+    ) -> Result<(), CommandError> {
+        use tauri_plugin_opener::OpenerExt;
+        if !state.library.broken().iter().any(|b| b.dir == dir) {
+            return Err(crate::library::to_command_error(
+                tinkerpad_library::LibraryError::NotBroken(dir),
+            ));
+        }
+        app.opener()
+            .reveal_item_in_dir(dir.join(tinkerpad_library::METADATA_FILE))
+            .map_err(|e| {
+                CommandError::new(
+                    tinkerpad_core::ErrorCode::Io,
+                    format!("Couldn't show {}: {e}", dir.display()),
+                )
+            })
+    }
+
+    /// Move a broken playground's folder to the OS recycle bin (work item
+    /// 04-12). Nothing has it open: it never had a tab or a language server.
+    #[tauri::command(async)]
+    pub fn delete_broken_playground(
+        state: State<'_, AppState>,
+        dir: std::path::PathBuf,
+    ) -> Result<(), CommandError> {
+        state
+            .library
+            .delete_broken(&dir)
+            .map_err(crate::library::to_command_error)?;
+        state
+            .events
+            .publish(tinkerpad_core::Scope::App, CoreEvent::LibraryChanged);
+        Ok(())
+    }
+
+    /// Whether this is the first time TinkerPad has run on this machine.
+    #[tauri::command]
+    pub fn first_launch(state: State<'_, AppState>) -> bool {
+        state.first_launch
     }
 
     /// Move a playground's folder to the OS recycle bin.
@@ -1133,7 +1212,7 @@ pub fn run() {
 
             let (registry, mut startup_notices) = plugins::load(app.handle())?;
 
-            settings::ensure_exists(&data_dir);
+            let first_launch = settings::ensure_exists(&data_dir);
             let live_settings = settings::Live::open(settings::path(&data_dir), bus.clone());
             keys::ensure_exists(&data_dir);
             let live_keys = keys::Live::open(keys::path(&data_dir), bus.clone());
@@ -1177,6 +1256,7 @@ pub fn run() {
                 _library_watcher: Mutex::new(library_watcher),
                 open: Mutex::default(),
                 startup_notices: Mutex::new(startup_notices),
+                first_launch,
             });
 
             // The window's own background, from the theme the settings name,
@@ -1245,6 +1325,11 @@ pub fn run() {
             commands::set_pinned,
             commands::duplicate_playground,
             commands::reveal_playground,
+            commands::library_info,
+            commands::reveal_library,
+            commands::reveal_broken_playground,
+            commands::delete_broken_playground,
+            commands::first_launch,
             commands::read_source,
             commands::open_readonly,
             commands::write_source,

@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tinkerpad_core::{KindId, LanguageId, PlaygroundId};
-use tinkerpad_library::{Library, LibraryEvent, METADATA_FILE, NewPlayground};
+use tinkerpad_library::{Library, LibraryError, LibraryEvent, METADATA_FILE, NewPlayground};
 
 struct Scratch(PathBuf);
 
@@ -324,6 +324,60 @@ fn delete_moves_to_trash() {
     assert!(!p.dir.exists());
     assert!(lib.get(&p.id).is_none());
     assert!(lib.delete(&p.id).is_err(), "already gone");
+}
+
+/// Only a folder the index holds as broken can be sent to the trash by folder,
+/// whatever path the window asks with (work item 04-12). No trash needed: every
+/// one of these is refused before anything is moved.
+#[test]
+fn only_a_broken_folder_is_deleted_by_folder() {
+    let s = Scratch::new("broken-refused");
+    std::fs::create_dir_all(s.0.join("notes")).unwrap();
+    let lib = Library::open(&s.0).unwrap();
+    let good = lib.create(new("Good")).unwrap();
+
+    for dir in [
+        s.0.join("notes"),
+        good.dir.clone(),
+        s.0.clone(),
+        s.0.join("missing"),
+    ] {
+        assert!(
+            matches!(lib.delete_broken(&dir), Err(LibraryError::NotBroken(_))),
+            "{} was not refused",
+            dir.display()
+        );
+        assert!(
+            dir == s.0.join("missing") || dir.exists(),
+            "{} was touched",
+            dir.display()
+        );
+    }
+    assert!(lib.get(&good.id).is_some());
+}
+
+/// A broken playground goes to the trash and out of the listing.
+#[test]
+fn a_broken_playground_can_be_deleted() {
+    if std::env::var_os("TINKERPAD_TEST_TRASH").is_none() {
+        eprintln!("skipping: set TINKERPAD_TEST_TRASH=1 to test the recycle bin");
+        return;
+    }
+    let s = Scratch::new("broken-trash");
+    let dir = s.0.join("broken");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(METADATA_FILE), "id = \"nope\"\n").unwrap();
+    let lib = Library::open(&s.0).unwrap();
+    assert_eq!(lib.broken().len(), 1);
+
+    lib.delete_broken(&dir).unwrap();
+    assert!(!dir.exists());
+    assert!(lib.broken().is_empty());
+    assert!(lib.list().broken.is_empty());
+    assert!(
+        matches!(lib.delete_broken(&dir), Err(LibraryError::NotBroken(_))),
+        "already gone"
+    );
 }
 
 #[test]

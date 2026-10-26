@@ -73,6 +73,17 @@ export const CATALOG = [
     category: "Playground",
     when: "playground",
   },
+  // In the library panel's list only, never its search box (work item 04-12).
+  // Delete as on Windows and Linux, Mod+Backspace as in Finder; both work
+  // everywhere, since only one of them is on any given keyboard's mind.
+  {
+    id: "library.delete",
+    title: "Move selected playground to the trash",
+    category: "Playground",
+    key: ["delete", "mod+backspace"],
+    when: "libraryList",
+    hidden: true,
+  },
 
   // ---- tabs ----------------------------------------------------------------
   { id: "tab.close", title: "Close tab", category: "Tabs", key: "mod+w" },
@@ -98,6 +109,8 @@ export const CATALOG = [
 
   // ---- the window ----------------------------------------------------------
   { id: "view.library", title: "Library panel", category: "View", key: "mod+b" },
+  { id: "view.librarySide", title: "Move library to other side", category: "View" },
+  { id: "view.libraryFolder", title: "Open library folder", category: "View" },
   { id: "view.commands", title: "Commands…", category: "View", key: "mod+shift+p" },
   { id: "view.tools", title: "What each language needs", category: "View" },
   { id: "view.plugins", title: "Plugins…", category: "View" },

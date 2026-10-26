@@ -34,8 +34,10 @@ start means no migration later and means users can `git init` their library.
 - [x] `notify` watcher on the root: a folder added or removed outside the app shows
       up within a second; edits to `main.*` outside the app while it's open in a tab
       raise a `SourceChangedOnDisk` event (the UI handles it in 01-12).
-- [ ] Folders without a `playground.toml` are ignored silently. A malformed
+- [x] Folders without a `playground.toml` are ignored silently. A malformed
       `playground.toml` is logged and the folder shown with a warning badge.
+      (The badge came with 04-12: the library panel lists broken folders under
+      "Can't be opened", with the problem as a tooltip.)
 - [x] Tests run against a temp dir: create/list/rename/delete round-trip; watcher
       picks up an external create.
 

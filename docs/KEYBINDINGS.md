@@ -35,6 +35,7 @@ binding meant for one platform only.
 | Open playground… | ⌘O | Ctrl+O | `playground.open` |
 | Rename playground | F2 | F2 | `playground.rename` |
 | Add package… | — | — | `playground.addPackage` |
+| Move selected playground to the trash | Delete / ⌘Backspace | Delete / Ctrl+Backspace | `library.delete` |
 
 ## Tabs
 
@@ -57,6 +58,8 @@ binding meant for one platform only.
 | Command | macOS | Windows and Linux | Id |
 |---|---|---|---|
 | Library panel | ⌘B | Ctrl+B | `view.library` |
+| Move library to other side | — | — | `view.librarySide` |
+| Open library folder | — | — | `view.libraryFolder` |
 | Commands… | ⇧⌘P | Ctrl+Shift+P | `view.commands` |
 | What each language needs | — | — | `view.tools` |
 | Plugins… | — | — | `view.plugins` |

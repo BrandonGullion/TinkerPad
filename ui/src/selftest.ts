@@ -17,12 +17,14 @@ import { CHUNK_ROWS } from "./dump/table";
 import { TREE_PAGE } from "./dump/tree";
 import type { Editor } from "./editor";
 import { invoke, subscribe } from "./ipc";
-import type { StatusBar } from "./layout";
+import type { Sidebar, StatusBar } from "./layout";
+import { type LibraryPanel, TRASH } from "./library";
 import { LOCKED_HINT, MISMATCH_NOTE, openPlayground } from "./playground";
 import type { OutputPane } from "./output";
 import type {
   LanguageNeeds,
   LanguageToolchain,
+  LibraryInfo,
   Listing,
   Peek,
   Playground,
@@ -44,6 +46,8 @@ export interface SelftestContext {
   runs: RunController;
   status: StatusBar;
   tabs: TabManager;
+  library: LibraryPanel;
+  sidebar: Sidebar;
   /** The app's global shortcut handler, for pressing keys without the OS. */
   handleGlobalKey: (e: KeyboardEvent) => boolean;
 }
@@ -73,20 +77,35 @@ export async function maybeRunSelftest(ctx: SelftestContext): Promise<void> {
   const scenario = await invoke<string | null>("selftest_scenario");
   if (!scenario) return;
 
-  let failures = 0;
+  // A scenario that reloaded the window carries on where it left off, with
+  // the failures counted so far (work item 04-12).
+  const resume = readResume();
+  let failures = resume?.failures ?? 0;
   const check: Check = async (name, ok, detail = "") => {
     if (!ok) failures++;
     await report(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` (${detail})` : ""}`);
   };
 
-  for (const name of scenario.split(",").map((s) => s.trim())) {
+  const names = scenario.split(",").map((s) => s.trim());
+  const from = resume ? Math.max(names.indexOf(resume.scenario), 0) : 0;
+  // Every scenario starts with the library panel shut, whatever this machine
+  // remembers, without changing what it remembers (04-12).
+  if (!resume) ctx.sidebar.setVisible(false, false);
+
+  for (const name of names.slice(from)) {
     try {
       const run = SCENARIOS[name];
       if (!run) {
         await check(`unknown scenario ${name}`, false);
         continue;
       }
-      await report(`scenario ${name}`);
+      resumed = resume?.scenario === name ? resume.phase : 0;
+      reloadInto = (phase) => {
+        writeResume({ scenario: name, phase, failures });
+        location.reload();
+        return new Promise<never>(() => {});
+      };
+      await report(resumed ? `scenario ${name} (after reload ${resumed})` : `scenario ${name}`);
       await run(ctx, check);
     } catch (e) {
       await check(`${name} threw`, false, String(e));
@@ -96,6 +115,31 @@ export async function maybeRunSelftest(ctx: SelftestContext): Promise<void> {
 }
 
 type Check = (name: string, ok: boolean, detail?: string) => Promise<void>;
+
+/**
+ * Reloading the window mid-scenario (work item 04-12). `reloadInto(n)` reloads
+ * and runs the same scenario again with `resumed` set to `n`, so it can check
+ * what survived; the scenarios before it aren't run twice. The note lives in
+ * sessionStorage, which a reload keeps and a new launch doesn't.
+ */
+const RESUME_KEY = "tinkerpad.selftest.resume";
+type Resume = { scenario: string; phase: number; failures: number };
+let resumed = 0;
+let reloadInto: (phase: number) => Promise<never> = () => Promise.reject(new Error("no scenario"));
+
+function readResume(): Resume | null {
+  try {
+    const raw = sessionStorage.getItem(RESUME_KEY);
+    sessionStorage.removeItem(RESUME_KEY);
+    return raw ? (JSON.parse(raw) as Resume) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeResume(resume: Resume): void {
+  sessionStorage.setItem(RESUME_KEY, JSON.stringify(resume));
+}
 
 async function layoutScenario(ctx: SelftestContext, check: Check) {
   const { editor, runs } = ctx;
@@ -3478,7 +3522,8 @@ async function libraryPanelScenario(ctx: SelftestContext, check: Check) {
   await check(
     "right-clicking offers open, rename, tags, pin, duplicate, reveal and delete",
     // A pinned one says Unpin, so match without minding the case.
-    ["open", "rename", "tags", "pin", "duplicate", "file explorer", "recycle bin"].every((label) =>
+    // The trash is called what the OS calls it (04-12).
+    ["open", "rename", "tags", "pin", "duplicate", "file explorer", TRASH.toLowerCase()].every((label) =>
       offered.some((item) => item.toLowerCase().includes(label)),
     ),
     JSON.stringify(offered),
@@ -4592,6 +4637,269 @@ async function openTestPlayground(
 }
 
 /**
+ * The library as an explorer, on either side (work item 04-12): the folder in
+ * the header, the panel moved to the right and dragged there, broken
+ * playgrounds listed, Delete on the list, and what a reload keeps.
+ *
+ * Reloads the window twice. Everything it changes — the side in
+ * settings.toml, the panel's remembered width and open state — is put back at
+ * the end, because self-tests run against the real app-data folder.
+ */
+async function libraryExplorerScenario(ctx: SelftestContext, check: Check) {
+  const { tabs, sidebar } = ctx;
+  const NOTE = "tinkerpad.selftest.explorer";
+  type Note = { side: string; open: string | null; width: string | null; made: string[]; dragged: number };
+  const stored = (key: string) => localStorage.getItem(key);
+  const restore = (key: string, value: string | null) =>
+    value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value);
+
+  const shell = () => document.querySelector<HTMLElement>(".shell")!;
+  const panel = () => document.querySelector<HTMLElement>(".sidebar")!;
+  const splitter = () => document.querySelector<HTMLElement>(".side-splitter")!;
+  const workspace = () => document.querySelector<HTMLElement>(".workspace")!;
+  const list = () => document.querySelector<HTMLElement>(".library-list")!;
+  const search = () => document.querySelector<HTMLInputElement>(".library-search")!;
+  const rows = () => [...document.querySelectorAll<HTMLElement>(".library-row")];
+  const selected = () => rows().find((r) => r.classList.contains("selected"))?.dataset.id;
+  const width = () => Math.round(panel().getBoundingClientRect().width);
+  const pickerTitle = () => document.querySelector(".picker-title")?.textContent ?? "";
+  const pickerItems = () => [...document.querySelectorAll(".picker-item")].map((i) => i.textContent ?? "");
+  const setSide = async (side: string) => {
+    const settings = await invoke<Settings>("get_settings");
+    await invoke("save_settings", { settings: { ...settings, library: { ...settings.library, side } } });
+    await until(() => sidebar.side() === side, 5000);
+    await frame();
+  };
+  const type = async (text: string) => {
+    search().value = text;
+    search().dispatchEvent(new Event("input"));
+    await untilAsync(async () => true, 100);
+    await frame();
+  };
+  /** Drag the splitter to `x`, with pointer events dispatched in the page. */
+  const drag = async (x: number) => {
+    const from = splitter().getBoundingClientRect().left + 2;
+    const at = (kind: string, clientX: number) =>
+      splitter().dispatchEvent(
+        new PointerEvent(kind, { clientX, clientY: 200, pointerId: 7, bubbles: true, cancelable: true }),
+      );
+    at("pointerdown", from);
+    at("pointermove", x);
+    at("pointerup", x);
+    await frame();
+  };
+
+  if (resumed === 0) {
+    for (const t of [...tabs.tabs]) await tabs.close(t);
+    const before = await invoke<Settings>("get_settings");
+    const info = await invoke<LibraryInfo>("library_info");
+    const note: Note = {
+      side: before.library.side,
+      open: stored("tinkerpad.sidebar.open"),
+      width: stored("tinkerpad.sidebar"),
+      made: [],
+      dragged: 0,
+    };
+    sessionStorage.setItem(NOTE, JSON.stringify(note));
+    if (sidebar.side() !== "left") await setSide("left");
+
+    // The header says which folder this is.
+    ctx.library.toggle(true);
+    const path = () => document.querySelector<HTMLElement>(".library-folder-path");
+    await until(() => (path()?.textContent ?? "") !== "", 5000);
+    await check(
+      "the panel names its folder, shortened, with the full path on hover",
+      path()?.textContent === info.display &&
+        path()?.title === info.root &&
+        !!document.querySelector(".library-folder-open") &&
+        !!document.querySelector(".library-folder-change") &&
+        !!document.querySelector(".library-side"),
+      JSON.stringify({ shown: path()?.textContent, title: path()?.title, info: info.display }),
+    );
+    await check(
+      "on the left, the panel comes first",
+      shell().firstElementChild === panel() &&
+        panel().getBoundingClientRect().right <= workspace().getBoundingClientRect().left + 1,
+    );
+
+    // Change folder opens Settings at the folder, where the side is too.
+    document.querySelector<HTMLButtonElement>(".library-folder-change")!.click();
+    await until(() => document.activeElement?.classList.contains("settings-library-change") ?? false, 5000);
+    const labels = [...document.querySelectorAll(".settings-label")].map((l) => l.textContent);
+    await check(
+      "Change folder opens Settings at the library folder, next to the panel's side",
+      document.activeElement?.classList.contains("settings-library-change") === true &&
+        labels.includes("Panel side"),
+      JSON.stringify({ focused: document.activeElement?.className, labels }),
+    );
+    pressKey("Escape");
+    await until(() => document.querySelector(".settings") === null, 3000);
+
+    // The header's button moves it, through settings.toml.
+    document.querySelector<HTMLButtonElement>(".library-side")!.click();
+    await until(() => sidebar.side() === "right", 5000);
+    await frame();
+    const saved = await invoke<Settings>("get_settings");
+    await check(
+      "the header's button moves the panel to the right, by saving it in settings",
+      saved.library.side === "right" &&
+        sidebar.side() === "right" &&
+        (document.querySelector<HTMLElement>(".library-side")?.title ?? "").includes("left"),
+      JSON.stringify({ saved: saved.library.side, now: sidebar.side() }),
+    );
+    const [ws, sp, sb] = [workspace(), splitter(), panel()].map((el) => el.getBoundingClientRect());
+    await check(
+      "on the right, the splitter sits between the workspace and the panel, in the DOM too",
+      shell().lastElementChild === panel() &&
+        panel().previousElementSibling === splitter() &&
+        ws!.right <= sp!.left + 1 &&
+        sp!.right <= sb!.left + 1,
+      JSON.stringify({ ws: ws!.right, sp: [sp!.left, sp!.right], sb: sb!.left }),
+    );
+    const last = document.querySelector<HTMLElement>(".toolbar")?.lastElementChild as HTMLElement | null;
+    await check(
+      "and the Explorer button moves to the right end of the toolbar",
+      last?.dataset.command === "view.library" && last.classList.contains("toolbar-trailing"),
+      last?.dataset.command ?? "none",
+    );
+
+    // Dragging right makes a right-hand panel narrower.
+    await drag(shell().getBoundingClientRect().right - 300 - 3);
+    const wide = width();
+    await drag(splitter().getBoundingClientRect().left + 2 + 40);
+    const narrow = width();
+    note.dragged = narrow;
+    await check(
+      "dragging the splitter right makes a right-hand panel narrower, and the width is kept",
+      Math.abs(wide - 300) <= 3 &&
+        Math.abs(narrow - (wide - 40)) <= 3 &&
+        Math.abs(Number(stored("tinkerpad.sidebar")) - narrow) <= 1,
+      JSON.stringify({ wide, narrow, stored: stored("tinkerpad.sidebar") }),
+    );
+
+    // A broken playground is listed, with a badge.
+    const brokenDir = `${info.root}/explorer-broken`;
+    await invoke("selftest_write_file", { path: `${brokenDir}/playground.toml`, text: "id = \n" });
+    const brokenRow = () => document.querySelector<HTMLElement>(".library-broken");
+    await until(() => brokenRow() !== null, 10_000);
+    await check(
+      "a broken playground is listed, with a warning badge and its problem as a tooltip",
+      !!brokenRow()?.querySelector(".library-badge svg") &&
+        (brokenRow()?.title ?? "").includes("playground.toml") &&
+        (brokenRow()?.textContent ?? "").includes("explorer-broken"),
+      brokenRow()?.title ?? "not listed",
+    );
+    brokenRow()?.click();
+    await until(() => document.querySelector(".picker") !== null, 5000);
+    const why = pickerTitle();
+    const offers = pickerItems();
+    pressKey("Escape", {}, document.querySelector(".picker-input") ?? document.body);
+    await until(() => document.querySelector(".picker") === null, 3000);
+    await check(
+      "opening it says why it can't be opened, and offers to show it or bin it",
+      why.includes("can't be opened") &&
+        why.includes("playground.toml") &&
+        offers.some((o) => o.includes("Show in file explorer")) &&
+        offers.some((o) => o.includes(`Move to ${TRASH}`)),
+      JSON.stringify({ why, offers }),
+    );
+
+    // Delete on the list: asks, bins it, and moves the selection on.
+    for (const name of ["Explorer A", "Explorer B", "Explorer C"]) {
+      const p = await invoke<Playground>("create_playground", { name, language: "node-check", kind: "script" });
+      note.made.push(p.id);
+    }
+    sessionStorage.setItem(NOTE, JSON.stringify(note));
+    await type("explorer");
+    await until(() => rows().length === 4, 8000);
+    list().focus();
+    for (let i = 0; i < 5; i++) pressKey("ArrowUp", {}, list());
+    pressKey("ArrowDown", {}, list());
+    const target = selected();
+    const after = rows()[2]?.dataset.id;
+
+    search().focus();
+    pressKey("Delete", {}, search());
+    await frame();
+    await check("Delete in the search box deletes nothing", document.querySelector(".picker") === null);
+
+    list().focus();
+    pressKey("Delete", {}, list());
+    await until(() => document.querySelector(".picker") !== null, 5000);
+    const asked = pickerTitle();
+    await choosePicked(`Move to ${TRASH}`);
+    await until(() => !rows().some((r) => r.dataset.id === target) && selected() === after, 10_000);
+    await check(
+      `Delete on the list asks, moves the playground to the ${TRASH}, and selects the next row`,
+      asked.includes(TRASH) &&
+        !rows().some((r) => r.dataset.id === target) &&
+        selected() === after &&
+        document.activeElement === list(),
+      JSON.stringify({ asked, target, after, now: selected(), focus: document.activeElement?.className }),
+    );
+
+    // The broken one goes the same way; it is last, so the selection steps back.
+    for (let i = 0; i < 5; i++) pressKey("ArrowDown", {}, list());
+    const brokenId = selected();
+    const previous = rows().at(-2)?.dataset.id;
+    pressKey("Delete", {}, list());
+    await until(() => document.querySelector(".picker") !== null, 5000);
+    await choosePicked(`Move to ${TRASH}`);
+    await until(() => brokenRow() === null, 10_000);
+    const remaining = await invoke<LibraryInfo>("library_info");
+    await check(
+      "a broken playground is deleted the same way, and the selection steps back a row",
+      (brokenId ?? "").startsWith("broken:") &&
+        brokenRow() === null &&
+        !remaining.broken.some((b) => b.dir.includes("explorer-broken")) &&
+        selected() === previous,
+      JSON.stringify({ brokenId, previous, now: selected(), broken: remaining.broken }),
+    );
+
+    await type("");
+    await reloadInto(1);
+  }
+
+  const note = JSON.parse(sessionStorage.getItem(NOTE) ?? "{}") as Partial<Note>;
+
+  if (resumed === 1) {
+    await until(() => sidebar.side() === "right", 5000);
+    await frame();
+    await check(
+      "after a reload the panel is still open, on the right, at the width it was dragged to",
+      sidebar.visible() &&
+        sidebar.side() === "right" &&
+        shell().lastElementChild === panel() &&
+        Math.abs(width() - (note.dragged ?? 0)) <= 2,
+      JSON.stringify({ open: sidebar.visible(), side: sidebar.side(), width: width(), dragged: note.dragged }),
+    );
+    localStorage.removeItem("tinkerpad.sidebar.open");
+    await reloadInto(2);
+  }
+
+  // Nothing remembered: open only if this is the app's first launch here.
+  const first = await invoke<boolean>("first_launch");
+  await until(() => sidebar.remembered() !== null, 5000);
+  await check(
+    "with nothing remembered, the panel is open only on the app's first launch",
+    sidebar.visible() === first && sidebar.remembered() === first,
+    JSON.stringify({ first, open: sidebar.visible(), remembered: sidebar.remembered() }),
+  );
+
+  // The library-panel scenario again, with the panel on the right.
+  sidebar.setVisible(false, false);
+  await report("INFO library-panel, with the panel on the right");
+  await libraryPanelScenario(ctx, check);
+
+  for (const id of note.made ?? []) await invoke("delete_playground", { id }).catch(() => {});
+  await setSide(note.side ?? "left");
+  restore("tinkerpad.sidebar.open", note.open ?? null);
+  restore("tinkerpad.sidebar", note.width ?? null);
+  sidebar.setVisible(false, false);
+  sessionStorage.removeItem(NOTE);
+}
+
+/**
  * The toolbar above the tabs (work item 04-11): each button does what its key
  * does, is disabled when its command is, and follows the state it shows.
  */
@@ -4779,6 +5087,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   "helper-run": helperRunScenario,
   definition: definitionScenario,
   "library-panel": libraryPanelScenario,
+  "library-explorer": libraryExplorerScenario,
   keys: keysScenario,
   toolbar: toolbarScenario,
   go: goScenario,
