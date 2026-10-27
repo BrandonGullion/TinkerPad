@@ -5041,13 +5041,22 @@ async function lspCsharpScenario(ctx: SelftestContext, check: Check) {
   // F12 on a framework type: its signatures, opened read-only (02-09).
   write('Console.WriteLine("hi");\n');
   view.dispatch({ selection: { anchor: 3 } });
-  runScopeHandlers(view, key("F12"), "editor");
-  const jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 30_000);
+  // Pressed again if nothing opens, as hover is: an answer that arrives
+  // while the server is still busy with the edit can be empty.
+  let jumped = false;
+  for (let attempt = 0; attempt < 5 && !jumped; attempt++) {
+    view.dispatch({ selection: { anchor: 3 } });
+    runScopeHandlers(view, key("F12"), "editor");
+    jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 10_000);
+  }
   const landed = tabs.tabs.find((t) => t.peek)?.peek?.path ?? "";
+  const serverLog = jumped
+    ? []
+    : await invoke<string[]>("server_log", { language: "csharp", root: server?.root ?? null }).catch(() => []);
   await check(
     "F12 on Console opens its signatures read-only",
     jumped && landed.endsWith("System.Console.cs"),
-    landed,
+    landed || JSON.stringify(serverLog.slice(-8)),
   );
   if (jumped) {
     await tabs.close(tabs.tabs.find((t) => t.peek)!);
