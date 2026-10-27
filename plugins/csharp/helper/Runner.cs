@@ -34,7 +34,7 @@ internal sealed class Runner
     /// `Console.WriteLine` in a playground doesn't compile here but does under
     /// `dotnet run`, and the two paths have to agree.
     /// </summary>
-    private const string ImplicitUsings = """
+    internal const string ImplicitUsings = """
         global using global::System;
         global using global::System.Collections.Generic;
         global using global::System.IO;
@@ -44,7 +44,19 @@ internal sealed class Runner
         global using global::System.Threading.Tasks;
         """;
 
-    private static readonly CSharpParseOptions Parsing = new(LanguageVersion.Preview);
+    internal static readonly CSharpParseOptions Parsing = new(LanguageVersion.Preview);
+
+    /// <summary>
+    /// How a playground is compiled. The language server compiles with the same
+    /// options, so a squiggle and a run can't disagree (work item 04-13).
+    /// </summary>
+    internal static readonly CSharpCompilationOptions Options = new(
+        OutputKind.ConsoleApplication,
+        optimizationLevel: OptimizationLevel.Debug,
+        // A playground is one file; nothing should be forced into a
+        // namespace or told off for lacking an XML comment.
+        warningLevel: 4,
+        allowUnsafe: true);
 
     private readonly Core _core;
     private readonly References _references;
@@ -66,7 +78,7 @@ internal sealed class Runner
     public Runner(Core core, string pluginDir)
     {
         _core = core;
-        _references = new References(core);
+        _references = new References();
         _dumpLibrary = Path.Combine(pluginDir, "dump", "TinkerPad.Dump.cs");
         _fixedTrees = new Lazy<IReadOnlyList<SyntaxTree>>(ParseFixedTrees);
     }
@@ -330,13 +342,7 @@ internal sealed class Runner
             $"playground_{run.Id}",
             trees,
             references,
-            new CSharpCompilationOptions(
-                OutputKind.ConsoleApplication,
-                optimizationLevel: OptimizationLevel.Debug,
-                // A playground is one file; nothing should be forced into a
-                // namespace or told off for lacking an XML comment.
-                warningLevel: 4,
-                allowUnsafe: true));
+            Options);
 
         using var dll = new MemoryStream();
         using var pdb = new MemoryStream();

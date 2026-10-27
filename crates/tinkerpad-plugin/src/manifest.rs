@@ -189,6 +189,10 @@ pub struct Lsp {
     pub workspace_needs: Option<String>,
     /// How to put it there. Runs in the workspace root.
     pub workspace_acquire: Option<Acquire>,
+    /// The server is part of this plugin's helper: `[helper.build]` runs
+    /// before it starts, the same way it does before a run (work item 04-13).
+    #[serde(default)]
+    pub from_helper: bool,
 }
 
 /// How to get a tool this plugin needs (work item 04-08a).

@@ -407,3 +407,12 @@ fn missing_manifest_is_an_io_error() {
         other => panic!("expected Io, got {other:?}"),
     }
 }
+
+/// A server that is the helper in another mode needs the helper's build to
+/// run first, so a helper with no build can't be one (work item 04-13).
+#[test]
+fn lsp_from_helper_needs_a_helper_build() {
+    let e = fail("invalid/lsp-from-helper");
+    assert_eq!(problem_kinds(&e), [ProblemKind::InvalidValue]);
+    assert!(e.to_string().contains("lsp.from_helper"), "{e}");
+}

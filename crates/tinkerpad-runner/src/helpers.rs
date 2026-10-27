@@ -191,6 +191,9 @@ pub struct HelperHandle {
     /// One run at a time, as the protocol says. Two playgrounds of the same
     /// language queue here rather than cancelling each other (03-03).
     run_slot: Arc<Mutex<()>>,
+    /// Held while a build runs, so a run starting the helper and a language
+    /// server built from it (work item 04-13) never build at the same time.
+    building: Mutex<()>,
 }
 
 /// Something is using a helper. While one of these is alive the idle clock is
@@ -226,6 +229,7 @@ impl HelperHandle {
             watching: AtomicBool::new(false),
             build_output: broadcast::channel(BUILD_LINES).0,
             run_slot: Arc::new(Mutex::new(())),
+            building: Mutex::new(()),
         })
     }
 
@@ -305,6 +309,12 @@ impl HelperHandle {
         {
             client.kill();
         }
+    }
+
+    /// Build the helper if it needs building, without starting it: for a
+    /// language server that is the same program in another mode (04-13).
+    pub async fn ensure_built(&self) -> Result<(), String> {
+        self.build_if_needed().await
     }
 
     /// The running client, starting the helper — and building it — if needed.
@@ -500,6 +510,8 @@ impl HelperHandle {
         let (Some(build), Some(source)) = (&self.config.build, &self.config.source_dir) else {
             return Ok(());
         };
+        // Whoever comes second finds the stamp written and returns at once.
+        let _building = self.building.lock().await;
         let stamp = self.config.stamp_file();
         let hash = source_hash(source);
         let last = std::fs::read_to_string(&stamp).ok();

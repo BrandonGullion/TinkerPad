@@ -12,15 +12,21 @@ namespace TinkerPad.CSharp.Helper;
 
 internal sealed class References
 {
-    private readonly Core _core;
     private readonly Lazy<IReadOnlyList<MetadataReference>> _framework;
     private readonly Lazy<Packages> _packages = new(() => new Packages());
     private readonly Dictionary<string, MetadataReference> _byPath =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public References(Core core)
+    /// <summary>Whether each reference carries its XML documentation.</summary>
+    private readonly bool _documented;
+
+    /// <param name="documented">
+    /// Read each assembly's XML documentation too. The language server wants
+    /// it for hover (work item 04-13); a run doesn't, so it doesn't pay for it.
+    /// </param>
+    public References(bool documented = false)
     {
-        _core = core;
+        _documented = documented;
         _framework = new Lazy<IReadOnlyList<MetadataReference>>(LoadFramework);
     }
 
@@ -130,7 +136,9 @@ internal sealed class References
         }
         try
         {
-            var reference = MetadataReference.CreateFromFile(path);
+            var reference = MetadataReference.CreateFromFile(
+                path,
+                documentation: _documented ? Documentation(path) : null);
             _byPath[path] = reference;
             return reference;
         }
@@ -141,4 +149,62 @@ internal sealed class References
             return null;
         }
     }
+
+    /// <summary>
+    /// An assembly's XML documentation: beside it, as a NuGet package has it,
+    /// or in the SDK's reference pack, which is where the framework's lives.
+    /// The runtime folder the helper compiles against has none.
+    /// </summary>
+    private static DocumentationProvider? Documentation(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path) + ".xml";
+        var beside = Path.Combine(Path.GetDirectoryName(path) ?? "", name);
+        if (File.Exists(beside))
+        {
+            return XmlDocumentationProvider.CreateFromFile(beside);
+        }
+        var pack = ReferencePack.Value;
+        if (pack is not null && File.Exists(Path.Combine(pack, name)))
+        {
+            return XmlDocumentationProvider.CreateFromFile(Path.Combine(pack, name));
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// `packs/Microsoft.NETCore.App.Ref/&lt;version&gt;/ref/net&lt;major&gt;.&lt;minor&gt;`
+    /// for the runtime this is running on: the same version if it is there,
+    /// else the newest of the same major and minor.
+    /// </summary>
+    private static readonly Lazy<string?> ReferencePack = new(() =>
+    {
+        try
+        {
+            // <root>/shared/Microsoft.NETCore.App/<version>/System.Private.CoreLib.dll
+            var runtime = Path.GetDirectoryName(typeof(object).Assembly.Location);
+            var root = runtime is null ? null : Path.GetFullPath(Path.Combine(runtime, "..", "..", ".."));
+            var packs = root is null ? null : Path.Combine(root, "packs", "Microsoft.NETCore.App.Ref");
+            if (packs is null || !Directory.Exists(packs))
+            {
+                return null;
+            }
+            var version = Environment.Version;
+            var tfm = $"net{version.Major}.{version.Minor}";
+            var exact = Path.Combine(packs, Path.GetFileName(runtime!), "ref", tfm);
+            if (Directory.Exists(exact))
+            {
+                return exact;
+            }
+            return Directory.EnumerateDirectories(packs, $"{version.Major}.{version.Minor}.*")
+                .Select(dir => Path.Combine(dir, "ref", tfm))
+                .Where(Directory.Exists)
+                .OrderByDescending(dir => dir, StringComparer.Ordinal)
+                .FirstOrDefault();
+        }
+        catch (Exception e)
+        {
+            Core.Warn($"no reference pack for documentation: {e.Message}");
+            return null;
+        }
+    });
 }

@@ -234,7 +234,7 @@ jobs:
       - name: Language servers (Linux)
         if: runner.os == 'Linux'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run,keys
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run,keys,lsp-csharp
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -256,6 +256,9 @@ jobs:
           grep -q "selftest: PASS F5 runs the playground from the editor, and doesn.t reload" lsp.log
           grep -q "selftest: PASS F5 with no playground open does nothing, and doesn.t reload" lsp.log
           grep -q "selftest: PASS and the user is told what is being used instead" lsp.log
+          grep -q "selftest: PASS Console. offers WriteLine and friends" lsp.log
+          grep -q "selftest: PASS .Dump( is offered on a value" lsp.log
+          grep -q "selftest: PASS a type error is squiggled before any run" lsp.log
 
       # Every bundled plugin, through the same loader, scaffolder and runner the
       # app uses (work items 05-01a, 05-01b). A toolchain this runner hasn't
@@ -349,7 +352,7 @@ jobs:
       - name: Language servers (macOS)
         if: runner.os == 'macOS'
         env:
-          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run,keys
+          TINKERPAD_SELFTEST: lsp,lsp-typescript,prewarm,servers,definition,helpers,helper-run,keys,lsp-csharp
           TINKERPAD_USER_PLUGINS: ${{ runner.temp }}/user-plugins
           TINKERPAD_LIBRARY: ${{ runner.temp }}/library
           TINKERPAD_LSP_PREWARM: node-check
@@ -371,6 +374,9 @@ jobs:
           grep -q "selftest: PASS F5 runs the playground from the editor, and doesn.t reload" lsp.log
           grep -q "selftest: PASS F5 with no playground open does nothing, and doesn.t reload" lsp.log
           grep -q "selftest: PASS and the user is told what is being used instead" lsp.log
+          grep -q "selftest: PASS Console. offers WriteLine and friends" lsp.log
+          grep -q "selftest: PASS .Dump( is offered on a value" lsp.log
+          grep -q "selftest: PASS a type error is squiggled before any run" lsp.log
 
       - name: Session restore across two launches (macOS)
         if: runner.os == 'macOS'

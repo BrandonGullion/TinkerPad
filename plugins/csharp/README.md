@@ -110,6 +110,9 @@ What a run does, in `helper/`:
 | `Packages.cs` | `#:package` directives, resolved with NuGet. |
 | `Sources.cs` | Reading `main.cs`, blanking `#:` lines without moving any. |
 | `Diagnostics.cs` | Roslyn's errors, in the shape the protocol wants. |
+| `LanguageServer.cs` | The same program as a language server (`--lsp`). See IntelliSense below. |
+| `Playgrounds.cs` | Open playgrounds as Roslyn projects: completion, hover, diagnostics, definitions. |
+| `MetadataSource.cs` | A read-only page of signatures, for F12 into an assembly. |
 
 Three things are worth knowing:
 
@@ -152,6 +155,42 @@ that.
 To compare for yourself, **Force per-run execution** in the command palette
 turns the helper off for the session.
 
+## IntelliSense
+
+You get completions as you type, hover (Mod+K Mod+I), squiggles while you
+edit, and go to definition (F12). Nothing needs installing beyond the .NET SDK.
+
+The language server is the warm runner above, started a second time with
+`--lsp`. It compiles your playground the same way a run does: the same
+implicit usings, `Dump()`, and your `#:package` references. So a squiggle
+sits where the run would report the error, and `.Dump(` and a package's
+types are offered like anything else.
+
+What happens the first time:
+
+- **The helper is built**, if no run has built it yet. That's a `dotnet
+  build` of `helper/` into TinkerPad's data folder: seconds on a warm
+  machine, longer on a cold one. The tab works meanwhile, and the C# chip
+  appears in the status bar once the server is up.
+- **A `#:package` reference is restored** from nuget.org into your global
+  packages folder. The server's log, under the C# chip, says so. Squiggles
+  wait for the restore rather than marking every use of the package. After
+  that it works offline.
+
+F12 on something in your playground or in `Dump` opens that file. On
+something from .NET or a package, it opens a read-only page of the type's
+signatures and summaries, generated from the assembly. It isn't decompiled
+source.
+
+Not yet supported: rename, refactorings, code actions, formatting and
+signature help.
+
+Measured on Windows 11 with .NET 10.0.201: the first completion of a session
+arrives about 1.3 s after the tab opens. A warm one takes about 4 ms at the
+server, and 126 ms (median) as the editor sees it, typing debounce included.
+The server holds about 250 MB once warm, and stops after two idle hours, like
+the helper.
+
 ## Files
 
 | Path | Purpose |
@@ -159,4 +198,4 @@ turns the helper off for the session.
 | `plugin.toml` | The manifest. |
 | `templates/` | New playground contents, including `Directory.Build.props`. |
 | `dump/TinkerPad.Dump.cs` | The dump library. |
-| `helper/` | The warm runner, built on first use. |
+| `helper/` | The warm runner and the language server, built on first use. |

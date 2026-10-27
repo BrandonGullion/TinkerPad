@@ -187,6 +187,7 @@ one you're on, so a mistake that only affects macOS still fails on Windows.
 | `[lsp].workspace_files` | `[{ path = "tsconfig.json", template = "tsconfig.json" }]`: files the server's *workspace* needs, written there the first time it starts and never overwritten. Same shape as `[scaffold].files`, but relative to the workspace root rather than a playground. |
 | `[lsp].workspace_needs` | A path inside the workspace the server needs to find there, such as `node_modules/typescript`. See below. |
 | `[lsp.register].reload` | A request to send after the registered setting changes, for a server that reads it once: `"rust-analyzer/reloadWorkspace"`. |
+| `[lsp].from_helper` | `true` when the server is the plugin's own helper in another mode, as C#'s is. `[helper.build]` then runs before the server starts too, so a tab opened before any run still gets one. Needs a `[helper]` with a `build`. |
 | `[deps]` with `kind = "command"` | Needs `add = ["cargo", "add", "{name}@{version}"]`. |
 | `[deps]` with `kind = "inline-directive"` | Needs `directive = "#:package {name}@{version}"`. |
 | `[output].error_regex_multiline` | `true` to match across up to three lines. |
@@ -713,13 +714,23 @@ The template for each kind already imports the helper, so a new playground can c
     run.
 - **Kinds:** `statements` (top-level statements, default), `program`, `expression`
   (locked lines).
-- **LSP:** Roslyn's `Microsoft.CodeAnalysis.LanguageServer` understands loose `.cs`
-  files and file-based apps. Acquisition is the risk: it ships as a NuGet package on
-  a Microsoft Azure DevOps feed, not as a `dotnet tool`. Plan: `[toolchain.acquire]`
-  downloads it on first use. Fallback: `csharp-ls` (`dotnet tool install -g
-  csharp-ls`), which may not understand `#:package`. Last resort: scaffold a minimal
-  `main.csproj` per playground; any C# server understands that and `dotnet run`
-  doesn't care.
+- **LSP:** the helper again, started with `--lsp` (`[lsp].from_helper`, work item
+  04-13). It is a small language server over Roslyn's own editor services
+  (`Microsoft.CodeAnalysis.CSharp.Features`): completion, hover, diagnostics
+  pushed after each edit, and go to definition. Each open playground is a project
+  of its own, compiled exactly as a run on the helper compiles it: the same
+  implicit usings, the dump library, the same options, and `#:package` restored
+  through the same NuGet code. So a squiggle lands where a run reports the error,
+  and `Dump()` and a package's types are known. Nothing is downloaded beyond the
+  helper's own build, and once a package is in the global packages folder it
+  works offline. A definition inside the playground or the dump library opens
+  that file. One in an assembly opens a generated file of the type's signatures
+  and summaries, read-only. It isn't decompiled source.
+  - Roslyn's own `roslyn-language-server` was measured first and set aside. Its
+    completion leaves out everything the implicit usings bring in (`Console.` is
+    empty), its diagnostics are pull-only, and it ships from an Azure DevOps feed
+    rather than nuget.org. `csharp-ls` won't start without a project file. The
+    findings are in the work item.
 - **Helper (Phase 3):** a small .NET console app in `helper/`, built on first use via
   `[helper.build]`. Uses `Microsoft.CodeAnalysis.CSharp.Scripting` to compile and run
   in a collectible `AssemblyLoadContext`, redirects `Console.Out`, injects `Dump()`

@@ -12,6 +12,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tauri::Manager;
 use tauri::ipc::Channel;
 use tinkerpad_core::{CommandError, ErrorCode, Playground, Scope};
 use tinkerpad_lsp::jsonrpc::RawMessage;
@@ -172,6 +173,9 @@ pub async fn open(
         &state.scratch_root(),
         &state.lsp_settings(),
     )?;
+    // A server that is the plugin's helper in another mode needs the helper
+    // built before it can start (04-13). The tab is usable meanwhile.
+    build_first(state, &plugin).await?;
     // The editor's own client opens the document; the pool only has to have
     // the server running (02-04). A shared server is told which project this
     // playground is, through the setting its plugin named (02-07).
@@ -186,6 +190,50 @@ pub async fn open(
         attachment,
         Arc::new(ChannelSink(channel)),
     ))
+}
+
+/// Build the plugin's helper first when its language server is the helper
+/// (`[lsp].from_helper`, work item 04-13). A no-op for every other server,
+/// and for a helper already built: the build stamp says so.
+async fn build_first(state: &AppState, plugin: &Plugin) -> Result<(), CommandError> {
+    if !plugin.lsp.as_ref().is_some_and(|lsp| lsp.from_helper) {
+        return Ok(());
+    }
+    // The helper's commands name `{toolchain}`, which is only known once the
+    // launch's toolchain check has found it. A tab restored at launch gets
+    // here first, so it waits for that rather than building with nothing.
+    let checked = std::time::Instant::now();
+    while matches!(
+        state.toolchains.state(plugin.id.as_str()),
+        None | Some(tinkerpad_core::ToolchainState::Checking)
+    ) && checked.elapsed() < std::time::Duration::from_secs(60)
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let Some(handle) = helper_to_build(state, plugin)? else {
+        return Ok(());
+    };
+    handle.ensure_built().await.map_err(|reason| {
+        CommandError::new(
+            ErrorCode::Io,
+            format!(
+                "{}'s language server couldn't be built: {reason}",
+                plugin.name
+            ),
+        )
+    })
+}
+
+/// The helper whose build a plugin's language server comes from, if it has one.
+fn helper_to_build(
+    state: &AppState,
+    plugin: &Plugin,
+) -> Result<Option<Arc<tinkerpad_runner::HelperHandle>>, CommandError> {
+    if !plugin.lsp.as_ref().is_some_and(|lsp| lsp.from_helper) {
+        return Ok(None);
+    }
+    let config = crate::helpers::config_for(state, plugin.id.as_str())?;
+    Ok(Some(state.helpers.handle(&config)))
 }
 
 /// The running server that would have this playground's folder open, if there
@@ -521,7 +569,7 @@ fn write_workspace_files(plugin: &Plugin, root: &std::path::Path) {
 /// is not allowed to delay the window. A language that can't be pre-warmed
 /// (one whose server lives in each playground's folder) or isn't installed is
 /// logged and skipped.
-pub fn prewarm(state: &AppState) {
+pub fn prewarm(state: &AppState, app: &tauri::AppHandle) {
     let languages = state.lsp_settings().prewarm;
     if languages.is_empty() {
         return;
@@ -546,7 +594,24 @@ pub fn prewarm(state: &AppState) {
         ) {
             Ok(config) => {
                 tracing::info!(language, "pre-warming a language server");
-                state.lsp.server_for(&config);
+                if plugin.lsp.as_ref().is_some_and(|lsp| lsp.from_helper) {
+                    // Built first, once the toolchain check has found what to
+                    // build with, and off the window's path (04-13).
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app.state::<AppState>();
+                        match build_first(&state, &plugin).await {
+                            Ok(()) => {
+                                state.lsp.server_for(&config);
+                            }
+                            Err(error) => {
+                                tracing::warn!(language, %error, "cannot pre-warm this language");
+                            }
+                        }
+                    });
+                } else {
+                    state.lsp.server_for(&config);
+                }
             }
             Err(error) => {
                 tracing::warn!(language, %error, "cannot pre-warm this language");

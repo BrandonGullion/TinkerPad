@@ -64,6 +64,21 @@ env = { DOTNET_NOLOGO = "1", DOTNET_CLI_UI_LANGUAGE = "en", DOTNET_CLI_TELEMETRY
 # C#, not worth it overnight.
 idle_shutdown = "2h"
 
+[lsp]
+# IntelliSense (work item 04-13): the helper above, started as a language
+# server. Same build, same compiler, and the same compile as a run, so a
+# squiggle and a run never disagree. A process of its own, so a crash in one
+# leaves the other alone. One server for every C# playground, rooted at a
+# folder of TinkerPad's own: nothing is written into a playground.
+# `from_helper` builds the helper first if a tab opens before any run has.
+command = "dotnet"
+args = ["{scratch}/helper/TinkerPad.CSharp.Helper.dll", "--lsp", "--plugin-dir", "{plugin_dir}", "--scratch", "{scratch}"]
+env = { DOTNET_NOLOGO = "1", DOTNET_CLI_UI_LANGUAGE = "en", DOTNET_CLI_TELEMETRY_OPTOUT = "1" }
+workspace = "scratch_workspace"
+from_helper = true
+# Roslyn again, a few hundred MB once warm: the same idle policy as the helper.
+idle_shutdown = "2h"
+
 [helper.build]
 command = "{toolchain}"
 args = [

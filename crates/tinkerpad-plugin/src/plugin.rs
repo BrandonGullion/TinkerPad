@@ -173,6 +173,9 @@ pub struct LspSpec {
     pub workspace_needs: Option<PathBuf>,
     /// How to put it there. Runs with the workspace root as its folder.
     pub workspace_acquire: Option<Acquire>,
+    /// The server is built by `[helper.build]`, which runs before it starts
+    /// (work item 04-13).
+    pub from_helper: bool,
 }
 
 pub use manifest::Workspace;
@@ -448,6 +451,17 @@ impl Validator<'_> {
         let run = self.runs(run);
         let helper = self.helpers(helper);
         let lsp = self.lsps(lsp);
+        // A server built by the helper's build needs a helper with a build.
+        if lsp.as_ref().is_some_and(|l| l.from_helper)
+            && helper.as_ref().is_none_or(|h| h.build.is_none())
+        {
+            self.problem(
+                ProblemKind::InvalidValue,
+                "lsp.from_helper",
+                "`from_helper = true` needs a `[helper]` with a `build` for this platform"
+                    .to_owned(),
+            );
+        }
 
         let deps = m.deps.and_then(|d| self.deps(d));
         let output = m.output.and_then(|o| self.output(o));
@@ -1023,6 +1037,7 @@ impl Validator<'_> {
                     &format!("{key}.workspace_acquire"),
                     l.workspace_acquire.take(),
                 ),
+                from_helper: l.from_helper,
             };
             if is_chosen {
                 chosen = Some(spec);
