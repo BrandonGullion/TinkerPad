@@ -16,7 +16,14 @@ import { acceptCompletion } from "@codemirror/autocomplete";
 import {
   LSPClient,
   LSPPlugin,
-  languageServerExtensions,
+  findReferencesKeymap,
+  formatKeymap,
+  hoverTooltips,
+  jumpToDefinitionKeymap,
+  renameKeymap,
+  serverCompletion,
+  serverDiagnostics,
+  signatureHelp,
   type Transport,
 } from "@codemirror/lsp-client";
 import { lintGutter } from "@codemirror/lint";
@@ -121,7 +128,17 @@ export async function connect(
     // Server documentation is Markdown, which may carry HTML.
     sanitizeHTML: (html) => DOMPurify.sanitize(html),
     highlightLanguage: () => null,
-    extensions: languageServerExtensions(),
+    // What `languageServerExtensions()` gives, except that the server's
+    // completions replace the language's own word list rather than joining
+    // it: C#'s highlighter offers every keyword and type name, which put
+    // `abstract` and `Action` at the top after `Console.` (04-13).
+    extensions: [
+      serverCompletion({ override: true }),
+      hoverTooltips(),
+      keymap.of([...formatKeymap, ...renameKeymap, ...jumpToDefinitionKeymap, ...findReferencesKeymap]),
+      signatureHelp(),
+      serverDiagnostics(),
+    ],
   }).connect(transport);
 
   return {

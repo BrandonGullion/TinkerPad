@@ -4900,6 +4900,227 @@ async function libraryExplorerScenario(ctx: SelftestContext, check: Check) {
 }
 
 /**
+ * C#'s language server, which is the C# helper started with `--lsp` (work
+ * item 04-13): the same editor path as `lsp` and `lsp-typescript`, against
+ * what a C# playground needs — the implicit usings, `Dump()`, `#:package`, and
+ * squiggles where a run would put them.
+ *
+ * The first tab may have to wait for the helper to be built, which on a cold
+ * machine is a `dotnet build` and a NuGet restore.
+ */
+async function lspCsharpScenario(ctx: SelftestContext, check: Check) {
+  const { editor, tabs } = ctx;
+  const view = editor.view;
+  const offered = () => currentCompletions(view.state).map((c) => c.label);
+  /** Put `text` in the editor with the cursor where `|` is. */
+  const write = (text: string) => {
+    const at = text.includes("|") ? text.indexOf("|") : text.length;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: text.replace("|", "") },
+      selection: { anchor: at },
+    });
+  };
+  /** Ask for completions until `ok` holds, the way a person would retry. */
+  const completeUntil = async (ok: (labels: string[]) => boolean, ms: number) => {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      closeCompletion(view);
+      startCompletion(view);
+      if (await until(() => ok(offered()), 2000)) return true;
+    }
+    return false;
+  };
+
+  const status = await invoke<PluginsStatus>("list_plugins");
+  await check(
+    "the C# plugin declares a language server",
+    status.plugins.find((p) => p.id === "csharp")?.lsp === true,
+  );
+
+  const playground = await invoke<Playground>("create_playground", {
+    name: "Lsp Csharp",
+    language: "csharp",
+    kind: "statements",
+  });
+  await openPlayground(editor, ctx.status, playground.id);
+  write("using TinkerPad;\nvar numbers = new[] { 1, 2, 3 };\nConsole.|\n");
+  const tab = tabs.activeTab!;
+  const started = performance.now();
+  // A cold machine builds the helper first.
+  const connected = await until(() => tab.lsp !== null, 600_000);
+  await check("a C# tab connects to its language server", connected, tab.lsp?.uri ?? "");
+  if (!connected) {
+    await tabs.close(tab);
+    await invoke("delete_playground", { id: playground.id }).catch(() => {});
+    return;
+  }
+
+  const firstOk = await completeUntil((labels) => labels.includes("WriteLine"), 300_000);
+  await check(
+    "Console. offers WriteLine and friends, from the implicit usings, and only those",
+    firstOk && offered().includes("ReadLine") && !offered().includes("abstract"),
+    JSON.stringify(offered().slice(0, 8)),
+  );
+  await report(`INFO first C# completion ${((performance.now() - started) / 1000).toFixed(1)} s after the tab opened`);
+  const server = (await invoke<ServerStatus[]>("server_status")).find((s) => s.language === "csharp");
+  await check(
+    "the status strip has a C# server, and it is ready",
+    server?.state.kind === "ready",
+    JSON.stringify(server?.state ?? null),
+  );
+
+  // Warm: the number 02-04 holds every language to.
+  const samples: number[] = [];
+  for (let n = 0; n < 7; n++) {
+    closeCompletion(view);
+    await frame();
+    const at = performance.now();
+    view.dispatch({
+      changes: { from: view.state.selection.main.head, insert: "W" },
+      selection: { anchor: view.state.selection.main.head + 1 },
+      userEvent: "input.type",
+    });
+    if (await until(() => offered().includes("WriteLine"), 10_000)) samples.push(performance.now() - at);
+    view.dispatch({ changes: { from: view.state.selection.main.head - 1, to: view.state.selection.main.head } });
+  }
+  samples.sort((a, b) => a - b);
+  const median = samples[Math.floor(samples.length / 2)] ?? Number.POSITIVE_INFINITY;
+  await check(
+    "a warm C# server answers a keystroke quickly",
+    samples.length >= 5 && median < 1000,
+    JSON.stringify(samples.map((ms) => Math.round(ms))),
+  );
+  await report(`INFO warm C# completion: median ${median.toFixed(0)} ms, best ${(samples[0] ?? 0).toFixed(0)} ms`);
+
+  // Dump() on any value: the dump library is part of what the server sees.
+  write("using TinkerPad;\nvar numbers = new[] { 1, 2, 3 };\nnumbers.|\n");
+  const dumpOk = await completeUntil((labels) => labels.some((l) => l.startsWith("Dump")), 30_000);
+  await check(
+    ".Dump( is offered on a value, and LINQ with it",
+    dumpOk && offered().some((l) => l.startsWith("Select")),
+    JSON.stringify(offered().filter((l) => /^(Dump|Select)/.test(l))),
+  );
+
+  // A `#:package` reference: its types arrive once it is restored.
+  write('#:package Humanizer@2.14.1\nusing Humanizer;\nvar h = "hello".|\n');
+  const packageOk = await completeUntil((labels) => labels.includes("Humanize"), 180_000);
+  await check("a #:package reference's methods are offered", packageOk, JSON.stringify(offered().slice(0, 6)));
+
+  // Hover: Mod+K Mod+I on Console.
+  write('Console.WriteLine("hi");\n');
+  view.dispatch({ selection: { anchor: 3 } });
+  let hovered = false;
+  for (let attempt = 0; attempt < 15 && !hovered; attempt++) {
+    runScopeHandlers(view, key("Escape"), "editor");
+    runScopeHandlers(view, key("k", { mod: true }), "editor");
+    runScopeHandlers(view, key("i", { mod: true }), "editor");
+    hovered = await until(() => (document.querySelector(".cm-lsp-hover")?.textContent ?? "").includes("Console"), 2000);
+  }
+  const hoverText = document.querySelector(".cm-lsp-hover")?.textContent ?? "";
+  await check(
+    "hover shows the type and its documentation",
+    hovered && /standard input, output/i.test(hoverText),
+    hoverText.slice(0, 100),
+  );
+  runScopeHandlers(view, key("Escape"), "editor");
+
+  // A type error, squiggled while typing, where `dotnet run` puts it: (2,13).
+  write('using TinkerPad;\nint wrong = "text";\n');
+  const marked = await until(() => countDiagnostics(view) > 0, 30_000);
+  const where: string[] = [];
+  forEachDiagnostic(view.state, (d, from) => {
+    const line = view.state.doc.lineAt(from);
+    where.push(`${line.number}:${from - line.from + 1} ${d.message.slice(0, 40)}`);
+  });
+  await check(
+    "a type error is squiggled before any run, at the line and column a run reports",
+    marked && where.some((w) => w.startsWith("2:13 ")),
+    JSON.stringify(where),
+  );
+
+  // F12 on a framework type: its signatures, opened read-only (02-09).
+  write('Console.WriteLine("hi");\n');
+  view.dispatch({ selection: { anchor: 3 } });
+  // Pressed again if nothing opens, as hover is: an answer that arrives
+  // while the server is still busy with the edit can be empty.
+  let jumped = false;
+  for (let attempt = 0; attempt < 5 && !jumped; attempt++) {
+    view.dispatch({ selection: { anchor: 3 } });
+    runScopeHandlers(view, key("F12"), "editor");
+    jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 10_000);
+  }
+  const landed = tabs.tabs.find((t) => t.peek)?.peek?.path ?? "";
+  const serverLog = jumped
+    ? []
+    : await invoke<string[]>("server_log", { language: "csharp", root: server?.root ?? null }).catch(() => []);
+  await check(
+    "F12 on Console opens its signatures read-only",
+    jumped && landed.endsWith("System.Console.cs"),
+    landed || JSON.stringify(serverLog.slice(-8)),
+  );
+  if (jumped) {
+    await tabs.close(tabs.tabs.find((t) => t.peek)!);
+    await openPlayground(editor, ctx.status, playground.id);
+  }
+
+  // The Expression kind: completions inside the one editable line.
+  const expression = await invoke<Playground>("create_playground", {
+    name: "Lsp Csharp Expression",
+    language: "csharp",
+    kind: "expression",
+  });
+  await openPlayground(editor, ctx.status, expression.id);
+  const exprTab = tabs.activeTab!;
+  await until(() => exprTab.lsp !== null, 60_000);
+  const middle = view.state.doc.line(2);
+  view.dispatch({
+    changes: { from: middle.from, to: middle.to, insert: "DateTime.Now." },
+    selection: { anchor: middle.from + "DateTime.Now.".length },
+  });
+  const exprOk = await completeUntil((labels) => labels.includes("AddDays"), 30_000);
+  await check(
+    "in an Expression playground, completions inside the expression make sense",
+    exprOk && view.state.doc.line(1).text.startsWith("TinkerPad.Dump.Show("),
+    JSON.stringify(offered().slice(0, 6)),
+  );
+  await tabs.close(exprTab);
+
+  // The Program kind: inside Main, a local is offered with its members.
+  const program = await invoke<Playground>("create_playground", {
+    name: "Lsp Csharp Program",
+    language: "csharp",
+    kind: "program",
+  });
+  await openPlayground(editor, ctx.status, program.id);
+  const programTab = tabs.activeTab!;
+  await until(() => programTab.lsp !== null, 60_000);
+  const greetingLine = view.state.doc.toString().indexOf("Console.WriteLine(greeting);");
+  view.dispatch({
+    changes: { from: greetingLine, to: greetingLine, insert: "greeting.\n        " },
+    selection: { anchor: greetingLine + "greeting.".length },
+  });
+  const programOk = await completeUntil((labels) => labels.includes("Length"), 30_000);
+  await check(
+    "in a Program playground, completions inside Main know its locals",
+    greetingLine > 0 && programOk && offered().includes("ToUpper"),
+    JSON.stringify(offered().slice(0, 6)),
+  );
+  await tabs.close(programTab);
+  await invoke("delete_playground", { id: program.id }).catch(() => {});
+
+  // Restart under a live tab: completions come back by themselves.
+  await openPlayground(editor, ctx.status, playground.id);
+  write("var numbers = new[] { 1, 2, 3 };\nConsole.|\n");
+  const restarted = await invoke<boolean>("restart_server", { language: "csharp", root: server?.root ?? null });
+  await check("the C# server can be restarted", restarted);
+  const back = await completeUntil((labels) => labels.includes("WriteLine"), 120_000);
+  await check("completions come back after the restart", back);
+
+  for (const t of [...tabs.tabs]) await tabs.close(t);
+  for (const p of [playground, expression]) await invoke("delete_playground", { id: p.id }).catch(() => {});
+}
+
+/**
  * The toolbar above the tabs (work item 04-11): each button does what its key
  * does, is disabled when its command is, and follows the state it shows.
  */
@@ -5081,6 +5302,7 @@ const SCENARIOS: Record<string, (ctx: SelftestContext, check: Check) => Promise<
   locked: lockedScenario,
   lsp: lspScenario,
   "lsp-typescript": lspTypescriptScenario,
+  "lsp-csharp": lspCsharpScenario,
   prewarm: prewarmScenario,
   servers: serversScenario,
   helpers: helpersScenario,

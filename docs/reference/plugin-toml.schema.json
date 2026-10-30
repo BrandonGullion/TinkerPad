@@ -663,6 +663,11 @@
               "type": "null"
             }
           ]
+        },
+        "from_helper": {
+          "description": "The server is part of this plugin's helper: `[helper.build]` runs\n before it starts, the same way it does before a run (work item 04-13).",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false,

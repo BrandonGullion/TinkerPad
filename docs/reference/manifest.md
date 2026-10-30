@@ -96,6 +96,7 @@ One platform's download.
 | `args` | array of string |  |  |
 | `command` | string | yes |  |
 | `env` | table |  |  |
+| `from_helper` | boolean |  | The server is part of this plugin's helper: `[helper.build]` runs before it starts, the same way it does before a run (work item 04-13). |
 | `idle_shutdown` | any |  |  |
 | `init_options` | any |  |  |
 | `os` | any |  |  |

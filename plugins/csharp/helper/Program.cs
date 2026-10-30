@@ -18,8 +18,16 @@ namespace TinkerPad.CSharp.Helper;
 
 internal static class Program
 {
-    private static int Main()
+    private static int Main(string[] args)
     {
+        // The same program is C#'s language server, started by `[lsp]` with
+        // `--lsp` (work item 04-13). It shares the compiler setup and nothing
+        // else: a separate process, so a crash in one can't take the other.
+        if (args.Contains("--lsp"))
+        {
+            return LanguageServer.Run(args);
+        }
+
         // The protocol is UTF-8, and so is everything a playground prints.
         var output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false))
         {

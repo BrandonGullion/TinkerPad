@@ -1,0 +1,28 @@
+api = 1
+
+# `[lsp].from_helper` with a helper that has no build to run first.
+
+[language]
+id = "x"
+name = "X"
+extension = "x"
+
+[toolchain]
+probe = [{ command = "x" }]
+
+[[kind]]
+id = "k"
+name = "K"
+template = "main.x"
+default = true
+
+[run]
+command = "x"
+
+[helper]
+command = "x-helper"
+
+[lsp]
+command = "x-helper"
+args = ["--lsp"]
+from_helper = true

@@ -28,7 +28,15 @@ internal static class Sources
     public static SourceText Read(string path, out IReadOnlyList<PackageDirective> directives)
     {
         using var file = File.OpenRead(path);
-        var text = SourceText.From(file, Encoding.UTF8, canBeEmbedded: true);
+        return Blank(SourceText.From(file, Encoding.UTF8, canBeEmbedded: true), out directives);
+    }
+
+    /// <summary>
+    /// The same for text that isn't on disk yet: what the editor has, for the
+    /// language server (work item 04-13).
+    /// </summary>
+    public static SourceText Blank(SourceText text, out IReadOnlyList<PackageDirective> directives)
+    {
         var found = new List<PackageDirective>();
         var blanked = new StringBuilder(text.Length);
 

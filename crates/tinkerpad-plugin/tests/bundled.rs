@@ -273,3 +273,23 @@ fn rust_kinds_scaffold_a_crate_and_record_their_paths() {
     assert!(!meta.contains("[plugin"), "{meta}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// C#'s language server is its helper, started with `--lsp`, so the helper's
+/// build has to run first (work item 04-13).
+#[test]
+fn csharp_serves_its_language_from_the_helper() {
+    let dir = bundled_dirs()
+        .into_iter()
+        .find(|d| d.ends_with("csharp"))
+        .expect("a csharp plugin");
+    for os in Os::ALL {
+        let plugin = Plugin::load_for(&dir, os).unwrap();
+        let lsp = plugin.lsp.as_ref().expect("C# has a language server");
+        assert!(lsp.from_helper, "{os:?}");
+        assert!(lsp.command.args.iter().any(|a| a == "--lsp"), "{os:?}");
+        assert!(
+            plugin.helper.as_ref().is_some_and(|h| h.build.is_some()),
+            "{os:?}"
+        );
+    }
+}

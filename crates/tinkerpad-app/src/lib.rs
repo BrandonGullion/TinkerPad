@@ -122,7 +122,10 @@ mod commands {
     // Async so it runs on the app's runtime: pre-warming spawns processes at
     // the end of it, and that needs a tokio context (02-06).
     #[tauri::command(async)]
-    pub async fn ping(state: State<'_, AppState>) -> Result<(), CommandError> {
+    pub async fn ping(
+        app: tauri::AppHandle,
+        state: State<'_, AppState>,
+    ) -> Result<(), CommandError> {
         let ready_ms = STARTED
             .get()
             .map(|s| s.elapsed().as_millis() as u64)
@@ -142,7 +145,7 @@ mod commands {
         // The window is up, so pinned language servers may start now (02-06).
         // Once only, however many times the UI reloads.
         static PREWARMED: std::sync::Once = std::sync::Once::new();
-        PREWARMED.call_once(|| crate::lsp::prewarm(&state));
+        PREWARMED.call_once(|| crate::lsp::prewarm(&state, &app));
         Ok(())
     }
 
