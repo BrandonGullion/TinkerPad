@@ -2796,8 +2796,14 @@ async function lspTypescriptScenario(ctx: SelftestContext, check: Check) {
     },
     selection: { anchor: "const names: string[] = [];\nnames.m".length },
   });
-  runScopeHandlers(view, key("F12"), "editor");
-  const jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 60_000);
+  // Pressed again if nothing opens, as in the C# scenario: an answer that
+  // arrives while the server is still busy with the edit can be empty.
+  let jumped = false;
+  for (let attempt = 0; attempt < 5 && !jumped; attempt++) {
+    view.dispatch({ selection: { anchor: "const names: string[] = [];\nnames.m".length } });
+    runScopeHandlers(view, key("F12"), "editor");
+    jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 12_000);
+  }
   const landed = tabs.tabs.find((t) => t.peek)?.peek?.path ?? "";
   await check(
     "F12 opens the TypeScript typings read-only",
