@@ -2249,9 +2249,14 @@ async function lspScenario(ctx: SelftestContext, check: Check) {
   // CodeMirror ignores an accept within `interactionDelay` (75 ms) of the
   // popup opening, so a stray keystroke can't accept something you never
   // saw. A warm server answers well inside that, so wait it out, as the
-  // `keys` scenario does.
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  const taken = offered && runScopeHandlers(view, key("Tab"), "editor");
+  // `keys` scenario does. A list that arrives again (rust-analyzer's are
+  // often incomplete) starts that delay over, so press again while it shows.
+  let taken = false;
+  for (let attempt = 0; offered && !taken && attempt < 10; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (currentCompletions(view.state).length === 0) break;
+    taken = runScopeHandlers(view, key("Tab"), "editor");
+  }
   await frame();
   await check(
     "Tab accepts the highlighted completion",
