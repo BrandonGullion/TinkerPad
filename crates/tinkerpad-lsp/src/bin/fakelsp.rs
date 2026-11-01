@@ -27,6 +27,8 @@
 //! watch for a server announcing itself before it is spoken to.
 //! `TINKERPAD_FAKELSP_INIT_DELAY_MS` holds up the `initialize` reply, which is
 //! what a real server does while it loads a workspace.
+//! `TINKERPAD_FAKELSP_STARTS` names a folder where each start leaves a file
+//! named for its pid, so a test can count the processes it caused.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -36,6 +38,12 @@ use serde_json::{Value, json};
 fn main() {
     if let Ok(greeting) = std::env::var("TINKERPAD_FAKELSP_GREETING") {
         eprintln!("{greeting}");
+    }
+    if let Ok(dir) = std::env::var("TINKERPAD_FAKELSP_STARTS") {
+        let _ = std::fs::write(
+            std::path::Path::new(&dir).join(std::process::id().to_string()),
+            "",
+        );
     }
     let mut input = BufReader::new(std::io::stdin());
     let mut shutdown = false;

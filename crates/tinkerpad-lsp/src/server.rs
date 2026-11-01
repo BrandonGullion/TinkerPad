@@ -312,6 +312,9 @@ pub struct ServerHandle {
     /// Traffic and round trips since the current process started (02-08).
     timings: Mutex<Timings>,
     messages: std::sync::atomic::AtomicU64,
+    /// A restart is under way: the old process is going and the new one not
+    /// yet started. Anything that asks for another joins this one.
+    restarting: std::sync::atomic::AtomicBool,
 }
 
 impl ServerHandle {
@@ -346,6 +349,7 @@ impl ServerHandle {
             config_asked: std::sync::Arc::new(tokio::sync::Notify::new()),
             timings: Mutex::default(),
             messages: std::sync::atomic::AtomicU64::new(0),
+            restarting: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -634,6 +638,16 @@ impl ServerHandle {
     /// tab does when it finds a server the pool had given up on: asking for it
     /// again is a person saying "try once more".
     pub fn restart(self: &std::sync::Arc<Self>) {
+        // A tab that opens while a restart is stopping the old process sees
+        // `Stopping` and asks again. A second restart would start a second
+        // process, and one of the two would be left running and unused.
+        if self
+            .restarting
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            debug!(language = %self.language, "already restarting");
+            return;
+        }
         self.life.forget_crashes();
         let running = self
             .connection
@@ -658,6 +672,9 @@ impl ServerHandle {
                 .await;
             }
             server.connect();
+            server
+                .restarting
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             server.replay().await;
         });
     }
