@@ -614,6 +614,9 @@ impl ServerHandle {
         *self.timings.lock().expect("timings lock") = Timings::default();
         self.messages.store(0, std::sync::atomic::Ordering::Relaxed);
         self.life.starting_now();
+        // Anything still waiting was asked of a process that is gone, or going:
+        // a restart that outlived its grace period leaves its requests here.
+        self.pending.lock().expect("pending lock").clear();
         *self.connection.lock().expect("connection lock") = Some(Connection {
             pid: transport.pid(),
             sender: transport.sender(),
@@ -1260,6 +1263,18 @@ impl Supervised for ServerHandle {
 
 /// Deliver responses to whoever asked, and broadcast the rest.
 async fn route(server: std::sync::Arc<ServerHandle>, mut transport: Transport) {
+    let pid = transport.pid();
+    // A restart waits only so long for the old process to go before starting
+    // the new one. When the old one's exit arrives after that, the connection,
+    // the pending requests and the state are the new process's, not ours.
+    let current = || {
+        server
+            .connection
+            .lock()
+            .expect("connection lock")
+            .as_ref()
+            .is_some_and(|c| c.pid == pid)
+    };
     while let Some(event) = transport.recv().await {
         match event {
             TransportEvent::Stderr(line) => server.note_log(line),
@@ -1298,6 +1313,10 @@ async fn route(server: std::sync::Arc<ServerHandle>, mut transport: Transport) {
                 warn!(language = %server.language, error = %e, "unreadable server output");
             }
             TransportEvent::Exited(exit) => {
+                if !current() {
+                    debug!(language = %server.language, pid, "a replaced server exited");
+                    return;
+                }
                 let expected = exit.killed || matches!(server.state(), ServerState::Stopping);
                 *server.connection.lock().expect("connection lock") = None;
                 // Waking the waiters before the state changes means a request
@@ -1318,7 +1337,9 @@ async fn route(server: std::sync::Arc<ServerHandle>, mut transport: Transport) {
         }
     }
     // Nothing else is coming, so nobody should be left waiting.
-    server.pending.lock().expect("pending lock").clear();
+    if current() {
+        server.pending.lock().expect("pending lock").clear();
+    }
 }
 
 /// The plugin's `initializationOptions` with the registered setting folded in.
