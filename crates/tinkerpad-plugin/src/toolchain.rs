@@ -203,9 +203,25 @@ pub async fn probe(
             .chain(args.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(" ");
-        let output = match run_probe(&path, &args, resolver.path(), timeout).await {
+        // A probe that runs out of time is tried once more. The first run of
+        // a program on a cold machine can be slow (macOS checks a binary the
+        // first time it starts, and every plugin probes at once), and a
+        // timeout says nothing about whether the tool is there.
+        let mut attempt = run_probe(&path, &args, resolver.path(), timeout).await;
+        if matches!(attempt, Err(ProbeFailed::TimedOut)) {
+            debug!(plugin = %plugin.id, probe = %shown, "probe timed out; trying once more");
+            attempt = run_probe(&path, &args, resolver.path(), timeout).await;
+        }
+        let output = match attempt {
             Ok(output) => output,
-            Err(reason) => {
+            Err(ProbeFailed::TimedOut) => {
+                reasons.push(format!(
+                    "`{shown}` didn't finish within {}s, twice",
+                    timeout.as_secs_f32()
+                ));
+                continue;
+            }
+            Err(ProbeFailed::Other(reason)) => {
                 reasons.push(format!("`{shown}` {reason}"));
                 continue;
             }
@@ -247,15 +263,23 @@ pub async fn probe(
     }
 }
 
+/// Why one probe didn't produce output.
+enum ProbeFailed {
+    /// It was still running when its time ran out.
+    TimedOut,
+    /// It couldn't start, or exited with something other than 0.
+    Other(String),
+}
+
 /// Run one probe, returning its combined output if it exits 0 in time.
 async fn run_probe(
     program: &Path,
     args: &[String],
     path: &OsStr,
     timeout: Duration,
-) -> Result<String, String> {
+) -> Result<String, ProbeFailed> {
     let spec = SpawnSpec::new(program).args(args).env("PATH", path);
-    let mut child = spawn(spec).map_err(|e| format!("couldn't start: {e}"))?;
+    let mut child = spawn(spec).map_err(|e| ProbeFailed::Other(format!("couldn't start: {e}")))?;
     let kill = child.kill_handle();
 
     let collect = async {
@@ -274,12 +298,12 @@ async fn run_probe(
         Ok(result) => result,
         Err(_) => {
             kill.kill();
-            return Err(format!("didn't finish within {}s", timeout.as_secs_f32()));
+            return Err(ProbeFailed::TimedOut);
         }
     };
     if code != Some(0) {
         let code = code.map_or_else(|| "a signal".to_owned(), |c| format!("code {c}"));
-        return Err(format!("exited with {code}"));
+        return Err(ProbeFailed::Other(format!("exited with {code}")));
     }
     // Some tools (java, older pythons) print their version to stderr.
     let mut text = String::from_utf8_lossy(&out).into_owned();

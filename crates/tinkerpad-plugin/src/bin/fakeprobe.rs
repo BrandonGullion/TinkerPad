@@ -6,6 +6,8 @@
 //!   stderr <text>   write text and a newline to stderr
 //!   sleep <ms>      wait
 //!   exit <code>     exit with the code (default exit is 0)
+//!   once <path>     do the next step only the first time: the first run
+//!                   creates the file, and later runs skip the step
 
 use std::io::Write;
 
@@ -24,6 +26,11 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_millis(value.parse().unwrap_or(0)))
             }
             "exit" => std::process::exit(value.parse().unwrap_or(1)),
+            "once" => {
+                if std::fs::File::create_new(&value).is_err() {
+                    i += 2;
+                }
+            }
             other => {
                 eprintln!("fakeprobe: unknown step {other:?}");
                 std::process::exit(2);
