@@ -2796,8 +2796,14 @@ async function lspTypescriptScenario(ctx: SelftestContext, check: Check) {
     },
     selection: { anchor: "const names: string[] = [];\nnames.m".length },
   });
-  runScopeHandlers(view, key("F12"), "editor");
-  const jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 60_000);
+  // Pressed again if nothing opens, as in the C# scenario: an answer that
+  // arrives while the server is still busy with the edit can be empty.
+  let jumped = false;
+  for (let attempt = 0; attempt < 5 && !jumped; attempt++) {
+    view.dispatch({ selection: { anchor: "const names: string[] = [];\nnames.m".length } });
+    runScopeHandlers(view, key("F12"), "editor");
+    jumped = await until(() => tabs.tabs.some((t) => t.peek !== undefined), 12_000);
+  }
   const landed = tabs.tabs.find((t) => t.peek)?.peek?.path ?? "";
   await check(
     "F12 opens the TypeScript typings read-only",
@@ -5119,7 +5125,18 @@ async function lspCsharpScenario(ctx: SelftestContext, check: Check) {
   const restarted = await invoke<boolean>("restart_server", { language: "csharp", root: server?.root ?? null });
   await check("the C# server can be restarted", restarted);
   const back = await completeUntil((labels) => labels.includes("WriteLine"), 120_000);
-  await check("completions come back after the restart", back);
+  // What the server and the tab looked like, for a failure seen only in CI.
+  const afterRestart = back
+    ? null
+    : {
+        tab: tabs.activeTab?.lsp?.uri ?? null,
+        offered: offered().slice(0, 6),
+        status: (await invoke<ServerStatus[]>("server_status")).find((s) => s.language === "csharp")?.state ?? null,
+        log: (
+          await invoke<string[]>("server_log", { language: "csharp", root: server?.root ?? null }).catch(() => [])
+        ).slice(-15),
+      };
+  await check("completions come back after the restart", back, afterRestart ? JSON.stringify(afterRestart) : "");
 
   for (const t of [...tabs.tabs]) await tabs.close(t);
   for (const p of [playground, expression]) await invoke("delete_playground", { id: p.id }).catch(() => {});

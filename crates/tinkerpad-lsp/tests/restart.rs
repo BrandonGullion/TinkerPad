@@ -373,3 +373,58 @@ async fn restarting_by_hand_replaces_the_process() {
 
     pool.shutdown().await;
 }
+
+/// A tab that opens while a restart is under way joins it rather than
+/// starting another: one new process, and every document open on it.
+#[tokio::test]
+async fn a_tab_opened_during_a_restart_joins_it() {
+    let starts =
+        std::env::temp_dir().join(format!("tinkerpad-fakelsp-starts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&starts);
+    std::fs::create_dir_all(&starts).unwrap();
+    let started = || std::fs::read_dir(&starts).unwrap().count();
+    let pool = LspPool::default();
+    let mut config = config("fake");
+    config.spawn = config.spawn.env("TINKERPAD_FAKELSP_STARTS", &starts);
+    let attachment = pool
+        .attach(&config, &file_uri("during-first"), "text")
+        .await
+        .unwrap();
+    let server = attachment.server().clone();
+    let first = server.pid();
+
+    assert!(pool.restart("fake", None));
+    // The restart has only begun: the old process is still being stopped.
+    let second = pool
+        .attach(&config, &file_uri("during-second"), "text")
+        .await
+        .unwrap();
+    assert!(Arc::ptr_eq(second.server(), &server), "the same server");
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while (server.pid() == first || !server.state().is_ready()) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(server.state().is_ready(), "{:?}", server.state());
+    // Give a second start, if there was one, time to show itself.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let seen = server.request("test/seen", Value::Null).await.unwrap();
+    assert_eq!(
+        seen["pid"].as_u64(),
+        Some(u64::from(server.pid())),
+        "requests go to the process the server says it is",
+    );
+    assert_eq!(
+        started(),
+        2,
+        "the first process and one restart: the tab joined it instead of starting another",
+    );
+    let mut docs = wait_for_docs(&server, 2).await;
+    docs.sort();
+    assert_eq!(
+        docs.iter().map(|(uri, _)| uri.as_str()).collect::<Vec<_>>(),
+        [file_uri("during-first"), file_uri("during-second")],
+    );
+
+    pool.shutdown().await;
+}

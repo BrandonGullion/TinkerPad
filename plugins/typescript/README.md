@@ -27,12 +27,17 @@ Each playground is an ES module: its folder gets a `package.json` with
 The run command is:
 
 ```sh
-node --experimental-transform-types --disable-warning=ExperimentalWarning \
+node --experimental-strip-types --disable-warning=ExperimentalWarning \
      --require <plugin>/dump/register.cjs main.ts
 ```
 
-`--experimental-transform-types` also compiles `enum` and `namespace`.
-Line numbers in stack traces still match `main.ts`.
+Node erases the types and runs what is left, so line numbers in stack traces
+match `main.ts`. Syntax that needs compiling rather than erasing (`enum`,
+`namespace`, and parameter properties like `constructor(public x: number)`)
+isn't supported: Node 26 dropped `--experimental-transform-types`, which used
+to handle it. The editor marks it (`erasableSyntaxOnly` in the library's
+`tsconfig.json`). Use a `const` object or a union of string literals instead
+of an `enum`.
 
 ## `dump`
 
