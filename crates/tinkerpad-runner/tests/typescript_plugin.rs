@@ -109,16 +109,16 @@ console.log(rows.length);
 }
 
 #[tokio::test]
-async fn transform_types_keeps_line_numbers() {
+async fn stripping_types_keeps_line_numbers() {
     let s = Scratch::new(PLUGIN, "lines");
     let Some(tc) = toolchain(PLUGIN, &s.0).await else {
         return;
     };
-    // `enum` and parameter properties need the transform, not just stripping.
+    // Types spread over several lines, so a strip that dropped lines would show.
     let source = "import { dump } from \"tinkerpad\";\n\
-                  enum Color {\n  Red,\n  Green,\n}\n\
-                  class P { constructor(public x: number) {} }\n\
-                  dump(new P(Color.Green));\n\
+                  interface Shape {\n  x: number;\n  label?: string;\n}\n\
+                  type Pair<T> = [T, T];\n\
+                  const p: Pair<Shape> = [{ x: 1 }, { x: 2, label: \"b\" }]; dump(p);\n\
                   throw new Error(\"on line 8\");\n";
     assert_eq!(source.lines().position(|l| l.starts_with("throw")), Some(7));
     let out = run_playground(&tc, &s.0, "statements", Some(source)).await;

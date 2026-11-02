@@ -660,9 +660,11 @@ The template for each kind already imports the helper, so a new playground can c
 
 ### TypeScript / JavaScript
 
-- **Run:** on the helper below, or `node --experimental-transform-types
+- **Run:** on the helper below, or `node --experimental-strip-types
   --disable-warning=ExperimentalWarning --require {plugin_dir}/dump/register.cjs
-  main.ts` when there isn't one. Needs Node 22.7 or later.
+  main.ts` when there isn't one. Needs Node 22.7 or later. Types are erased,
+  not compiled, so `enum`, `namespace` and parameter properties aren't
+  supported (Node 26 dropped `--experimental-transform-types`).
 - **Helper (JavaScript):** `helper/helper.mjs`, no build step, started with the
   same flags a run gets. A run is `await import(file + "?t=…")`, with
   `process.stdout.write` borrowed for the duration, so Node's start-up and the
