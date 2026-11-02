@@ -4,16 +4,15 @@ import { dump } from "tinkerpad";
 // captured in tests/dump_cases/13-typescript-shapes.txt, so keep it the same on
 // every machine: no times, paths, or stack traces.
 
-enum Level {
-  Low = 1,
-  High = 2,
-}
+const Level = { Low: 1, High: 2 } as const;
 
 class Point {
-  constructor(
-    public x: number,
-    public y: number,
-  ) {}
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
 }
 
 console.log("table:");

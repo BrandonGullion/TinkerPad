@@ -9,7 +9,7 @@ extension = "ts"
 highlighter = "typescript"
 
 [toolchain]
-# --experimental-transform-types arrived in Node 22.7.
+# Node 22.7 is the oldest whose type stripping and resolve hooks we rely on.
 probe = [{ command = "node", args = ["--version"], min_version = "22.7" }]
 install_hint = "Install Node.js 22.7 or newer (the current LTS is best): https://nodejs.org"
 
@@ -90,14 +90,17 @@ error_regex = '(?m)^(?<message>[A-Za-z]*(?:Error|Warning)(?: \[[A-Za-z_]+\])?:.*
 error_regex_multiline = true
 
 [run]
-# --experimental-transform-types: strip types, and also compile `enum` and
-#   `namespace`. Line numbers are preserved, so stack traces point at main.ts.
+# --experimental-strip-types: erase the types and run what is left. Node 26
+#   dropped --experimental-transform-types, so `enum`, `namespace` and
+#   parameter properties are not supported. Line numbers are preserved, so
+#   stack traces point at main.ts. (Stripping is on by default from Node 23.6;
+#   the flag is for 22.7 to 22.17.)
 # --require register.cjs: makes `import { dump } from "tinkerpad"` resolve to
 #   dump/tinkerpad.js. (NODE_PATH doesn't apply to ES modules, and --import
 #   can't take a Windows path.)
 command = "{toolchain}"
 args = [
-  "--experimental-transform-types",
+  "--experimental-strip-types",
   "--disable-warning=ExperimentalWarning",
   "--require",
   "{plugin_dir}/dump/register.cjs",
@@ -113,7 +116,7 @@ args = [
 # add `--inspect=0` without touching the helper (docs/DEBUGGING.md D10).
 command = "{toolchain}"
 args = [
-  "--experimental-transform-types",
+  "--experimental-strip-types",
   "--disable-warning=ExperimentalWarning",
   "--require",
   "{plugin_dir}/dump/register.cjs",
