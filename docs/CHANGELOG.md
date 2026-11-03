@@ -7,6 +7,29 @@ whether anything you wrote needs changing, and it says "nothing" when nothing
 does, so an empty one is a useful answer rather than a missing one. The rules
 behind it are in [VERSIONING.md](VERSIONING.md).
 
+## 0.2.0 — 2026-11-01
+
+### Plugin authors
+
+Nothing to change. Manifest `api = 1` is unchanged, and so are
+`tinkerpad-plugin-v1` and `tinkerpad-dump-v1`.
+
+One new, optional key:
+
+- **`[lsp].from_helper`**: `true` when the language server is the plugin's own
+  helper in another mode. `[helper.build]` then runs before the server starts
+  too. It needs a `[helper]` with a `build`.
+
+### For everyone
+
+- IntelliSense for C#: completion, hover, diagnostics as you type, and go to
+  definition, compiled the same way a run is, so `Dump()` and `#:package`
+  types are known.
+- The library is an explorer you can dock on either side, and you can delete
+  from it.
+- A toolbar above the tabs.
+- F5 runs the playground.
+
 ## 0.1.0 — 2026-10-17
 
 The first release.

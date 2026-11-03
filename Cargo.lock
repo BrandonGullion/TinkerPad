@@ -4511,7 +4511,7 @@ dependencies = [
 
 [[package]]
 name = "tinkerpad-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -4548,7 +4548,7 @@ dependencies = [
 
 [[package]]
 name = "tinkerpad-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4558,7 +4558,7 @@ dependencies = [
 
 [[package]]
 name = "tinkerpad-library"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "humantime",
  "notify",
@@ -4575,7 +4575,7 @@ dependencies = [
 
 [[package]]
 name = "tinkerpad-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "serde_json",
@@ -4589,7 +4589,7 @@ dependencies = [
 
 [[package]]
 name = "tinkerpad-plugin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4608,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "tinkerpad-process"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "libc",
@@ -4622,7 +4622,7 @@ dependencies = [
 
 [[package]]
 name = "tinkerpad-runner"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "memchr",
