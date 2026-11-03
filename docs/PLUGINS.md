@@ -718,8 +718,10 @@ The template for each kind already imports the helper, so a new playground can c
   (locked lines).
 - **LSP:** the helper again, started with `--lsp` (`[lsp].from_helper`, work item
   04-13). It is a small language server over Roslyn's own editor services
-  (`Microsoft.CodeAnalysis.CSharp.Features`): completion, hover, diagnostics
-  pushed after each edit, and go to definition. Each open playground is a project
+  (`Microsoft.CodeAnalysis.CSharp.Features`): completion (each item described,
+  signature and summary, when the editor highlights it: work item 04-14),
+  signature help, hover, diagnostics pushed after each edit, and go to
+  definition. Each open playground is a project
   of its own, compiled exactly as a run on the helper compiles it: the same
   implicit usings, the dump library, the same options, and `#:package` restored
   through the same NuGet code. So a squiggle lands where a run reports the error,

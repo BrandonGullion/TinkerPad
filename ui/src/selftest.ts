@@ -6,7 +6,13 @@
 
 import { undo } from "@codemirror/commands";
 import { EditorSelection } from "@codemirror/state";
-import { closeCompletion, currentCompletions, startCompletion } from "@codemirror/autocomplete";
+import {
+  closeCompletion,
+  currentCompletions,
+  setSelectedCompletion,
+  startCompletion,
+} from "@codemirror/autocomplete";
+import { showSignatureHelp } from "@codemirror/lsp-client";
 import { forEachDiagnostic } from "@codemirror/lint";
 import { type EditorView, runScopeHandlers } from "@codemirror/view";
 
@@ -518,6 +524,19 @@ async function until(ok: () => boolean, ms = 3000): Promise<boolean> {
     await frame();
   }
   return true;
+}
+
+/**
+ * Highlight the open completion whose label `matches`, and wait up to `ms` for
+ * the panel beside the list to say something (04-14). Returns what it says.
+ */
+async function completionPanel(view: EditorView, matches: (label: string) => boolean, ms: number): Promise<string> {
+  const index = currentCompletions(view.state).findIndex((c) => matches(c.label));
+  if (index < 0) return "";
+  view.dispatch({ effects: setSelectedCompletion(index) });
+  const panel = () => document.querySelector(".cm-completionInfo")?.textContent ?? "";
+  await until(() => panel().trim().length > 0, ms);
+  return panel();
 }
 
 async function dumpRenderScenario(ctx: SelftestContext, check: Check) {
@@ -2752,6 +2771,14 @@ async function lspTypescriptScenario(ctx: SelftestContext, check: Check) {
     found && names.includes("map") && names.includes("filter"),
     JSON.stringify(names.slice(0, 6)),
   );
+
+  // 04-14: tsserver describes an item only when asked, which highlighting it does.
+  const map = await completionPanel(view, (label) => label.replace(/^./, "") === "map", 15_000);
+  await check(
+    "a highlighted TypeScript method shows its signature",
+    map.includes("map") && map.includes("callbackfn"),
+    map.slice(0, 200),
+  );
   await report(
     `INFO first TypeScript completion took ${((performance.now() - started) / 1000).toFixed(1)} s`,
   );
@@ -4972,6 +4999,14 @@ async function lspCsharpScenario(ctx: SelftestContext, check: Check) {
     firstOk && offered().includes("ReadLine") && !offered().includes("abstract"),
     JSON.stringify(offered().slice(0, 8)),
   );
+
+  // 04-14: a highlighted method says what it takes, beside the list.
+  const writeLine = await completionPanel(view, (label) => label === "WriteLine", 15_000);
+  await check(
+    "a highlighted WriteLine shows its parameters and overloads, and what it does",
+    writeLine.includes("WriteLine(") && writeLine.includes("overloads") && writeLine.includes("standard output"),
+    writeLine.slice(0, 200),
+  );
   await report(`INFO first C# completion ${((performance.now() - started) / 1000).toFixed(1)} s after the tab opened`);
   const server = (await invoke<ServerStatus[]>("server_status")).find((s) => s.language === "csharp");
   await check(
@@ -5016,6 +5051,21 @@ async function lspCsharpScenario(ctx: SelftestContext, check: Check) {
   write('#:package Humanizer@2.14.1\nusing Humanizer;\nvar h = "hello".|\n');
   const packageOk = await completeUntil((labels) => labels.includes("Humanize"), 180_000);
   await check("a #:package reference's methods are offered", packageOk, JSON.stringify(offered().slice(0, 6)));
+
+  // 04-14: inside the parentheses, the overloads and the parameter the cursor is on.
+  write('Console.WriteLine("hi", |);\n');
+  const tooltip = () => document.querySelector(".cm-lsp-signature-tooltip");
+  for (let attempt = 0; attempt < 10 && !tooltip()?.textContent?.includes("WriteLine("); attempt++) {
+    showSignatureHelp(view);
+    await until(() => tooltip()?.textContent?.includes("WriteLine(") ?? false, 2000);
+  }
+  const signature = tooltip()?.textContent ?? "";
+  const activeParameter = tooltip()?.querySelector(".cm-lsp-active-parameter")?.textContent ?? "";
+  await check(
+    "after WriteLine( the overloads are listed, and the parameter being typed is marked",
+    signature.includes("WriteLine(") && /\d+\/\d+/.test(signature) && activeParameter.includes("arg0"),
+    JSON.stringify({ signature: signature.slice(0, 160), activeParameter }),
+  );
 
   // Hover: Mod+K Mod+I on Console.
   write('Console.WriteLine("hi");\n');

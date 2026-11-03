@@ -9,7 +9,8 @@
 // services, with the playground compiled exactly as a run compiles it. So a
 // squiggle and a run can't disagree about a playground.
 //
-// It is a small server on purpose. Full document sync, completion, hover,
+// It is a small server on purpose. Full document sync, completion (each item
+// described when the editor highlights it), signature help, hover,
 // diagnostics pushed after each change, and go to definition — what the
 // editor's client asks for, and nothing it doesn't (crates/tinkerpad-lsp,
 // `client_capabilities`). Everything that touches the workspace happens on one
@@ -254,6 +255,12 @@ internal sealed class LanguageServer
                 case "textDocument/completion":
                     Reply(id, await _playgrounds.Complete(DocumentUri(parameters), Position(parameters)));
                     return;
+                case "completionItem/resolve":
+                    Reply(id, await _playgrounds.Resolve(parameters!));
+                    return;
+                case "textDocument/signatureHelp":
+                    Reply(id, await _playgrounds.SignatureHelp(DocumentUri(parameters), Position(parameters)));
+                    return;
                 case "textDocument/hover":
                     Reply(id, await _playgrounds.Hover(DocumentUri(parameters), Position(parameters)));
                     return;
@@ -287,7 +294,14 @@ internal sealed class LanguageServer
             ["completionProvider"] = new JsonObject
             {
                 ["triggerCharacters"] = new JsonArray(".", " ", "("),
-                ["resolveProvider"] = false,
+                // Each item is described when the editor highlights it (04-14):
+                // Roslyn takes a moment per item, which across a whole list adds up.
+                ["resolveProvider"] = true,
+            },
+            ["signatureHelpProvider"] = new JsonObject
+            {
+                ["triggerCharacters"] = new JsonArray("(", ","),
+                ["retriggerCharacters"] = new JsonArray(")"),
             },
             ["hoverProvider"] = true,
             ["definitionProvider"] = true,

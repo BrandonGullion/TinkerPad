@@ -1430,12 +1430,19 @@ fn client_capabilities() -> Value {
                 "completionItem": {
                     "snippetSupport": false,
                     "documentationFormat": ["markdown", "plaintext"],
+                    // The editor asks for these about the highlighted item
+                    // only (04-14), so a server can leave them out of the list.
+                    "resolveSupport": { "properties": ["detail", "documentation"] },
                 },
                 "contextSupport": true,
             },
             "hover": { "contentFormat": ["markdown", "plaintext"] },
             "signatureHelp": {
-                "signatureInformation": { "documentationFormat": ["markdown", "plaintext"] },
+                "signatureInformation": {
+                    "documentationFormat": ["markdown", "plaintext"],
+                    "parameterInformation": { "labelOffsetSupport": true },
+                    "activeParameterSupport": true,
+                },
             },
             "definition": { "linkSupport": false },
         },
