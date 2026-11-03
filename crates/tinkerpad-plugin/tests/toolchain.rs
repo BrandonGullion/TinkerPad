@@ -222,6 +222,34 @@ async fn timeout_is_missing_and_quick() {
     }
 }
 
+/// A cold machine's first start of a program can be slow; the second isn't.
+#[tokio::test]
+async fn a_probe_that_times_out_once_is_tried_again() {
+    let s = Scratch::new("cold");
+    let marker = s.0.join("started-before").to_string_lossy().into_owned();
+    let p = plugin(
+        &s,
+        &format!(
+            "probe = [{}]",
+            fake_probe(
+                &["once", &marker, "sleep", "10000", "print", "v1.2.3"],
+                None
+            )
+        ),
+    );
+    let state = probe(
+        &p,
+        &resolver(),
+        &std::env::temp_dir(),
+        Duration::from_millis(1000),
+    )
+    .await;
+    assert!(
+        matches!(&state, ToolchainState::Ready { version: Some(v), .. } if v == "1.2.3"),
+        "{state:?}"
+    );
+}
+
 #[tokio::test]
 async fn later_probe_wins_when_earlier_ones_fail() {
     let s = Scratch::new("fallback");
