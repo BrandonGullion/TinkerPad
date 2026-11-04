@@ -62,6 +62,14 @@ internal sealed class Playgrounds
     private readonly Action<string> _log;
     private readonly Action<Func<Task>> _post;
 
+    /// <summary>
+    /// The last completion list, so an item can be described when the editor
+    /// highlights it. One is enough: the editor only asks about the list it is
+    /// showing, and a newer list replaces it. Only touched on the queue.
+    /// </summary>
+    private (int Generation, Document Document, IReadOnlyList<CompletionItem> Items)? _lastCompletion;
+    private int _completionGeneration;
+
     /// <param name="post">Put work on the server's queue.</param>
     public Playgrounds(string pluginDir, string scratchDir, Action<string> log, Action<Func<Task>> post)
     {
@@ -300,7 +308,11 @@ internal sealed class Playgrounds
             .ToList();
         var incomplete = items.Count > MaxCompletions;
 
+        var generation = ++_completionGeneration;
+        _lastCompletion = (generation, document, items);
+
         var result = new JsonArray();
+        var index = 0;
         foreach (var item in items.Take(MaxCompletions))
         {
             var insert = item.Properties.TryGetValue("InsertionText", out var insertion) ? insertion : item.DisplayText;
@@ -317,6 +329,8 @@ internal sealed class Playgrounds
                     ["range"] = Range(text.Lines.GetLinePositionSpan(TextSpan.FromBounds(span.Start, end))),
                     ["newText"] = insert,
                 },
+                // Which item this is, for completionItem/resolve.
+                ["data"] = new JsonObject { ["generation"] = generation, ["index"] = index++ },
             };
             if (!string.IsNullOrEmpty(item.InlineDescription))
             {
@@ -345,6 +359,214 @@ internal sealed class Playgrounds
             }
         }
         return at == typed.Length && char.ToLowerInvariant(candidate[0]) == char.ToLowerInvariant(typed[0]);
+    }
+
+    /// <summary>
+    /// An item from the last list, described: Roslyn's first line (the
+    /// signature, and how many overloads there are) as `detail`, the rest (the
+    /// summary from the XML docs) as `documentation`. An item from an older
+    /// list goes back as it came.
+    /// </summary>
+    public async Task<JsonNode?> Resolve(JsonNode request)
+    {
+        // A copy: the request's node already has a parent, and a reply needs its own.
+        var item = request.DeepClone();
+        var data = item["data"];
+        if (_lastCompletion is not { } last
+            || data?["generation"]?.GetValue<int>() != last.Generation
+            || data?["index"]?.GetValue<int>() is not int index
+            || index < 0
+            || index >= last.Items.Count)
+        {
+            return item;
+        }
+        var service = CompletionService.GetService(last.Document);
+        var description = service is null ? null : await service.GetDescriptionAsync(last.Document, last.Items[index]);
+        var text = description?.Text.Replace("\r\n", "\n").Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            return item;
+        }
+        var newline = text.IndexOf('\n');
+        item["detail"] = newline < 0 ? text : text[..newline];
+        var documentation = newline < 0 ? "" : text[(newline + 1)..].Trim();
+        if (documentation.Length > 0)
+        {
+            // Plain text: generic types (`List<T>`) would read as HTML in Markdown.
+            item["documentation"] = new JsonObject { ["kind"] = "plaintext", ["value"] = documentation };
+        }
+        return item;
+    }
+
+    // ---- signature help ------------------------------------------------------
+
+    private static readonly SymbolDisplayFormat Signature = SymbolDisplayFormat.MinimallyQualifiedFormat
+        .AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+    /// <summary>
+    /// Inside a call's or a `new`'s parentheses: every overload, the one the
+    /// arguments so far pick, and which parameter the cursor is on.
+    /// </summary>
+    public async Task<JsonNode?> SignatureHelp(string uri, (int Line, int Character) position)
+    {
+        var document = DocumentFor(uri);
+        var offset = document is null ? null : await Offset(document, position);
+        if (document is null || offset is null)
+        {
+            return null;
+        }
+        var root = await document.GetSyntaxRootAsync();
+        var model = await document.GetSemanticModelAsync();
+        if (root is null || model is null)
+        {
+            return null;
+        }
+        // The token before the cursor: right after `(` the cursor is at the
+        // start of whatever follows, which may not be inside the call at all.
+        var token = root.FindToken(Math.Max(0, offset.Value - 1));
+        var arguments = token.Parent?.AncestorsAndSelf()
+            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ArgumentListSyntax>()
+            .FirstOrDefault(list => list.OpenParenToken.Span.End <= offset.Value
+                && (list.CloseParenToken.IsMissing || offset.Value <= list.CloseParenToken.SpanStart));
+        if (arguments?.Parent is not { } call)
+        {
+            return null;
+        }
+
+        List<IMethodSymbol> methods = call switch
+        {
+            Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax invocation =>
+                model.GetMemberGroup(invocation.Expression).OfType<IMethodSymbol>().ToList(),
+            Microsoft.CodeAnalysis.CSharp.Syntax.BaseObjectCreationExpressionSyntax creation =>
+                model.GetTypeInfo(creation).Type is INamedTypeSymbol type
+                    ? type.InstanceConstructors.Where(c => model.IsAccessible(offset.Value, c)).ToList()
+                    : [],
+            _ => [],
+        };
+        if (methods.Count == 0)
+        {
+            return null;
+        }
+        methods = methods.OrderBy(m => m.Parameters.Length).ToList();
+
+        var activeParameter = arguments.Arguments.GetSeparators().Count(comma => comma.SpanStart < offset.Value);
+        var chosen = model.GetSymbolInfo(call).Symbol as IMethodSymbol;
+        var activeSignature = chosen is null ? -1 : methods.FindIndex(m =>
+            SymbolEqualityComparer.Default.Equals(m.OriginalDefinition, chosen.OriginalDefinition)
+            || SymbolEqualityComparer.Default.Equals(m.ReducedFrom ?? m, chosen.ReducedFrom ?? chosen));
+        if (activeSignature < 0)
+        {
+            // Nothing picked yet (the call doesn't compile until it's finished):
+            // the shortest overload that has room for the arguments so far.
+            activeSignature = methods.FindIndex(m =>
+                m.Parameters.Length > activeParameter || m.Parameters.LastOrDefault()?.IsParams == true);
+            activeSignature = Math.Max(0, activeSignature);
+        }
+
+        var signatures = new JsonArray();
+        foreach (var method in methods)
+        {
+            signatures.Add(SignatureOf(method));
+        }
+        return new JsonObject
+        {
+            ["signatures"] = signatures,
+            ["activeSignature"] = activeSignature,
+            ["activeParameter"] = activeParameter,
+        };
+    }
+
+    /// <summary>`void Console.WriteLine(string? value)`, with each parameter's place in it.</summary>
+    private static JsonObject SignatureOf(IMethodSymbol method)
+    {
+        var label = new StringBuilder();
+        if (method.MethodKind == MethodKind.Constructor)
+        {
+            label.Append(method.ContainingType.ToDisplayString(Signature));
+        }
+        else
+        {
+            label.Append(method.ReturnType.ToDisplayString(Signature)).Append(' ')
+                .Append(method.ContainingType.ToDisplayString(Signature)).Append('.')
+                .Append(method.Name);
+            if (method.IsGenericMethod)
+            {
+                label.Append('<').Append(string.Join(", ", method.TypeArguments.Select(t => t.ToDisplayString(Signature)))).Append('>');
+            }
+        }
+        label.Append('(');
+        var parameters = new JsonArray();
+        var docs = Documentation(method);
+        foreach (var parameter in method.Parameters)
+        {
+            if (parameter.Ordinal > 0)
+            {
+                label.Append(", ");
+            }
+            var start = label.Length;
+            label.Append(parameter.ToDisplayString(Signature));
+            var entry = new JsonObject { ["label"] = new JsonArray(start, label.Length) };
+            if (docs?.Parameters.GetValueOrDefault(parameter.Name) is { Length: > 0 } about)
+            {
+                entry["documentation"] = about;
+            }
+            parameters.Add(entry);
+        }
+        label.Append(')');
+        var signature = new JsonObject { ["label"] = label.ToString(), ["parameters"] = parameters };
+        if (docs?.Summary is { Length: > 0 } summary)
+        {
+            signature["documentation"] = summary;
+        }
+        return signature;
+    }
+
+    /// <summary>A symbol's `summary` and `param` docs, as plain text.</summary>
+    private static (string? Summary, Dictionary<string, string> Parameters)? Documentation(ISymbol symbol)
+    {
+        var xml = (symbol as IMethodSymbol)?.ReducedFrom?.GetDocumentationCommentXml() ?? symbol.GetDocumentationCommentXml();
+        if (string.IsNullOrWhiteSpace(xml))
+        {
+            return null;
+        }
+        try
+        {
+            var root = System.Xml.Linq.XElement.Parse(xml);
+            var parameters = root.Elements("param")
+                .Where(p => p.Attribute("name") is not null)
+                .GroupBy(p => (string)p.Attribute("name")!)
+                .ToDictionary(g => g.Key, g => Flatten(g.First()));
+            var summary = root.Element("summary");
+            return (summary is null ? null : Flatten(summary), parameters);
+        }
+        catch (System.Xml.XmlException)
+        {
+            // Documentation that isn't XML is documentation we can skip.
+            return null;
+        }
+    }
+
+    /// <summary>An XML doc element's text, with `see` and `paramref` as the names they point at.</summary>
+    private static string Flatten(System.Xml.Linq.XElement element)
+    {
+        var words = string.Join(" ", element.DescendantNodes().Select(node => node switch
+            {
+                System.Xml.Linq.XText t when t.Parent?.Name.LocalName is not ("see" or "paramref" or "typeparamref") => t.Value,
+                System.Xml.Linq.XElement { Name.LocalName: "see" or "paramref" or "typeparamref" } e =>
+                    ShortName((string?)e.Attribute("cref") ?? (string?)e.Attribute("name") ?? (string?)e.Attribute("langword") ?? ""),
+                _ => "",
+            }))
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(" ", words);
+    }
+
+    /// <summary>`T:System.Console` as `Console`.</summary>
+    private static string ShortName(string cref)
+    {
+        var name = cref.Length > 2 && cref[1] == ':' ? cref[2..] : cref;
+        var paren = name.IndexOf('(');
+        name = paren < 0 ? name : name[..paren];
+        return name[(name.LastIndexOf('.') + 1)..];
     }
 
     /// <summary>Roslyn's glyph tags, as LSP's completion kinds.</summary>

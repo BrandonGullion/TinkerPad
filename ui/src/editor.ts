@@ -73,6 +73,17 @@ function editorTheme(dark: boolean): Extension {
         backgroundColor: "var(--accent)",
         color: "var(--accent-fg)",
       },
+      // The highlighted completion's signature, above its documentation (04-14).
+      ".cm-lsp-completion-signature": {
+        fontFamily: "var(--font-mono)",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+      },
+      ".cm-lsp-completion-signature:not(:last-child)": {
+        paddingBottom: "4px",
+        marginBottom: "4px",
+        borderBottom: "1px solid var(--border)",
+      },
     },
     { dark },
   );

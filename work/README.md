@@ -84,6 +84,7 @@ time passes, or by a later item); the item file says why each one is open.
 - [x] [04-11 Toolbar above the tabs](phase-4-polish/04-11-toolbar.md) · S · 1 open criterion
 - [x] [04-12 The library as an explorer, on either side](phase-4-polish/04-12-library-explorer.md) · M
 - [x] [04-13 IntelliSense for C#](phase-4-polish/04-13-csharp-intellisense.md) · L
+- [x] [04-14 A method's parameters in the completion list](phase-4-polish/04-14-completion-details.md) · M
 
 ## Phase 5 — Community
 

@@ -12,7 +12,13 @@
 // the language features appear when the server is ready. A server that never
 // starts costs the tab nothing but the absence of completions.
 
-import { acceptCompletion } from "@codemirror/autocomplete";
+import {
+  acceptCompletion,
+  autocompletion,
+  type Completion,
+  type CompletionResult,
+  type CompletionSource,
+} from "@codemirror/autocomplete";
 import {
   LSPClient,
   LSPPlugin,
@@ -21,7 +27,7 @@ import {
   hoverTooltips,
   jumpToDefinitionKeymap,
   renameKeymap,
-  serverCompletion,
+  serverCompletionSource,
   serverDiagnostics,
   signatureHelp,
   type Transport,
@@ -98,6 +104,98 @@ class TauriTransport implements Transport {
 }
 
 /**
+ * A client that remembers the items of its last completion reply (04-14).
+ *
+ * `serverCompletionSource` turns the server's items into options and drops the
+ * items, but describing a highlighted option (`completionItem/resolve`) needs
+ * the item as the server sent it. The reply is noted here before the source
+ * sees it, and the source's options come back in the same order, so option
+ * `i` is item `i`.
+ */
+class DetailedClient extends LSPClient {
+  lastCompletion: lsp.CompletionItem[] = [];
+
+  override request<Params, Result>(method: string, params: Params): Promise<Result> {
+    const reply = super.request<Params, Result>(method, params);
+    if (method === "textDocument/completion") {
+      reply.then(
+        (result) => {
+          const list = result as lsp.CompletionList | lsp.CompletionItem[] | null;
+          this.lastCompletion = !list ? [] : Array.isArray(list) ? list : list.items;
+        },
+        () => {},
+      );
+    }
+    return reply;
+  }
+}
+
+/**
+ * The client's completions, each with a panel beside the list when it is
+ * highlighted: the signature (what a method takes, and how many overloads it
+ * has) and its documentation, as VS Code shows them.
+ *
+ * Servers that resolve items are asked about the highlighted one only, once.
+ * TypeScript's, Python's and C#'s send a bare list and describe an item only
+ * when asked; rust-analyzer's items arrive described, and need no request.
+ */
+const detailedCompletionSource: CompletionSource = async (context) => {
+  const result = (await serverCompletionSource(context)) as CompletionResult | null;
+  const plugin = context.view && LSPPlugin.get(context.view);
+  if (!result || !plugin || !(plugin.client instanceof DetailedClient)) return result;
+  const items = plugin.client.lastCompletion;
+  // Option `i` is item `i`; if that doesn't hold, describe nothing rather
+  // than the wrong thing.
+  if (
+    items.length !== result.options.length ||
+    result.options.some((option, i) => (option.displayLabel ?? option.label) !== items[i]?.label)
+  ) {
+    return result;
+  }
+  const resolves = plugin.client.serverCapabilities?.completionProvider?.resolveProvider === true;
+  return {
+    ...result,
+    options: result.options.map((option, i) => described(plugin, option, items[i]!, resolves)),
+  };
+};
+
+/** One option, with its panel. */
+function described(plugin: LSPPlugin, option: Completion, item: lsp.CompletionItem, resolves: boolean): Completion {
+  if (!resolves && !item.detail && !item.documentation) return option;
+  let full: Promise<lsp.CompletionItem> | undefined;
+  return {
+    ...option,
+    info: async () => {
+      full ??= resolves
+        ? plugin.client
+            .request<lsp.CompletionItem, lsp.CompletionItem>("completionItem/resolve", item)
+            .catch(() => item)
+        : Promise.resolve(item);
+      return completionPanel(plugin, await full);
+    },
+  };
+}
+
+/** The signature in code type, then the documentation; nothing if there's neither. */
+function completionPanel(plugin: LSPPlugin, item: lsp.CompletionItem): HTMLElement | null {
+  if (!item.detail && !item.documentation) return null;
+  const panel = document.createElement("div");
+  panel.className = "cm-lsp-documentation cm-lsp-completion-documentation";
+  if (item.detail) {
+    const signature = document.createElement("div");
+    signature.className = "cm-lsp-completion-signature";
+    signature.textContent = item.detail;
+    panel.append(signature);
+  }
+  if (item.documentation) {
+    const docs = document.createElement("div");
+    docs.innerHTML = plugin.docToHTML(item.documentation);
+    panel.append(docs);
+  }
+  return panel;
+}
+
+/**
  * Connect a tab to its language server, if its plugin has one.
  *
  * Returns `null` when the language has no server, the server binary is
@@ -123,7 +221,7 @@ export async function connect(
     return null;
   }
 
-  const client = new LSPClient({
+  const client = new DetailedClient({
     timeout: TIMEOUT_MS,
     // Server documentation is Markdown, which may carry HTML.
     sanitizeHTML: (html) => DOMPurify.sanitize(html),
@@ -131,9 +229,10 @@ export async function connect(
     // What `languageServerExtensions()` gives, except that the server's
     // completions replace the language's own word list rather than joining
     // it: C#'s highlighter offers every keyword and type name, which put
-    // `abstract` and `Action` at the top after `Console.` (04-13).
+    // `abstract` and `Action` at the top after `Console.` (04-13). And each
+    // completion is described when it is highlighted (04-14).
     extensions: [
-      serverCompletion({ override: true }),
+      autocompletion({ override: [detailedCompletionSource] }),
       hoverTooltips(),
       keymap.of([...formatKeymap, ...renameKeymap, ...jumpToDefinitionKeymap, ...findReferencesKeymap]),
       signatureHelp(),
